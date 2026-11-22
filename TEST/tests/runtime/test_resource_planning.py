@@ -11,9 +11,11 @@ from components.resource.infrastructure.runtime_store import SQLiteResourceStore
 from components.resource.infrastructure.node_store import SQLiteNodeStore
 from components.resource.runtime.embedded_runtime import EMBEDDED_AGENTS_RUNTIME_ID
 from contracts.capability import CapabilityKind, CapabilityManifest
-from contracts.resource import ModelEndpointProfile
+from contracts.resource import ExecutionRequirement, ModelEndpointProfile, RuntimeProfile
 from contracts.runtime_planning import RuntimePlanningDecision, RuntimeWaitCondition
-from contracts.workflow import WorkflowStatus
+from contracts.tools import HostToolExecutionError
+from contracts.workflow import StepStatus, WorkflowStatus
+from runtime.orchestration.binding import assess_run_requirement, effective_recovery_requirement
 from TEST.tests.runtime.test_planning_loop import Agent, Planner, prepared, runtime_at, attach
 
 
@@ -108,7 +110,7 @@ def test_missing_model_wait_restart_then_recover_without_reexecuting_upstream(tm
     assert agent2.calls == [] and agent3.calls == ["B"]
     assert result.execution_state["outputRefs"]["A"] == upstream_ref
     assert result.execution_state["executionBindings"]["B"]["modelBinding"]["endpointId"] == "model:fixture"
-    assert [o.wake_reason for o in planner.observations] == ["failure", "condition", "resume", "exhausted"]
+    assert [o.wake_reason for o in planner.observations] == ["failure", "condition", "exhausted"]
     assert len(result.execution_state["inPlaceRetryRequests"]) == 1
 
 
@@ -284,3 +286,129 @@ def test_legacy_decided_failure_round_is_not_replanned_after_restart(tmp_path):
     result = asyncio.run(recovered.execute_prepared_run(run.run_id))
     assert result.status == WorkflowStatus.WAITING_REVIEW
     assert not planner.observations and not agent2.calls
+
+
+class BlockedHandsAgent(Agent):
+    def __init__(self):
+        super().__init__()
+        self.failed_once = False
+
+    async def run(self, context):
+        if context.step.step_id == "B" and not self.failed_once:
+            self.failed_once = True
+            self.calls.append("B")
+            raise HostToolExecutionError("NO_ELIGIBLE_RESOURCE", "Hands backend is disabled", details={
+                "stepId": "B", "attemptId": context.attempt_id, "commitId": context.commit_id,
+                "tool": "fs.read", "resourceId": "n01a-host", "operationKey": "read:fixture",
+                "phase": "bind", "schedulingReason": "NO_ELIGIBLE_RESOURCE",
+                "candidateReasons": [{"resourceId": "n01a-host", "reasons": ["DISABLED"]}],
+            })
+        return await super().run(context)
+
+
+def blocked_hands_run(tmp_path):
+    runtime, agent, run = prepared(tmp_path, BlockedHandsAgent(), resource_plane=resource_plane(tmp_path))
+    host_node = runtime.resource_plane.runtime(EMBEDDED_AGENTS_RUNTIME_ID).node_id
+    runtime.resource_plane.register_runtime(RuntimeProfile(runtimeId="n01a-host", nodeId=host_node,
+        capabilities=["fs.read"], enabled=False, metadata={"managedBy": "bootstrap"}))
+    runtime.resource_plane.heartbeat_runtime("n01a-host")
+    original = json.loads(json.dumps(run.execution_state["bindingRequirements"]))
+    deadline = datetime.now(timezone.utc) + timedelta(minutes=5)
+
+    def choose(observation, plan):
+        if observation.failed_step_ids:
+            fact = next(r for r in observation.resource_requirements if r.step_id == "B")
+            return RuntimePlanningDecision(observationId=observation.fingerprint(),
+                action="recover" if fact.ready else "wait", reason="Observe the failed tool dependency",
+                waitFor=None if fact.ready else {"kind": "requirement_available", "stepId": "B",
+                    "requirementId": fact.requirement_id, "expiresAt": deadline})
+        return RuntimePlanningDecision(observationId=observation.fingerprint(),
+            action="continue" if observation.remaining_step_ids else "complete", reason="Committed facts")
+
+    planner = Planner(choose)
+    attach(runtime, planner)
+    paused = asyncio.run(runtime.execute_prepared_run(run.run_id))
+    assert paused.status == WorkflowStatus.WAITING_REVIEW
+    assert paused.execution_state["bindingRequirements"] == original
+    assert agent.calls == ["A", "B"]
+    return runtime, agent, paused, planner
+
+
+def test_disabled_hands_waits_for_tool_backend_despite_ready_agent_then_resumes_after_restart(tmp_path):
+    runtime, agent, paused, planner = blocked_hands_run(tmp_path)
+    assert assess_run_requirement(runtime, paused,
+        ExecutionRequirement.model_validate(paused.execution_state["bindingRequirements"]["B"])).ready
+    failure = planner.observations[0]
+    assert failure.failure_source == "scheduler" and failure.failure_reason == "NO_ELIGIBLE_RESOURCE"
+    assert failure.failure_step_id == "B" and failure.recovery_action == "rebind"
+    fact = failure.resource_requirements[0]
+    assert fact.step_id == "B" and fact.required_capabilities == ("fs.read",) and not fact.ready
+    hands = next(candidate for candidate in fact.candidates if candidate.runtime_id == "n01a-host")
+    assert not hands.accepted and "DISABLED" in hands.reasons
+    assert asyncio.run(runtime.prepare_planning_wakeups()) == []
+    upstream = paused.execution_state["outputRefs"]["A"]
+
+    resumed, agent2 = runtime_at(tmp_path, resource_plane=resource_plane(tmp_path))
+    attach(resumed, planner)
+    resumed.resource_plane.heartbeat_runtime("n01a-host")
+    assert asyncio.run(resumed.prepare_planning_wakeups()) == []
+    resumed.resource_plane.set_runtime_enabled("n01a-host", enabled=True)
+    assert asyncio.run(resumed.prepare_planning_wakeups()) == [paused.run_id]
+    result = asyncio.run(resumed.execute_prepared_run(paused.run_id))
+    assert result.status == WorkflowStatus.COMPLETED and agent2.calls == ["B"]
+    assert result.execution_state["outputRefs"]["A"] == upstream
+    assert [o.wake_reason for o in planner.observations] == ["failure", "condition", "exhausted"]
+    assert effective_recovery_requirement(result, "B") == ExecutionRequirement.model_validate(
+        result.execution_state["bindingRequirements"]["B"])
+
+
+@pytest.mark.parametrize("change", ["step", "attempt", "commit", "generation", "loop", "settled", "status", "tool"])
+def test_tool_recovery_requirement_cannot_reuse_stale_or_settled_failure(tmp_path, change):
+    _, _, paused, _ = blocked_hands_run(tmp_path)
+    expected = ExecutionRequirement.model_validate(paused.execution_state["bindingRequirements"]["B"])
+    failure = paused.execution_state["failureEvents"][-1]["details"]
+    if change in {"step", "attempt", "commit"}:
+        failure[f"{change}Id"] = "stale"
+    elif change == "generation":
+        paused.execution_state["executionGeneration"] = "new-generation"
+    elif change == "loop":
+        paused.execution_state.setdefault("loopPaths", {})["B"] = [1]
+    elif change == "settled":
+        paused.execution_state.setdefault("completedStepIds", []).append("B")
+    elif change == "status":
+        paused.get_step("B").status = StepStatus.COMPLETED
+    else:
+        failure["tool"] = "arbitrary.not-a-host-tool"
+    assert effective_recovery_requirement(paused, "B") == expected
+
+
+def test_tool_backend_disappearing_during_planning_cannot_trigger_agent_retry(tmp_path):
+    runtime, agent, paused, planner = blocked_hands_run(tmp_path)
+    runtime.resource_plane.set_runtime_enabled("n01a-host", enabled=True)
+    assert asyncio.run(runtime.prepare_planning_wakeups()) == [paused.run_id]
+    choose = planner.choose
+
+    def disable_during_planning(observation, plan):
+        if observation.wake_reason == "condition":
+            runtime.resource_plane.set_runtime_enabled("n01a-host", enabled=False)
+        return choose(observation, plan)
+
+    planner.choose = disable_during_planning
+    result = asyncio.run(runtime.execute_prepared_run(paused.run_id))
+    assert result.status == WorkflowStatus.WAITING_REVIEW and agent.calls == ["A", "B"]
+    assert result.execution_state["planningLoop"]["current"]["status"] == "rejected"
+    assert "inPlaceRetryRequests" not in result.execution_state
+
+
+def test_executor_tool_failure_also_requires_current_tool_readiness(tmp_path):
+    from runtime.orchestration.planning_loop import RuntimePlanningCoordinator
+
+    _, _, _, planner = blocked_hands_run(tmp_path)
+    observation = planner.observations[0].model_copy(update={
+        "failure_source": "executor", "failure_reason": "HANDS_OUTCOME_UNKNOWN", "recovery_action": "retry"})
+    decision = RuntimePlanningDecision(observationId=observation.fingerprint(), action="recover", reason="Read-only retry")
+    with pytest.raises(ValueError, match="currently eligible execution resources"):
+        RuntimePlanningCoordinator.validate_decision(observation, decision)
+    unrelated = observation.model_copy(update={"failure_reason": "EXECUTION_TIMEOUT"})
+    RuntimePlanningCoordinator.validate_decision(unrelated,
+        decision.model_copy(update={"observation_id": unrelated.fingerprint()}))

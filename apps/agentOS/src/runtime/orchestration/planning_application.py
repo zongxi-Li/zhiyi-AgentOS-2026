@@ -9,10 +9,9 @@ from datetime import timedelta
 from contracts.execution import WorkflowProgressPhase
 from contracts.recovery import GraphPatchResult, SemanticPatchRequest
 from contracts.runtime_planning import RuntimePlanningWait, requirement_fingerprint
-from contracts.resource import ExecutionRequirement
 from contracts.workflow import WorkflowStatus, utc_now
 from runtime.composition.ports import CollaboratorAccess
-from runtime.orchestration.binding import assess_run_requirement
+from runtime.orchestration.binding import assess_run_requirement, effective_recovery_requirement, recovery_requires_resource_readiness
 
 
 class RuntimePlanningApplication(CollaboratorAccess):
@@ -50,10 +49,9 @@ class RuntimePlanningApplication(CollaboratorAccess):
                 now = utc_now()
                 if not now < condition.expires_at <= now + timedelta(hours=24):
                     raise ValueError("resource wait deadline must be within the next 24 hours")
-                requirement = ExecutionRequirement.model_validate(
-                    run.execution_state["bindingRequirements"][condition.step_id])
+                requirement = effective_recovery_requirement(run, condition.step_id)
                 if requirement_fingerprint(requirement) != condition.requirement_id:
-                    raise ValueError("resource wait targets a changed frozen requirement")
+                    raise ValueError("resource wait targets a changed execution requirement")
             waiting = RuntimePlanningWait(observationId=observation.fingerprint(), condition=decision.wait_for)
         loop = loop.model_copy(update={"waiting": waiting, "user_input_pending": False})
         run.execution_state["planningLoop"] = loop.model_dump(by_alias=True, mode="json")
@@ -84,9 +82,8 @@ class RuntimePlanningApplication(CollaboratorAccess):
             run.__dict__.update(failed.__dict__)
             return "stop"
         if decision.action == "recover":
-            if observation.failure_source == "scheduler":
-                requirement = ExecutionRequirement.model_validate(
-                    run.execution_state["bindingRequirements"][observation.failed_step_ids[0]])
+            if recovery_requires_resource_readiness(observation):
+                requirement = effective_recovery_requirement(run, observation.failed_step_ids[0])
                 fact = next(r for r in observation.resource_requirements
                     if r.step_id == observation.failed_step_ids[0])
                 if (requirement_fingerprint(requirement) != fact.requirement_id
@@ -114,10 +111,14 @@ class RuntimePlanningApplication(CollaboratorAccess):
             return "stop"
         # Strategic wait/revision is a durable planning barrier in the existing
         # review lifecycle. It cannot masquerade as approval of a node/control.
+        failure = (loop.current.failure if loop.current is not None
+                   and loop.current.observation_id == observation.fingerprint()
+                   and loop.current.decision == decision and decision.action == "wait" else None)
         state.review_payload = {
             "subjectType": "planner", "subjectId": state.graph_id,
             "observationId": observation.fingerprint(), "reason": decision.reason,
             "reasonCode": ("PLANNING_COMMIT_REJECTED" if commit_rejection is not None else
+                           "PLANNER_UNAVAILABLE" if failure is not None else
                            "PLANNER_REVISION" if decision.action == "revise" else "PLANNER_WAIT"),
             "question": decision.question.model_dump(mode="json") if decision.question else None,
         }
@@ -130,6 +131,7 @@ class RuntimePlanningApplication(CollaboratorAccess):
         run.active_step_ids = []
         self.set_lifecycle(run, status=WorkflowStatus.WAITING_REVIEW, phase=WorkflowProgressPhase.REVIEW,
             message="计划修订被正式校验拒绝，任务已暂停" if commit_rejection is not None else
+                "规划处理失败，已有结果已保留，可重新规划" if failure is not None else
                 "Planner 已暂停任务，等待外部条件或计划修订")
         self.workflow_store.save_run(run)
         self.mission_manager.mark_waiting_review(self.mission_manager.get_mission(run.mission_id))

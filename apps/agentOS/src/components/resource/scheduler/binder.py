@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from threading import Event, Thread
 from typing import Awaitable, Callable
 from uuid import uuid4
 
+from support.async_tasks import await_settled
+from support.work_timeouts import suspended_work_wait
 from components.resource.application.resource_plane import ResourcePlane
 from components.resource.scheduler.placement_policy import placement_preference
 from contracts.resource import (
@@ -37,7 +40,7 @@ _ROUTING_HINT_WEIGHT = 0.05
 
 
 class LeaseKeepAlive:
-    """Async best-effort lease renewal owned by one executing attempt."""
+    """Renew allocated leases independently of the Attempt's event loop work."""
 
     def __init__(
         self, coordinator: LeaseCoordinator, lease: ResourceLease, *,
@@ -55,53 +58,81 @@ class LeaseKeepAlive:
         self.on_failure = on_failure
         self.failure: Exception | None = None
         self._task: asyncio.Task[None] | None = None
-        self._stopped = asyncio.Event()
+        self._stopped = Event()
         self._failed = asyncio.Event()
 
     def start(self) -> None:
         if self._task is None:
-            self._task = asyncio.create_task(self._run(), name=f"lease-renewal:{self.lease.lease_id}")
+            loop = asyncio.get_running_loop()
+            done = loop.create_future()
+
+            def renew() -> None:
+                try:
+                    failure = self._renew_until_stopped()
+                except Exception as exc:
+                    failure = exc
+                loop.call_soon_threadsafe(done.set_result, failure)
+
+            # Binding persistence and Identity projection can block the loop.
+            # The worker owns renewal from allocation until stop joins it.
+            Thread(target=renew, name=f"lease-renewal:{self.lease.lease_id}", daemon=True).start()
+            self._task = loop.create_task(self._observe_worker(done))
 
     async def stop(self) -> None:
         self._stopped.set()
         if self._task is not None:
-            await self._task
+            await await_settled(self._task)
 
     async def wait_failed(self) -> Exception:
         await self._failed.wait()
         assert self.failure is not None
         return self.failure
 
-    async def _run(self) -> None:
-        stop_waiter = asyncio.create_task(self._stopped.wait())
-        try:
-            while not self._stopped.is_set():
-                done, _ = await asyncio.wait(
-                    {stop_waiter}, timeout=self.interval.total_seconds()
-                )
-                if done:
-                    break
-                try:
-                    self.lease = self.coordinator.renew(
-                        lease_id=self.lease.lease_id, owner_id=self.lease.owner_id or "",
-                        version=self.lease.version, ttl=self.ttl,
-                    )
-                    self.additional_leases = tuple(self.coordinator.renew(
-                        lease_id=lease.lease_id, owner_id=lease.owner_id or "",
-                        version=lease.version, ttl=self.ttl,
-                    ) for lease in self.additional_leases)
-                except Exception as exc:
-                    self.failure = exc if isinstance(exc, LeaseRenewalFailedError) else LeaseRenewalFailedError(str(exc))
-                    self._failed.set()
-                    if self.on_failure is not None:
-                        result = self.on_failure(self.failure)
-                        if hasattr(result, "__await__"):
-                            await result
-                    return
-        finally:
-            if not stop_waiter.done():
-                stop_waiter.cancel()
-                await asyncio.gather(stop_waiter, return_exceptions=True)
+    async def _observe_worker(self, done: asyncio.Future[Exception | None]) -> None:
+        failure = await done
+        if failure is None:
+            return
+        self.failure = (failure if isinstance(failure, LeaseRenewalFailedError)
+                        else LeaseRenewalFailedError(str(failure)))
+        self._failed.set()
+        if self.on_failure is not None:
+            result = self.on_failure(self.failure)
+            if isinstance(result, Awaitable):
+                await result
+
+    def _renew_until_stopped(self) -> Exception | None:
+        interval = self.interval.total_seconds()
+        delay = interval
+        unavailable = None
+        while not self._stopped.is_set():
+            expiry = min(lease.expires_at for lease in (self.lease, *self.additional_leases))
+            remaining = (expiry - datetime.now(timezone.utc)).total_seconds()
+            if remaining <= 0:
+                return unavailable or LeaseRenewalFailedError("execution lease expired before renewal")
+            if self._stopped.wait(min(delay, remaining / 2)):
+                break
+            try:
+                self._renew_leases()
+            except SchedulerUnavailable as exc:
+                unavailable = exc
+                delay = min(1.0, interval)
+            else:
+                unavailable = None
+                delay = interval
+        return None
+
+    def _renew_leases(self) -> None:
+        for index, lease in enumerate((self.lease, *self.additional_leases)):
+            renewed = self.coordinator.renew(
+                lease_id=lease.lease_id, owner_id=lease.owner_id or "",
+                version=lease.version, ttl=self.ttl,
+            )
+            # Keep any confirmed version even if a subsequent renewal fails.
+            if index == 0:
+                self.lease = renewed
+            else:
+                self.additional_leases = (*self.additional_leases[:index - 1], renewed,
+                                          *self.additional_leases[index:])
 
 
 def _non_empty_string(value: object) -> str | None:
@@ -285,6 +316,7 @@ class ResourceBinder:
         self.plane = plane
         self.coordinator = coordinator or InMemoryLeaseCoordinator()
         self.lease_ttl = lease_ttl
+        self._capacity_waiters: dict[asyncio.Event, asyncio.AbstractEventLoop] = {}
         self.capacity_metrics: dict[str, int] = {
             "capacity_conflict_total": 0,
             "snapshot_stale_total": 0,
@@ -309,6 +341,19 @@ class ResourceBinder:
             -int(item.metadata.get("bindingPriority", 0)), item.runtime_id,
         ))
         return eligible
+
+    def _has_binding_capacity(self, runtime_id, requirement, *, agent_candidates, now):
+        """Check every resource needed by the binding, without reserving it."""
+        if not self.capacity_view(runtime_id, now=now).has_local_capacity:
+            return False
+        if agent_candidates is None or runtime_id not in agent_candidates:
+            return True
+        return any(
+            self.capacity_view(instance.runtime_id, now=now).has_local_capacity
+            for instance in self._eligible_agents(
+                agent_candidates[runtime_id], requirement, host_id=runtime_id, now=now,
+            )
+        )
 
     def evaluate(
         self,
@@ -403,7 +448,8 @@ class ResourceBinder:
             try:
                 available = tuple(
                     c.resource_id for c in eligible
-                    if self.capacity_view(c.resource_id, now=current).has_local_capacity
+                    if self._has_binding_capacity(c.resource_id, requirement,
+                        agent_candidates=agent_candidates, now=current)
                 )
                 if not available:
                     reason = "NO_CAPACITY"
@@ -449,6 +495,7 @@ class ResourceBinder:
         now: datetime | None = None,
         agent_candidates: dict[str, tuple[RuntimeProfile, ...]] | None = None,
         existing_binding: ExecutionBinding | None = None,
+        fresh_reservation: bool = False,
     ) -> ReadyNodeSchedulingResult:
         """为 READY 步骤选择 Runtime、授予租约并冻结执行绑定。"""
         if existing_binding is not None and (
@@ -499,7 +546,7 @@ class ResourceBinder:
                     agentLease=self.coordinator.get(existing_binding.agent_lease_id, now=current), candidates=evaluations)
             versioned = self.plane.runtime_snapshot(profile.runtime_id)
             lease_id = f"lease:{run_id}:{step_id}:{attempt_id}:{profile.runtime_id}"
-            if instance is not None:
+            if fresh_reservation or instance is not None:
                 # Provisional reservations are single-use. A compensated pair
                 # must not reuse a released lease identity on the next poll.
                 lease_id += ":" + uuid4().hex
@@ -597,8 +644,74 @@ class ResourceBinder:
             reason="NO_CAPACITY",
         )
 
+    async def wait_ready(
+        self, *, run_id: str, step_id: str, attempt_id: str,
+        requirement: ExecutionRequirement,
+        agent_candidates: dict[str, tuple[RuntimeProfile, ...]]
+        | Callable[[], dict[str, tuple[RuntimeProfile, ...]]] | None = None,
+        existing_binding: ExecutionBinding | None = None,
+        before_attempt: Callable[[], Awaitable[ReadyNodeSchedulingResult | None] | ReadyNodeSchedulingResult | None] | None = None,
+        on_queued: Callable[[ReadyNodeSchedulingResult], Awaitable[None]] | None = None,
+        timeout: float | None = None,
+    ) -> ReadyNodeSchedulingResult:
+        """Wait for lease contention or explicit caller readiness, retaining the binding authority.
+
+        Local releases wake queued work immediately. A capped polling interval
+        also observes remote releases, lease expiry and resource changes. There
+        is no retry count; an optional caller-owned queue deadline returns the
+        final queued decision. Cancellation owns no provisional reservation.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = None if timeout is None else loop.time() + max(0, timeout)
+        changed = asyncio.Event()
+        self._capacity_waiters[changed] = loop
+        delay = .05
+        announced_reason = None
+        try:
+            while True:
+                changed.clear()  # Register before assessing, avoiding lost releases.
+                # Health/authority refresh and queue publication are scheduler
+                # work too. A remote health round-trip during contention must
+                # not exhaust the waiting Agent's active execution budget.
+                decision = None
+                with suspended_work_wait():
+                    if before_attempt is not None:
+                        prepared = before_attempt()
+                        decision = await prepared if isinstance(prepared, Awaitable) else prepared
+                if decision is None:
+                    decision = self.bind_ready(
+                        run_id=run_id, step_id=step_id, attempt_id=attempt_id,
+                        requirement=requirement, existing_binding=existing_binding,
+                        agent_candidates=agent_candidates() if callable(agent_candidates) else agent_candidates,
+                        fresh_reservation=True,
+                    )
+                    if decision.reason != "NO_CAPACITY":
+                        return decision
+                if decision.status != "queued":
+                    return decision
+                remaining = None if deadline is None else deadline - loop.time()
+                if remaining is not None and remaining <= 0:
+                    return decision
+                if announced_reason != decision.reason and on_queued is not None:
+                    with suspended_work_wait():
+                        await on_queued(decision)
+                    announced_reason = decision.reason
+                with suspended_work_wait():
+                    try:
+                        await asyncio.wait_for(changed.wait(), min(delay, remaining) if remaining is not None else delay)
+                    except TimeoutError:
+                        pass
+                delay = min(1.0, delay * 2)
+        finally:
+            self._capacity_waiters.pop(changed, None)
+
     def release(self, lease_id: str) -> bool:
-        return self.coordinator.release(lease_id)
+        released = self.coordinator.release(lease_id)
+        if released:
+            for changed, loop in tuple(self._capacity_waiters.items()):
+                if not loop.is_closed():
+                    loop.call_soon_threadsafe(changed.set)
+        return released
 
     def release_binding(self, binding: ExecutionBinding) -> bool:
         try:

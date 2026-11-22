@@ -68,7 +68,8 @@ def _assert_python_process_boundary(source: str, relative_path: str) -> None:
         return
     # Installation control plane and its packaged fixed worker are reviewed
     # exceptions; neither may become a general Agent/Step execution backend.
-    assert relative_path in {
+    compact_worker = relative_path == "adapters/model/planning_context_projection.py"
+    assert compact_worker or relative_path in {
         "components/resource/catalog/infrastructure.py", "components/resource/catalog/builtins/server.py",
     }, relative_path
     tree = ast.parse(source)
@@ -83,6 +84,10 @@ def _assert_python_process_boundary(source: str, relative_path: str) -> None:
         handlers = [node for node in serve[0].body if isinstance(node, ast.ClassDef) and node.name == "Handler"]
         assert len(handlers) == 1
         methods = [node for node in handlers[0].body if isinstance(node, ast.FunctionDef) and node.name == "do_POST"]
+        assert len(methods) == 1
+    elif compact_worker:
+        methods = [node for node in tree.body
+                   if isinstance(node, ast.FunctionDef) and node.name == "_project_worker"]
         assert len(methods) == 1
     else:
         launchers = [node for node in tree.body
@@ -102,12 +107,14 @@ def _assert_python_process_boundary(source: str, relative_path: str) -> None:
     calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
              and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
              and node.func.value.id == "subprocess"]
-    assert len(calls) == (1 if packaged_worker else 2)
+    assert len(calls) == (1 if packaged_worker or compact_worker else 2)
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
     targets = {call.func for call in calls}
     annotations = {node for assignment in ast.walk(tree) if isinstance(assignment, ast.AnnAssign)
                    for node in ast.walk(assignment.annotation)}
     constants = {"DEVNULL", "TimeoutExpired", "CREATE_NO_WINDOW"}
+    if compact_worker:
+        constants.add("PIPE")
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and node.id == "subprocess":
             attribute = parents[node]
@@ -126,6 +133,18 @@ def _assert_python_process_boundary(source: str, relative_path: str) -> None:
         shell = [kw.value for kw in call.keywords if kw.arg == "shell"]
         assert len(shell) == 1 and isinstance(shell[0], ast.Constant) and shell[0].value is False
         assert not any(kw.arg is None for kw in call.keywords), "launcher cannot expand unknown options"
+        if compact_worker:
+            expected = ast.parse("[executable, str(WORKER)]", mode="eval").body
+            assert ast.dump(call.args[0]) == ast.dump(expected)
+            executable = [node.value for node in methods[0].body if isinstance(node, ast.Assign)
+                          and any(isinstance(target, ast.Name) and target.id == "executable"
+                                  for target in node.targets)]
+            assert [ast.unparse(value) for value in executable] == ["shutil.which('node')"]
+            script = [node.value for node in tree.body if isinstance(node, ast.Assign)
+                      and any(isinstance(target, ast.Name) and target.id == "WORKER" for target in node.targets)]
+            assert [ast.unparse(value) for value in script] == [
+                "Path(__file__).resolve().parents[2] / 'components' / 'environment' / 'compact' / 'src' / 'worker.ts'"
+            ]
         if packaged_worker:
             assert {kw.arg for kw in call.keywords} == {
                 "input", "capture_output", "text", "timeout", "shell", "encoding",

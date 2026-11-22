@@ -15,6 +15,7 @@ from app.tools.permissions import (
 )
 from app.tools.task_approval import ApprovalPolicyChanged, TaskApprovalCoordinator
 from components.executor.value_store import SQLiteExecutionValueStore
+from components.resource.scheduler.binder import ResourceBinder
 from components.resource.scheduler.leases import InMemoryLeaseCoordinator
 from contracts.local_runtime import (LocalRuntimeAuthorizationRef, LocalRuntimeExecutionLimits,
     LocalRuntimeExecutionRequest, LocalRuntimeExecutionResult)
@@ -193,7 +194,8 @@ def formal_scope(approval_scope, tmp_path, monkeypatch):
         lease = leases.acquire(lease_id=uuid4().hex, resource_id="hands", capacity=1,
             run_id="run", step_id="node", attempt_id="attempt", slot_count=1,
             ttl=timedelta(seconds=90), now=datetime.now(timezone.utc))
-        return SimpleNamespace(binding=SimpleNamespace(resource_id="hands", binding_id="binding"), lease=lease)
+        return SimpleNamespace(status="allocated", reason=None,
+            binding=SimpleNamespace(resource_id="hands", binding_id="binding"), lease=lease)
     async def healthy(_): return True
     async def publish(_, event): events.append(event)
     async def execute(request, identity, event_sink):
@@ -208,7 +210,8 @@ def formal_scope(approval_scope, tmp_path, monkeypatch):
     s.runtime.execution_value_store = store
     s.runtime.local_runtime_health_projector = SimpleNamespace(refresh=healthy)
     s.runtime.local_runtime_transport = SimpleNamespace(execute_with_identity=execute)
-    s.runtime.resource_binder = SimpleNamespace(coordinator=leases, bind_ready=bind, release=leases.release)
+    s.runtime.resource_binder = ResourceBinder(None, coordinator=leases)
+    monkeypatch.setattr(s.runtime.resource_binder, "bind_ready", bind)
     monkeypatch.setattr(formal_module, "runtime_event_broker", SimpleNamespace(publish=publish))
     monkeypatch.setattr(formal_module, "get_chat_permission_service", lambda: s.service)
     s.tools = FormalWorkspaceTools(s.runtime, SimpleNamespace(allowed_tools=()), s.node, lambda: None)

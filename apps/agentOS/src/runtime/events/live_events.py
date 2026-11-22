@@ -39,7 +39,7 @@ class RuntimeEventBroker:
         self._dirty: set[str] = set()
         self._queue_loops = {}
 
-    def bind_run(self, run_id: str, store) -> None:
+    def bind_run(self, run_id: str, store, *, rebase: bool = False) -> None:
         """Runtime and read endpoint share the same existing Run persistence port."""
         if not callable(getattr(store, "get_runtime_display", None)):
             return
@@ -48,7 +48,7 @@ class RuntimeEventBroker:
             if owner is not None and owner is not store and getattr(owner, "db_path", None) != getattr(store, "db_path", None):
                 raise ValueError("runtime event Run store identity mismatch")
             self._stores[run_id] = store
-            self._reconcile_display(run_id)
+            self._reconcile_display(run_id, rebase=rebase)
             # Closed Run projections are reloadable; don't retain every Run for
             # the service lifetime. Never evict an observed or dirty projection.
             for old in list(self._stores):
@@ -69,10 +69,10 @@ class RuntimeEventBroker:
             self._sequences[run_id] = self._displays[run_id].sequence
         return self._displays[run_id]
 
-    def _reconcile_display(self, run_id: str) -> None:
+    def _reconcile_display(self, run_id: str, *, rebase: bool = False) -> None:
         display = self._display(run_id)
         store = self._stores.get(run_id, self._store)
-        if display is None or not display.terminal or not callable(getattr(store, "get_run", None)):
+        if display is None or (not display.terminal and not rebase) or not callable(getattr(store, "get_run", None)):
             return
         try:
             run = store.get_run(run_id)
@@ -85,6 +85,11 @@ class RuntimeEventBroker:
         current = {step.step_id: bindings[step.step_id]["attemptId"] for step in run.steps
             if step.status in {"running", "completed"} and isinstance(bindings.get(step.step_id), dict)
             and isinstance(bindings[step.step_id].get("attemptId"), str)}
+        # Queue admission precedes both the Agent allocation and StepExecution.
+        # Preserve only the exact current queue Attempt when rebasing a display;
+        # old scheduling metadata cannot reactivate a previous Attempt.
+        from runtime.orchestration.binding import queued_step_attempts
+        current.update(queued_step_attempts(run))
         known: dict[str, set[str]] = defaultdict(set)
         for key, identity in state.get("attemptIds", {}).items():
             if isinstance(key, str) and isinstance(identity, str) and len(parts := key.rsplit(":", 2)) == 3:
@@ -92,8 +97,13 @@ class RuntimeEventBroker:
         for item in display.events:
             if item.get("nodeId") and item.get("attemptId"):
                 known[item["nodeId"]].add(item["attemptId"])
+        self._drain_pending(run_id)
         display.reopen(current, known)
         self._sequences[run_id] = max(self._sequences[run_id], display.sequence)
+        if rebase:
+            sequence = self._sequences[run_id] + 1
+            self._publish(run_id, RuntimeEvent(eventType="runtime.display.snapshot", runId=run_id,
+                sequence=sequence, payload={**display.snapshot(run=run), "sequence": sequence}))
         self._dirty.add(run_id)
         if run_id not in self._flushes:
             timer = Timer(0.25, self._flush, args=(run_id,))
@@ -140,9 +150,18 @@ class RuntimeEventBroker:
         with self._lock:
             self._reconcile_display(run_id)
             display = self._display(run_id)
+            if display is None:
+                return None
             self._drain_pending(run_id)
+            run = None
+            store = self._stores.get(run_id, self._store)
+            if callable(getattr(store, "get_run", None)):
+                try:
+                    run = store.get_run(run_id)
+                except KeyError:
+                    pass
             return RuntimeEvent(eventType="runtime.display.snapshot", runId=run_id,
-                sequence=display.sequence, payload=display.snapshot()) if display is not None else None
+                sequence=display.sequence, payload=display.snapshot(run=run))
 
     async def publish(self, run_id: str, event: RuntimeEvent) -> None:
         with self._lock:

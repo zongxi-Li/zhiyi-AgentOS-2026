@@ -124,7 +124,9 @@ async def resolve_chat_approval(
     except ApprovalResolutionError as error:
         raise HTTPException(
             status_code=error.status_code,
-            detail={"code": error.code, "message": str(error)},
+            detail={"code": error.code, "message": str(error),
+                **({"approval": error.approval.model_dump(by_alias=True, mode="json")}
+                   if error.approval is not None else {})},
         ) from error
     return {
         "approvalId": approval_id,

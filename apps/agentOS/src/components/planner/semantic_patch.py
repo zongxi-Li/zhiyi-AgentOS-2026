@@ -19,6 +19,12 @@ from support.packs.native_capabilities import build_default_capability_catalog
 from contracts.acg.schema import ACGBlueprint
 
 
+# A rejected derivation may be replayed after its implementation changes, but
+# an accepted graph remains immutable. Keep this independent of the semantic
+# source fingerprint so repairing the compiler does not rewrite its input.
+SEMANTIC_GRAPH_DERIVATION_VERSION = "semantic-graph-derivation.v3"
+
+
 @dataclass(frozen=True)
 class SemanticPatchResult:
     blueprint: ACGBlueprint
@@ -144,4 +150,4 @@ def derive_graph_patch(
     )
 
 
-__all__ = ["SemanticGraphPatchService", "SemanticPatchResult", "derive_graph_patch"]
+__all__ = ["SEMANTIC_GRAPH_DERIVATION_VERSION", "SemanticGraphPatchService", "SemanticPatchResult", "derive_graph_patch"]

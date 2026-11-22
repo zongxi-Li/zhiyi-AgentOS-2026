@@ -2249,7 +2249,12 @@ def test_legacy_workspace_rerun_freezes_current_selection(tmp_path):
         mission = runtime.create_mission('Legacy workspace rerun')
         _, parent = runtime.prepare_run(mission.mission_id, workflow_id='api-workflow')
         current = {'workspaceRoot': 'C:/selected', 'workspaceId': 'new-workspace'}
-        runtime.workspace_authority = SimpleNamespace(resolve=lambda run: None,
+
+        def resolve(run):
+            if 'workspaceBinding' not in run.input:
+                raise PermissionError('Run has no frozen authorized workspace')
+
+        runtime.workspace_authority = SimpleNamespace(resolve=resolve,
             freeze=lambda inputs: inputs.update(workspaceBinding=dict(current)))
         _, child = runtime.prepare_run(mission.mission_id, workflow_id='api-workflow', parent_run_id=parent.run_id)
         assert child.input['workspaceBinding'] == current

@@ -83,10 +83,14 @@ class ApprovalRequest(BaseModel):
 
 
 class ApprovalResolutionError(RuntimeError):
-    def __init__(self, code: str, message: str, *, status_code: int = 409) -> None:
+    def __init__(self, code: str, message: str, *, status_code: int = 409,
+                 approval: ApprovalRequest | None = None) -> None:
         super().__init__(message)
         self.code = code
         self.status_code = status_code
+        # A confirmed terminal receipt may reconcile a stale card. It is not a
+        # fresh decision, permission grant, or instruction to repeat the tool.
+        self.approval = approval
 
 
 class PermissionDeniedError(RuntimeError):
@@ -390,20 +394,18 @@ class ChatPermissionService:
         """Resolve once without yielding, including under a task policy lock."""
         pending = self._pending.get(approval_id)
         if pending is None:
-            if approval_id in self._completed:
-                if self._completed[approval_id].status == 'expired':
-                    raise ApprovalResolutionError('APPROVAL_EXPIRED', 'approval has expired')
-                raise ApprovalResolutionError("APPROVAL_REPLAYED", "approval has already been resolved")
+            completed = self._completed.get(approval_id)
+            if completed is not None:
+                self._assert_resolution_identity(completed, session_id=session_id,
+                    invocation_id=invocation_id, capability_id=capability_id, relative_path=relative_path)
+                if completed.status == 'expired':
+                    raise ApprovalResolutionError('APPROVAL_EXPIRED', 'approval has expired', approval=completed)
+                raise ApprovalResolutionError("APPROVAL_REPLAYED", "approval has already been resolved",
+                    approval=completed)
             raise ApprovalResolutionError("APPROVAL_NOT_FOUND", "approval does not exist", status_code=404)
         request = pending.request
-        if request.session_id != session_id:
-            raise ApprovalResolutionError("APPROVAL_SESSION_MISMATCH", "approval belongs to another session", status_code=403)
-        if invocation_id is not None and invocation_id != request.invocation_id:
-            raise ApprovalResolutionError("APPROVAL_INVOCATION_MISMATCH", "approval invocation does not match")
-        if capability_id is not None and capability_id != request.capability_id:
-            raise ApprovalResolutionError("APPROVAL_SCOPE_MISMATCH", "approval capability does not match")
-        if relative_path is not None and relative_path != request.relative_path:
-            raise ApprovalResolutionError("APPROVAL_SCOPE_MISMATCH", "approval path does not match")
+        self._assert_resolution_identity(request, session_id=session_id,
+            invocation_id=invocation_id, capability_id=capability_id, relative_path=relative_path)
         if request.capability_id == "shell.exec" and decision is ApprovalDecision.ALLOW_SESSION:
             raise ApprovalResolutionError(
                 "APPROVAL_DECISION_UNSUPPORTED",
@@ -415,7 +417,7 @@ class ChatPermissionService:
             self._pending.pop(approval_id, None)
             if not pending.future.done():
                 pending.future.set_result((ApprovalDecision.DENY, "APPROVAL_EXPIRED"))
-            raise ApprovalResolutionError("APPROVAL_EXPIRED", "approval has expired")
+            raise ApprovalResolutionError("APPROVAL_EXPIRED", "approval has expired", approval=expired)
         if decision is not ApprovalDecision.DENY and pending.trusted_context is not None:
             pending.trusted_context.validate()
         pending.decision_metadata = dict(decision_metadata or {
@@ -426,6 +428,21 @@ class ChatPermissionService:
         if not pending.future.done():
             pending.future.set_result((decision, None if decision is not ApprovalDecision.DENY else "PERMISSION_DENIED"))
         return request
+
+    @staticmethod
+    def _assert_resolution_identity(
+        request: ApprovalRequest, *, session_id: str, invocation_id: str | None,
+        capability_id: str | None, relative_path: str | None,
+    ) -> None:
+        """Apply the same isolation before resolving or revealing a receipt."""
+        if request.session_id != session_id:
+            raise ApprovalResolutionError("APPROVAL_SESSION_MISMATCH", "approval belongs to another session", status_code=403)
+        if invocation_id is not None and invocation_id != request.invocation_id:
+            raise ApprovalResolutionError("APPROVAL_INVOCATION_MISMATCH", "approval invocation does not match")
+        if capability_id is not None and capability_id != request.capability_id:
+            raise ApprovalResolutionError("APPROVAL_SCOPE_MISMATCH", "approval capability does not match")
+        if relative_path is not None and relative_path != request.relative_path:
+            raise ApprovalResolutionError("APPROVAL_SCOPE_MISMATCH", "approval path does not match")
 
     async def cancel_session(self, session_id: str) -> None:
         """Fail pending calls for a disconnected stream without revoking grants."""

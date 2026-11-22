@@ -273,9 +273,13 @@ class ExecutionPermitAuthority:
                 or source_blueprint.graph_id != handoff.identity_link.source_graph.graph_id
                 or source_blueprint.graph.get("version") != int(handoff.identity_link.source_graph.version)):
             raise ExecutionPermitError(Code.STALE_GRAPH, "Identity Run version differs from the frozen source")
+        retired = tuple(proposal.graph_patch.removed_node_ids)
+        if set(retired) & set(proposal.safe_cut.protected_node_ids):
+            raise ExecutionPermitError(Code.INVALID_PROPOSAL, "retired nodes overlap the protected execution prefix")
         self.runtime.identity_lifecycle.on_execution_permit_blueprint_promoted(
             SimpleNamespace(run_id=record.run_id, mission_id=record.mission_id),
-            proposal.candidate_graph, proposal.next_plan, proposal.next_bindings, record.permit_id)
+            proposal.candidate_graph, proposal.next_plan, proposal.next_bindings, record.permit_id,
+            **({"retired_node_ids": retired} if retired else {}))
         if not self._identity_matches_candidate(record, handoff):
             raise ExecutionPermitError(Code.INVALID_PROPOSAL, "Identity projection did not match the accepted candidate")
 

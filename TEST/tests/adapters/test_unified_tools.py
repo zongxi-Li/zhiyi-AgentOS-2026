@@ -202,8 +202,8 @@ async def stack(monkeypatch, tmp_path):
     runtime.execution_value_store.close()
 
 
-def node(stack, agent, turns=None, *, workspace='one', run_id=None):
-    task = RuntimeMissionRecord(missionId='mission', title='Read evidence and answer')
+def node(stack, agent, turns=None, *, workspace='one', run_id=None, mission_id='mission'):
+    task = RuntimeMissionRecord(missionId=mission_id, title='Read evidence and answer')
     run = RuntimeRunRecord(missionId=task.mission_id, workflowId='flow', domain='general', runtimeEngine='acg',
         **({'runId': run_id} if run_id else {}), input={'workspace': workspace})
     output = WORKSPACE_OUTPUT if isinstance(agent, WorkspaceDeveloper) else ANSWER
@@ -371,7 +371,8 @@ async def test_bad_arguments_return_explicit_error_to_model_without_dispatch(sta
     runner, state, step, http = node(stack, GeneralAgent(), [[('fs.read', arguments)], {'answer': 'invalid input handled'}])
     await runner(step.step_id, state)
     assert stack.service.requests == []
-    assert json.loads(http.requests[1]['messages'][-1]['content'])['error']['code'] == 'TOOL_ARGUMENTS_INVALID'
+    observation = next(item for item in reversed(http.requests[1]['messages']) if item['role'] == 'tool')
+    assert json.loads(observation['content'])['error']['code'] == 'TOOL_ARGUMENTS_INVALID'
 
 
 @pytest.mark.asyncio
@@ -379,20 +380,21 @@ async def test_failed_execution_returns_error_and_allows_reasoning(stack):
     stack.service.failed = True
     runner, state, step, http = node(stack, GeneralAgent(), [[('fs.read', {'path': 'n'})], {'answer': 'failure handled'}])
     await runner(step.step_id, state)
-    result = json.loads(http.requests[1]['messages'][-1]['content'])
+    observation = next(item for item in reversed(http.requests[1]['messages']) if item['role'] == 'tool')
+    result = json.loads(observation['content'])
     assert result['status'] == 'failed' and result['error']['code'] == 'CONTROLLED_FAILURE'
     assert stack.runtime.resource_binder.coordinator.active_slots('hands') == 0
 
 
 @pytest.mark.asyncio
-async def test_legacy_action_limit_does_not_block_authorized_batches(stack):
+async def test_authorized_batches_continue_without_count_limit(stack):
     runner, _, step, http = node(stack, GeneralAgent(), [[('fs.read', {'path': 'n'})],
         [('fs.read', {'path': f'file-{i}.py'}) for i in range(40)], {'answer': 'observed files'}])
-    session = AgentToolSession(context_for(runner, step), max_actions=2)
+    session = AgentToolSession(context_for(runner, step))
     result = await session.generate_json(prompt='read', schema=ANSWER)
     assert result.data == {'answer': 'observed files'}
     assert len(stack.service.requests) == 41 and len(http.requests) == 3
-    assert session.actions == 41 and session.max_actions is None
+    assert session.actions == 41
 
 
 @pytest.mark.asyncio
@@ -416,11 +418,19 @@ async def test_permission_denial_cannot_dispatch_or_obtain_a_lease(stack):
 
 
 @pytest.mark.asyncio
-async def test_unknown_outcome_is_terminal_and_quarantines_resource(stack):
+async def test_invalid_receipt_requires_host_settlement_and_quarantines_resource(stack):
     stack.service.bad_receipt = True
     runner, state, step, http = node(stack, GeneralAgent(), [[('fs.read', {'path': 'n'})], {'answer': 'must not run'}])
-    with pytest.raises(RuntimeError, match='settlement'):
+    with pytest.raises(StructuredGenerationError) as captured:
         await runner(step.step_id, state)
+    assert captured.value.code == 'HANDS_OUTCOME_UNKNOWN'
+    assert captured.value.retryable is False
+    request = stack.service.requests[0]
+    assert captured.value.metadata['toolFailure'] == {
+        'stepId': request['identity']['stepId'], 'attemptId': request['identity']['attemptId'],
+        'commitId': request['identity']['commitId'], 'tool': 'fs.read', 'resourceId': 'hands',
+        'operationKey': request['invocationId'], 'phase': 'tool_settlement',
+    }
     assert len(http.requests) == 1
     assert stack.runtime.resource_plane.runtime('hands').enabled is False
     assert stack.runtime.resource_binder.coordinator.active_slots('hands') == 1
@@ -485,17 +495,112 @@ async def test_session_deadline_cleans_up_lease_and_stops_model(stack):
     assert stack.runtime.resource_binder.coordinator.active_slots('hands') == 0
 
 
-def test_discovery_does_not_remove_legacy_tool_authorization():
+def test_root_discovers_native_tools_and_explicit_scope_can_remove_them():
     class Delegate:
         list_tools = staticmethod(hands_tools)
     runtime = AuditedToolRuntime(delegate=Delegate(), allowed_tools=['legacy'])
+    assert {tool.name for tool in runtime.list_tools()} == NAMES
     narrowed = runtime.scoped([])
-    assert {tool.name for tool in narrowed.list_tools()} == NAMES
+    assert narrowed.list_tools() == ()
     with pytest.raises(ToolAuthorizationError):
         asyncio.run(narrowed.execute('legacy', {}))
-    mutated = narrowed.list_tools()
+    readonly = runtime.scoped({'fs.read', 'fs.list'})
+    mutated = readonly.list_tools()
     mutated[0].parameters['properties'].clear()
-    assert narrowed.describe('fs.read').parameters['properties']
+    assert readonly.describe('fs.read').parameters['properties']
+
+
+@pytest.mark.asyncio
+async def test_formal_workspace_scope_denies_native_and_alias_writes_before_authorization(stack):
+    formal = stack.tools.delegate.delegate
+    readonly = formal.scoped({'fs.read', 'fs.list'})
+    assert {tool.name for tool in readonly.list_tools()} == {'fs.read', 'fs.list'}
+    for name in ('shell.exec', 'fs.write', 'fs.patch', 'run_tests', 'write_file', 'patch_file'):
+        with pytest.raises(ToolAuthorizationError):
+            await readonly.execute(name, {})
+    assert stack.service.requests == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('role', ['workspace_acquisition', 'workspace_review', 'extraction'])
+async def test_workspace_semantic_stages_enforce_read_only_tools_at_node_boundary(stack, role):
+    agent = GeneralAgent()
+    execute = agent.run
+    forbidden = {'shell.exec', 'fs.write', 'fs.patch', 'run_tests', 'write_file', 'patch_file',
+                 'run_command', 'shell__exec'}
+    stack.tools = AuditedToolRuntime(delegate=stack.tools.delegate, allowed_tools=forbidden)
+
+    async def inspect(context):
+        tools = context.tool_runtime
+        assert tools.allowed_tools == frozenset({'fs.read', 'fs.list'})
+        assert {tool.name for tool in tools.list_tools()} == tools.allowed_tools
+        for name in forbidden:
+            assert tools.describe(name) is None
+            with pytest.raises(ToolAuthorizationError):
+                await tools.execute(name, {}, operation_key='blocked:' + name)
+            with pytest.raises(ToolAuthorizationError):
+                _ = [item async for item in tools.astream_execute(name, {}, operation_key='blocked-stream')]
+        with pytest.raises(ToolAuthorizationError):
+            await tools.run('run tests or write a file')
+        rebound = tools.bind_context(context, lambda: None).scoped(NAMES | forbidden)
+        assert rebound.allowed_tools == tools.allowed_tools
+        return await execute(context)
+
+    agent.run = inspect
+    runner, state, step, http = node(stack, agent, [
+        [('shell.exec', {'command': 'mock'}), ('run_tests', {'runner': 'pytest'})],
+        [('fs.list', {'path': '.'}), ('fs.read', {'path': 'note.txt'})], {'answer': 'verified batch'}])
+    step.logical_role = role
+    if role == 'extraction':
+        runner.run.input['workspaceBinding'] = {'workspaceId': 'one', 'grantId': 'grant-one'}
+        runner.run.execution_state['workspaceObservations'] = [
+            {'kind': 'directory', 'path': '.', 'operation': 'read', 'recursive': True}]
+    if role == 'workspace_review':
+        step.capability = 'verification'
+        runner.capability_descriptors['verification'] = agent.capability_catalog.get('verification')
+    await runner(step.step_id, state)
+    assert {item['capabilityId'] for item in stack.service.requests} == {'fs.read', 'fs.list'}
+    assert len(stack.service.requests) == 2
+    assert {entry['function']['name'] for entry in http.requests[0]['tools']} == {'fs__read', 'fs__list'}
+    failures = [json.loads(item['content']) for item in http.requests[1]['messages'] if item['role'] == 'tool']
+    assert len(failures) == 2 and all(item['status'] == 'failed' for item in failures)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('semantic', [
+    {'logicalRole': 'workspace_acquisition', 'metadata': {'source': 'planner_targeted_repair'}},
+    {'logicalRole': 'workspace_review', 'metadata': {'source': 'planner_targeted_repair'}},
+    {'metadata': {'source': 'workspace_review'}},
+    {'metadata': {'taskType': 'workspace_review'}},
+    {'constraints': [{'workspaceReview': {'targets': [{'operation': 'read', 'path': 'note.txt'}]}}]},
+])
+async def test_frozen_workspace_semantics_restrict_legacy_steps_without_role(stack, semantic):
+    from contracts.planning import PlannedTask, TaskPlan
+
+    runner, state, step, http = node(stack, GeneralAgent(), [
+        [('fs.read', {'path': 'note.txt'})], {'answer': 'read evidence'}], mission_id='mission_000000000001')
+    task = PlannedTask(key='source-page', title='Review repository page', objective='Inspect source', **semantic)
+    plan = TaskPlan(missionId=runner.run.mission_id, nodes=(task,))
+    runner.run.execution_state.update(taskPlan=plan.model_dump(by_alias=True, mode='json'),
+        taskBindings=[{'planNodeKey': task.key, 'acgNodeId': step.step_id}])
+    await runner(step.step_id, state)
+    assert {entry['function']['name'] for entry in http.requests[0]['tools']} == {'fs__read', 'fs__list'}
+    assert [request['capabilityId'] for request in stack.service.requests] == ['fs.read']
+
+
+@pytest.mark.asyncio
+async def test_ordinary_verification_keeps_shell_and_managed_tests(stack, monkeypatch):
+    monkeypatch.setenv('AGENTOS_WORKSPACE_TEST_PYTHON', sys.executable)
+    agent = GeneralAgent()
+    runner, state, step, http = node(stack, agent, [
+        [('shell.exec', {'command': 'mock-only verification', 'workdir': '.'})],
+        [('shell.exec', {'runner': 'pytest'})], {'answer': 'verified'}])
+    step.logical_role = 'verification'
+    step.capability = 'verification'
+    runner.capability_descriptors['verification'] = agent.capability_catalog.get('verification')
+    await runner(step.step_id, state)
+    assert {entry['function']['name'] for entry in http.requests[0]['tools']} == {name.replace('.', '__') for name in NAMES}
+    assert [request['capabilityId'] for request in stack.service.requests] == ['shell.exec', 'shell.exec']
 
 
 @pytest.mark.asyncio
@@ -557,28 +662,56 @@ async def test_cancellation_while_waiting_for_user_approval(stack):
 
 
 @pytest.mark.asyncio
-async def test_user_approval_wait_does_not_exhaust_the_model_and_tool_work_budget(stack):
+async def test_user_approval_wait_does_not_exhaust_the_model_and_tool_work_budget(stack, monkeypatch):
+    from contextlib import asynccontextmanager
     from app.tools.permissions import ApprovalDecision
+    from support.work_timeouts import work_timeout
+
+    budgets, pending_ready = [], asyncio.Event()
+
+    @asynccontextmanager
+    async def observe_budget(seconds):
+        async with work_timeout(seconds) as timer:
+            budgets.append(timer)
+            yield timer
+
+    authorize = stack.permissions.authorize
+
+    async def observe_approval(**kwargs):
+        emit = kwargs['emit']
+
+        async def observe_emit(kind, payload):
+            await emit(kind, payload)
+            if kind == 'approval_required':
+                pending_ready.set()
+
+        return await authorize(**{**kwargs, 'emit': observe_emit})
+
+    monkeypatch.setattr('adapters.agent.tool_session.work_timeout', observe_budget)
+    monkeypatch.setattr(stack.permissions, 'authorize', observe_approval)
     class Ask:
         def evaluate(self, *args, **kwargs):
             return PermissionDecision.ASK
     stack.permissions.policy = Ask()
     runner, _, step, http = node(stack, GeneralAgent(), [[('shell.exec', {'command': 'mock'})], {'answer': 'approved'}])
     session = AgentToolSession(context_for(runner, step))
-    task = asyncio.create_task(session.generate_json(prompt='inspect', schema=ANSWER, timeout_seconds=.25))
-    for _ in range(100):
-        if stack.permissions._pending:
-            break
-        await asyncio.sleep(.005)
-    assert stack.permissions._pending
-    approval_id, pending = next(iter(stack.permissions._pending.items()))
-    await asyncio.sleep(.35)
-    assert not task.done() and not stack.service.requests
-    request = pending.request
-    await stack.permissions.resolve(approval_id, decision=ApprovalDecision.ALLOW_ONCE,
-        session_id=request.session_id, invocation_id=request.invocation_id,
-        capability_id=request.capability_id, relative_path=request.relative_path)
-    result = await asyncio.wait_for(task, 2)
+    task = asyncio.create_task(session.generate_json(prompt='inspect', schema=ANSWER, timeout_seconds=10))
+    try:
+        await asyncio.wait_for(pending_ready.wait(), 10)
+        assert stack.permissions._pending
+        approval_id, pending = next(iter(stack.permissions._pending.items()))
+        assert not task.done() and not stack.service.requests
+        assert len(budgets) == 1 and budgets[0].when() is None
+        request = pending.request
+        await stack.permissions.resolve(approval_id, decision=ApprovalDecision.ALLOW_ONCE,
+            session_id=request.session_id, invocation_id=request.invocation_id,
+            capability_id=request.capability_id, relative_path=request.relative_path)
+        result = await asyncio.wait_for(task, 10)
+        assert budgets[0].when() is not None and not budgets[0].expired()
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
     assert result.data == {'answer': 'approved'}
     assert len(stack.service.requests) == 1 and len(http.requests) == 2
     assert not stack.runtime.formal_tool_pending
@@ -681,7 +814,7 @@ async def test_resume_after_precommit_fault_reuses_tool_decisions_and_receipts(s
 
 
 @pytest.mark.asyncio
-async def test_retrieval_preserves_existing_search_and_can_autonomously_use_hands(stack):
+async def test_retrieval_corrects_citations_in_the_same_session_without_repeating_tools(stack):
     from contracts.compiled_acg import EvidenceManifest, EvidenceRule
     class Search:
         calls = []
@@ -691,15 +824,30 @@ async def test_retrieval_preserves_existing_search_and_can_autonomously_use_hand
     search = Search()
     stack.tools.delegate.delegate.fallback = search
     stack.tools = AuditedToolRuntime(delegate=stack.tools.delegate, allowed_tools=['knowledge_search', 'web_search'])
-    runner, state, step, http = node(stack, ResearchAgent(), [[('fs.read', {'path': 'n'})], {'answer': 'evidence'}])
+
+    def corrected(payload):
+        assert 'citationId values from retrievalEvidence.sources' in payload['messages'][-1]['content']
+        retrieval = next(json.loads(message['content'])['retrievalEvidence'] for message in payload['messages']
+                         if message['role'] == 'user' and '"retrievalEvidence":' in message['content'])
+        return {'retrieved_information': ['Observed n'], 'evidence_refs': retrieval['evidence_refs']}
+
+    agent = ResearchAgent()
+    descriptor = agent.capability_catalog.get('information_retrieval')
+    runner, state, step, http = node(stack, agent, [[('fs.read', {'path': 'n'})],
+        {'retrieved_information': ['Observed n'], 'evidence_refs': ['n', 'src/*.py']}, corrected])
     step.capability = 'information_retrieval'
+    step.output_spec = descriptor.output_contract
     runner.evidence_manifest = EvidenceManifest(rules=(EvidenceRule(
         stepId=step.step_id, evidenceNodeId='retrieval-evidence', access='produce',
         evidenceType='retrieved', source='task-input'),))
-    runner.capability_descriptors[step.capability] = ResearchAgent().capability_catalog.get(step.capability)
-    await runner(step.step_id, state)
-    assert search.calls[0] == 'knowledge_search'
-    assert stack.service.requests[0]['capabilityId'] == 'fs.read' and len(http.requests) == 2
+    runner.capability_descriptors[step.capability] = descriptor
+    result = await runner(step.step_id, state)
+    data = runner.value_store.get_output(run_id=runner.run.run_id, output_ref=result['outputRef'])
+    assert data['evidence_refs'] == result['evidenceRefs']
+    assert len(result['evidenceRefs']) == 1 and result['evidenceRefs'][0] not in {'n', 'src/*.py'}
+    assert search.calls == ['knowledge_search', 'web_search']
+    assert [request['capabilityId'] for request in stack.service.requests] == ['fs.read']
+    assert len(http.requests) == 3
 
 
 @pytest.mark.asyncio
@@ -707,7 +855,252 @@ async def test_unknown_tool_name_returns_error_without_invocation(stack):
     runner, state, step, http = node(stack, GeneralAgent(), [[('fake.tool', {})], {'answer': 'unavailable'}])
     await runner(step.step_id, state)
     assert stack.service.requests == []
-    assert json.loads(http.requests[1]['messages'][-1]['content'])['error']['code'] == 'TOOL_ARGUMENTS_INVALID'
+    observation = next(item for item in reversed(http.requests[1]['messages']) if item['role'] == 'tool')
+    assert json.loads(observation['content'])['error']['code'] == 'TOOL_ARGUMENTS_INVALID'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('failure', ['lease', 'scheduler', 'health', 'authorization'])
+async def test_formal_infrastructure_failure_returns_to_host_without_another_model_turn(stack, monkeypatch, failure):
+    from components.resource.scheduler.leases import LeaseRenewalFailedError
+    from components.resource.scheduler.models import SchedulerUnavailable
+    from contracts.tools import ToolExecutionAuthorizationLost
+
+    expected = {'lease': 'EXECUTION_LEASE_LOST', 'scheduler': 'SCHEDULER_UNAVAILABLE',
+                'health': 'EXECUTION_RESOURCE_UNAVAILABLE', 'capacity': 'EXECUTION_CAPACITY_UNAVAILABLE',
+                'authorization': 'EXECUTION_AUTHORIZATION_LOST'}[failure]
+    runner, _, step, http = node(stack, GeneralAgent(), [[('fs.list', {'path': '.'})],
+                                                        {'answer': 'must not be requested'}])
+
+    async def unavailable(_transport):
+        if failure in {'lease', 'scheduler'}:
+            exception = LeaseRenewalFailedError if failure == 'lease' else SchedulerUnavailable
+            raise exception('private provider context')
+        return failure != 'health'
+
+    monkeypatch.setattr(stack.runtime.local_runtime_health_projector, 'refresh', unavailable)
+    if failure == 'health':
+        stack.runtime.resource_plane.set_runtime_enabled('hands', enabled=False)
+    if failure == 'authorization':
+        def revoked(_run):
+            raise ToolExecutionAuthorizationLost('private authority details')
+
+        monkeypatch.setattr(stack.runtime.workspace_authority, 'resolve', revoked)
+    context = context_for(runner, step)
+    with pytest.raises(StructuredGenerationError) as captured:
+        await AgentToolSession(context).generate_json(prompt='inspect', schema=ANSWER)
+    assert captured.value.code == expected
+    assert captured.value.retryable is (failure == 'scheduler')
+    details = captured.value.metadata['toolFailure']
+    expected_details = {
+        'stepId': step.step_id, 'attemptId': context.attempt_id, 'commitId': context.commit_id,
+        'tool': 'fs.list', 'operationKey': context.commit_id + ':tools:0:call:0',
+    }
+    assert {key: details[key] for key in expected_details} == expected_details
+    assert captured.value.audit['toolActionsExecuted'] == 1
+    assert len(http.requests) == 1
+    assert stack.service.requests == []
+    assert stack.runtime.resource_binder.coordinator.active_slots('hands') == 0
+    assert 'private' not in str(captured.value)
+
+
+@pytest.mark.asyncio
+async def test_formal_tool_waits_for_hands_health_before_dispatch(stack, monkeypatch):
+    projector = stack.runtime.local_runtime_health_projector
+    refresh = projector.refresh
+    probes = 0
+
+    async def transient_outage(transport):
+        nonlocal probes
+        probes += 1
+        if probes == 1:
+            assert not stack.service.requests
+            return False
+        return await refresh(transport)
+
+    monkeypatch.setattr(projector, 'refresh', transient_outage)
+    runner, _, step, http = node(stack, GeneralAgent(), [
+        [('fs.list', {'path': '.'})], {'answer': 'read'},
+    ])
+    result = await asyncio.wait_for(
+        AgentToolSession(context_for(runner, step)).generate_json(prompt='inspect', schema=ANSWER), 5)
+    assert result.data == {'answer': 'read'}
+    assert probes == 2 and len(stack.service.requests) == 1 and len(http.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_parallel_steps_queue_for_one_hands_slot_without_model_retry(stack):
+    stack.runtime.resource_plane.update_runtime_capacity('hands', 1, expected_capacity=3)
+    stack.service.release = asyncio.Event()
+    contexts = []
+    operations = []
+    for index in range(4):
+        runner, _, step, http = node(stack, GeneralAgent(),
+            [[('fs.read', {'path': f'file-{index}.txt'})], {'answer': 'read'}])
+        contexts.append((context_for(runner, step), http))
+    operations = [asyncio.create_task(AgentToolSession(context).generate_json(prompt='read', schema=ANSWER))
+                  for context, _ in contexts]
+    try:
+        await asyncio.wait_for(stack.service.started.wait(), 2)
+        # Every model has issued one declaration; other operations hold no
+        # Hands lease or request while the first external operation is blocked.
+        async with asyncio.timeout(2):
+            while len(stack.runtime.resource_binder._capacity_waiters) < 3:
+                await asyncio.sleep(.005)
+        assert len(stack.service.requests) == 1
+        assert all(len(http.requests) == 1 for _, http in contexts)
+        assert stack.runtime.resource_binder.coordinator.active_slots('hands') == 1
+        stack.service.release.set()
+        results = await asyncio.wait_for(asyncio.gather(*operations), 5)
+        assert all(result.data == {'answer': 'read'} for result in results)
+        assert len(stack.service.requests) == stack.service.execution_count == 4
+        assert all(len(http.requests) == 2 for _, http in contexts)
+        assert stack.service.peak_slots == 1
+        assert stack.runtime.resource_binder.coordinator.active_slots('hands') == 0
+        assert not stack.runtime.resource_binder._capacity_waiters
+    finally:
+        stack.service.release.set()
+        for operation in operations:
+            if not operation.done(): operation.cancel()
+        await asyncio.gather(*operations, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('cancel_waiter', [True, False])
+async def test_waiting_tool_cancellation_or_revoked_guard_never_dispatches(stack, cancel_waiter):
+    from adapters.tool.guarded import ToolInvocationError
+    from contracts.tools import ToolExecutionAuthorizationLost
+    stack.runtime.resource_plane.update_runtime_capacity('hands', 1, expected_capacity=3)
+    stack.service.release = asyncio.Event()
+    runner, _, step, _ = node(stack, GeneralAgent())
+    holder_context = context_for(runner, step)
+    holder = asyncio.create_task(holder_context.tool_runtime.execute('fs.read', {'path': 'held'}, operation_key='held'))
+    waiting_runner, _, waiting_step, _ = node(stack, GeneralAgent())
+    context = context_for(waiting_runner, waiting_step)
+    revoked = False
+
+    def guard():
+        if revoked: raise ToolExecutionAuthorizationLost('permit revoked while queued')
+
+    context.tool_runtime = waiting_runner.tool_runtime.bind_context(context, guard)
+    waiter = None
+    try:
+        await asyncio.wait_for(stack.service.started.wait(), 2)
+        waiter = asyncio.create_task(context.tool_runtime.execute('fs.read', {'path': 'queued'}, operation_key='queued'))
+        async with asyncio.timeout(2):
+            while not stack.runtime.resource_binder._capacity_waiters:
+                await asyncio.sleep(.005)
+        if cancel_waiter:
+            waiter.cancel()
+            with pytest.raises(asyncio.CancelledError): await waiter
+        else:
+            revoked = True
+            with pytest.raises(ToolInvocationError) as captured:
+                await asyncio.wait_for(waiter, 2)
+            assert captured.value.code == 'EXECUTION_AUTHORIZATION_LOST'
+        assert len(stack.service.requests) == 1
+        assert stack.runtime.execution_value_store.get_tool_value(
+            run_id=context.run.run_id, key='queued:request') is None
+        assert not stack.runtime.resource_binder._capacity_waiters
+        stack.service.release.set()
+        await holder
+        assert stack.runtime.resource_binder.coordinator.active_slots('hands') == 0
+    finally:
+        stack.service.release.set()
+        for operation in (holder, waiter):
+            if operation is not None and not operation.done(): operation.cancel()
+        await asyncio.gather(*(operation for operation in (holder, waiter) if operation is not None), return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_invalid_arguments_receive_schema_guidance_and_can_be_corrected(stack):
+    runner, _, step, http = node(stack, GeneralAgent(), [[('fs.read', {'path': 123})],
+        [('fs.read', {'path': 'source.txt'})], {'answer': 'verified'}])
+    result = await AgentToolSession(context_for(runner, step)).generate_json(prompt='inspect', schema=ANSWER)
+    observation = next(item for item in reversed(http.requests[1]['messages']) if item['role'] == 'tool')
+    error = json.loads(observation['content'])['error']
+    assert error['code'] == 'TOOL_ARGUMENTS_INVALID'
+    assert error['parameters']['properties']['path']['type'] == 'string'
+    assert 'Correct the arguments' in error['guidance']
+    assert '123' not in observation['content']
+    assert len(stack.service.requests) == 1
+    assert result.data == {'answer': 'verified'}
+
+
+@pytest.mark.asyncio
+async def test_enriched_invalid_tool_transcript_replays_after_reopening_without_repeating_read(stack):
+    runner, _, step, http = node(stack, GeneralAgent(), [[('fs.read', {'path': 123})],
+        [('fs.read', {'path': 'source.txt'})], {'answer': 'verified'}])
+    context = context_for(runner, step)
+    first = await AgentToolSession(context).generate_json(prompt='inspect', schema=ANSWER)
+    store = stack.runtime.execution_value_store
+    keys = [f'{context.commit_id}:tools:{turn}:model-turn' for turn in range(3)]
+    frozen = [store.get_tool_value(run_id=runner.run.run_id, key=key) for key in keys]
+    path = store.db_path
+    store.close()
+    reopened = SQLiteExecutionValueStore(db_path=path)
+    stack.runtime.execution_value_store = reopened
+    second = await AgentToolSession(context).generate_json(prompt='inspect', schema=ANSWER)
+    assert first == second
+    assert len(http.requests) == 3 and len(stack.service.requests) == 1
+    assert [reopened.get_tool_value(run_id=runner.run.run_id, key=key) for key in keys] == frozen
+
+
+@pytest.mark.asyncio
+async def test_repeated_invalid_tool_failure_replays_its_guidance_and_same_no_progress_outcome(stack):
+    runner, _, step, http = node(stack, GeneralAgent(), [[('fs.read', {'path': 123})],
+                                                       [('fs.read', {'path': 123})]])
+    context = context_for(runner, step)
+    store = stack.runtime.execution_value_store
+    frozen = None
+    for _ in range(2):
+        with pytest.raises(StructuredGenerationError) as captured:
+            await AgentToolSession(context).generate_json(prompt='inspect', schema=ANSWER)
+        assert captured.value.code == 'AGENT_NO_PROGRESS'
+        current = [store.get_tool_value(run_id=runner.run.run_id,
+            key=f'{context.commit_id}:tools:{turn}:model-turn') for turn in range(3)]
+        if frozen is not None:
+            assert current == frozen
+        frozen = current
+    assert frozen[2] is None
+    assert len(http.requests) == 2 and stack.service.requests == []
+
+
+@pytest.mark.asyncio
+async def test_old_invalid_tool_transcript_replays_without_changing_frozen_identity(stack, monkeypatch):
+    from adapters.agent.sdk_loop import run_agent_loop
+
+    runner, _, step, http = node(stack, GeneralAgent(), [[('fs.read', {'path': 123})],
+                                                       {'answer': 'recorded unresolved input'}])
+    context = context_for(runner, step)
+    store = stack.runtime.execution_value_store
+    original_put = store.put_tool_value
+
+    def legacy_put(**kwargs):
+        # Produce the actual pre-version WAL shape before its first COMMIT.
+        payload = {key: value for key, value in kwargs['payload'].items() if key != 'toolFeedbackVersion'}
+        return original_put(**{**kwargs, 'payload': payload})
+
+    async def legacy_loop(**kwargs):
+        execute = kwargs['execute_tool']
+
+        async def legacy_result(*args):
+            result = json.loads(await execute(*args))
+            if result.get('error', {}).get('code') == 'TOOL_ARGUMENTS_INVALID':
+                result['error'] = {'code': 'TOOL_ARGUMENTS_INVALID'}
+            return json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+
+        return await run_agent_loop(**{**kwargs, 'execute_tool': legacy_result,
+                                       'feedback_allowed': lambda *_: False})
+
+    with monkeypatch.context() as patch:
+        patch.setattr('adapters.agent.tool_session.run_agent_loop', legacy_loop)
+        patch.setattr(store, 'put_tool_value', legacy_put)
+        first = await AgentToolSession(context).generate_json(prompt='inspect', schema=ANSWER)
+    second = await AgentToolSession(context).generate_json(prompt='inspect', schema=ANSWER)
+    assert first == second
+    assert len(http.requests) == 2
+    assert stack.service.requests == []
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,7 @@ import { ContextCompactionEngine } from './engine.ts'
 import { modelMeter, wire } from './token-meter.ts'
 import type { ProjectionRequest, Config } from './contracts.ts'
 import { CompactionError } from './contracts.ts'
+import { SUMMARY_SCHEMA } from './summarizer.ts'
 
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity })
 const send = (value: unknown) => process.stdout.write(wire(value) + '\n')
@@ -14,7 +15,7 @@ let sequence = 0, busy = false, engine: ContextCompactionEngine | undefined, own
 const invoke = (text: string, maxTokens: number, instruction: string) => new Promise<{ text: string; totalTokens?: number }>((resolve, reject) => {
   const id = ++sequence
   pending.set(id, { resolve, reject })
-  send({ type: 'summarize', id, text, maxTokens, instruction })
+  send({ type: 'summarize', id, text, maxTokens, instruction, schema: SUMMARY_SCHEMA })
 })
 lines.on('line', line => {
   let command: any

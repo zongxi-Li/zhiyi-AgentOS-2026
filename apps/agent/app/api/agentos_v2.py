@@ -59,6 +59,7 @@ class WorkspaceBinaryFallbackNeeded(Exception):
         super().__init__(code)
         self.code = code
 from runtime import ExecutionRuntime
+from runtime.orchestration.binding import queued_step_attempts
 from runtime.orchestration.planning_interaction import RuntimePlanningInteraction, CopilotMessageRequest, PlannerAnswerRequest, CopilotPermissionRequest
 from runtime.orchestration.planning_operations import TaskOperationPreviewRequest, TaskOperationApplyRequest
 from runtime.projections.workspace_review import with_workspace_review
@@ -632,6 +633,41 @@ def project_history_config(
             for key in _HISTORY_INPUT_KEYS
             if key in raw
         },
+    }
+
+
+def _scheduler_usage(runtime: ExecutionRuntime, run: RuntimeRunRecord) -> dict[str, int]:
+    """Project owned capacity and actual queue admission, not graph readiness."""
+    state = run.execution_state
+    bindings = state.get("executionBindings") or {}
+    coordinator = runtime.resource_binder.coordinator
+    now = datetime.now(timezone.utc)
+    active_slots = 0
+    counted_leases = set()
+    for step in run.steps:
+        binding = bindings.get(step.step_id)
+        if not isinstance(binding, dict) or (binding.get("runId"), binding.get("stepId")) != (run.run_id, step.step_id):
+            continue
+        lease_id = binding.get("leaseId")
+        if not isinstance(lease_id, str) or lease_id in counted_leases:
+            continue
+        lease = coordinator.get(lease_id, now=now)
+        if (lease is not None and lease.status == "active" and lease.expires_at > now
+                and lease.owner_id == binding.get("attemptId")
+                and (lease.run_id, lease.step_id, lease.attempt_id, lease.resource_id)
+                == (run.run_id, step.step_id, binding.get("attemptId"), binding.get("resourceId"))):
+            # An UNKNOWN execution can retain real capacity after its Step or
+            # Run ends. Lease ownership, rather than lifecycle status, decides.
+            counted_leases.add(lease_id)
+            active_slots += lease.slot_count
+    queued_steps = 0
+    if run.status not in {WorkflowStatus.COMPLETED, WorkflowStatus.FAILED,
+                          WorkflowStatus.CANCELLED, WorkflowStatus.SUPERSEDED}:
+        queued_steps = len(queued_step_attempts(run))
+    return {
+        "activeSlots": active_slots, "queueDepth": queued_steps,
+        "checkpointCount": 1 if state.get("checkpointId") else 0,
+        "recoveryCount": len(state.get("graphPatchRefs") or []),
     }
 
 
@@ -3104,8 +3140,8 @@ def create_router(
         return project_history_config(run, title=title)
 
     @router.get("/runs/{run_id}/resource-usage")
-    async def get_resource_usage(run_id: str):
-        run = load_run(run_id)
+    async def get_run_resource_usage(run_id: str):
+        run = load_run(run_id, readonly=True)
         from app.api.model_usage import cache_groups, cache_scopes, cache_summary
         calls = _model_call_projection(run)
         usage = {
@@ -3191,12 +3227,7 @@ def create_router(
                 "assemblyComplete": bool(artifact_manifests and all(item.sealed for item in artifact_manifests)),
                 "taskProgress": round(completed_steps / total_steps, 4) if total_steps else None,
             },
-            "scheduler": {
-                "activeSlots": len(run.active_step_ids),
-                "queueDepth": max(0, total_steps - completed_steps - len(run.active_step_ids)),
-                "checkpointCount": 1 if run.execution_state.get("checkpointId") else 0,
-                "recoveryCount": len(run.execution_state.get("graphPatchRefs") or []),
-            },
+            "scheduler": _scheduler_usage(runtime, run),
         }
 
     @router.get("/runs/{run_id}/resource-usage/calls")
@@ -3206,7 +3237,7 @@ def create_router(
         cursor: str | None = None,
         page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
     ):
-        run = load_run(run_id)
+        run = load_run(run_id, readonly=True)
         calls = _model_call_projection(run)
         if step_id:
             calls = [call for call in calls if call["stepId"] == step_id]
@@ -3330,6 +3361,28 @@ def create_router(
             except (KeyError, ValueError):
                 payload = None
             items.append(_context_pack_summary(str(step_id), context_ref, payload))
+
+        # Failed attempts own an input snapshot before they can publish any
+        # graph output. Read that explicit WAL address through its dedicated
+        # validator; ordinary output access still requires a committed result.
+        seen = {item["contextRef"] for item in items}
+        store = runtime.execution_value_store
+        executions = getattr(store, "list_node_executions", lambda **_: ())
+        for execution in executions(run_id=run_id):
+            if execution.phase.value == "committed":
+                continue
+            context_ref = execution.artifact_refs.get("context")
+            if not context_ref or context_ref in seen:
+                continue
+            try:
+                payload = store.get_node_input_context(run_id=run_id, operation_id=execution.operation_id)
+            except (KeyError, ValueError):
+                payload = None
+            summary = _context_pack_summary(execution.step_id, context_ref, payload)
+            summary.update(operationId=execution.operation_id, attemptId=execution.attempt_id,
+                executionPhase=execution.phase.value, snapshotKind="execution_input")
+            items.append(summary)
+            seen.add(context_ref)
 
         return {"runId": run_id, "items": items, "total": len(items)}
 

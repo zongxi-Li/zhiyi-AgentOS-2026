@@ -32,7 +32,7 @@
         <ArtifactVerification v-if="streamingPreview == null && stageOutputContent && (document.artifactKind === 'final_report' || (document.artifactKind !== 'unknown' && document.verification))" :verification="document.verification" />
         <section v-if="streamingPreview != null" class="task-document__blocks">
           <p role="status">正在生成结果…</p>
-          <div class="task-document__markdown markdown-body" data-testid="task-stage-output" v-html="renderMarkdown(streamingPreview)" />
+          <div class="task-document__markdown task-document__markdown--streaming markdown-body" data-testid="task-stage-output" v-html="renderMarkdown(streamingPreview)" />
         </section>
         <p v-else-if="!stageOutputContent && stageOutputLoading" role="status">{{ stageOutputPlaceholder }}</p>
         <p v-else-if="!stageOutputContent && stageOutputError" role="alert">{{ stageOutputError }}</p>
@@ -219,6 +219,12 @@ const openMission = () => emit('openEntry', {
 .markdown-body :deep(p) { margin: 0 0 14px; }
 .markdown-body :deep(ul), .markdown-body :deep(ol) { margin: 8px 0 18px; padding-left: 24px; }
 .markdown-body :deep(li) { margin: 4px 0; padding-left: 4px; }
+.task-document__markdown--streaming { overflow-wrap: anywhere; }
+.task-document__markdown--streaming :deep(p), .task-document__markdown--streaming :deep(li) { line-height: 1.65; }
+.task-document__markdown--streaming :deep(p) { margin-bottom: 8px; }
+.task-document__markdown--streaming :deep(ul), .task-document__markdown--streaming :deep(ol) { margin-block: 6px 12px; }
+.task-document__markdown--streaming :deep(li) { margin: 2px 0; padding-left: 0; }
+.task-document__markdown--streaming :deep(pre) { max-width: 100%; overflow: auto; }
 .markdown-body :deep(blockquote) { margin: 22px 0; padding: 12px 16px; border-left: 2px solid var(--wb-accent); color: var(--wb-text-secondary); background: color-mix(in srgb, var(--wb-accent) 5%, transparent); }
 .markdown-body :deep(blockquote p) { margin: 0; font-size: 12px; line-height: 1.7; }
 /* Markdown 表格样式收敛到 global.css 的全局三线表 */

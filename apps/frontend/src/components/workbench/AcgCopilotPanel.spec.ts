@@ -25,6 +25,53 @@ const wrappers: ReturnType<typeof mount>[] = []
 const review = (rejected = false) => ({ subjectId: 'graph-1', subjectType: 'planner', reason: 'Recovery authority rejected proposal', reasonCode: 'PLANNER_WAIT', canApprove: !rejected, decisionRejected: rejected, expectedRunUpdatedAt: '2026-10-06T12:00:00Z' })
 
 describe('explicit review interaction', () => {
+  it('projects an equal-revision durable review state above a stale Copilot running state', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), revision: 3, status: 'running' })
+    const w = await panel({ runtimeObservation: { runId: 'run-1', traces: [], run: {
+      runId: 'run-1', missionId: 'mission-1', status: 'waiting_review', runtimeRevision: 3,
+    } } as any })
+    expect(w.get('.context-strip').text()).toContain('已暂停')
+    expect(w.get('.context-strip').text()).not.toContain('执行中')
+  })
+  it('projects an unversioned durable review state above a stale Copilot running state', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), status: 'running' })
+    const w = await panel({ runtimeObservation: { runId: 'run-1', traces: [], run: {
+      runId: 'run-1', missionId: 'mission-1', status: 'waiting_review',
+    } } as any })
+    expect(w.get('.context-strip').text()).toContain('已暂停')
+    expect(w.get('.context-strip').text()).not.toContain('执行中')
+  })
+  it('uses the observation status when the durable Run payload is temporarily unavailable', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), status: 'running' })
+    const w = await panel({ runtimeObservation: { runId: 'run-1', runStatus: 'waiting_review', traces: [] } as any })
+    expect(w.get('.context-strip').text()).toContain('已暂停')
+    expect(w.get('.context-strip').text()).not.toContain('执行中')
+  })
+  it('keeps a newer paused decision above an older handoff observation', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), revision: 8, status: 'waiting_review',
+      review: { ...review(true), kind: 'planner_rejected' } })
+    const run = { runId: 'run-1', missionId: 'mission-1', status: 'retrying', runtimeRevision: 7,
+      steps: [], lifecyclePhase: 'recovery', lifecycleMessage: 'Graph activated; awaiting verified execution handoff.' }
+    const w = await panel({ runtimeObservation: { runId: 'run-1', run, traces: [] } })
+    expect(w.get('.context-strip').text()).toContain('已暂停')
+    expect(w.get('.context-strip').text()).not.toContain('awaiting')
+    await w.setProps({ runtimeObservation: { runId: 'run-1', run: { ...run, status: 'running', runtimeRevision: 9,
+      formalControl: { status: 'ACTIVATED', permitStatus: 'ISSUED' } }, traces: [] } as any })
+    expect(w.get('.context-strip').text()).toContain('执行中')
+    expect(w.get('.context-strip').text()).not.toContain('awaiting')
+  })
+  it('uses the current formal recovery message during cleanup and clears it for resumed execution', async () => {
+    const message = '节点执行失败，正在停止并行执行并等待清理'
+    const run = { runId: 'run-1', missionId: 'mission-1', status: 'running', steps: [],
+      lifecyclePhase: 'recovery', lifecycleMessage: message }
+    const w = await panel({ runtimeObservation: { runId: 'run-1', run, traces: [] } })
+    expect(w.get('.context-strip').text()).toContain(message)
+    await w.setProps({ runtimeObservation: { runId: 'run-1', run: { ...run, lifecyclePhase: 'executing' }, traces: [] } as any })
+    expect(w.get('.context-strip').text()).toContain('执行中')
+    expect(w.get('.context-strip').text()).not.toContain(message)
+    await w.setProps({ runtimeObservation: { runId: 'another-run', run, traces: [] } as any })
+    expect(w.get('.context-strip').text()).not.toContain(message)
+  })
   it('shows a durable graph transition rejection with details and without an approval action', async () => {
     vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), status: 'retrying', planningProgress: {
       kind: 'blocked', status: 'blocked', message: '自动修订暂时停止，已完成结果已保留',
@@ -94,6 +141,30 @@ describe('explicit review interaction', () => {
     expect(w.get('.review-card strong').text()).toBe('等待外部条件确认')
     expect(w.get('.review-card').text()).toContain('等待补充外部文件')
     expect(w.findAll('.review-actions button').find(button => button.text() === '确认条件已满足')!.attributes('disabled')).toBeUndefined()
+  })
+  it('replans a technical Planner failure through the existing persisted review subject', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), status: 'waiting_review', review: {
+      ...review(), kind: 'planner_error', reasonCode: 'PLANNER_UNAVAILABLE',
+      reason: 'Runtime Planner unavailable: ValidationError', errorCode: 'PLANNER_DECISION_NO_PROGRESS', errorType: 'ValidationError',
+      validationFailures: [{ stage: 'decompose', code: 'unknown_task_reference', fieldPath: ['relations', 3, 'sourceKey'] }],
+    } })
+    vi.mocked(agentosApi.applyWorkflowReview).mockResolvedValue({} as any)
+    const w = await panel({ actionCapabilities: capabilitiesFixture('run-1', 'mission-1', 'waiting_review', 3, { canReview: true }) })
+    expect(w.get('.review-card strong').text()).toBe('规划处理失败')
+    expect(w.get('.review-card > p').text()).toBe('系统未能生成有效的下一步决策，已有结果已保留。可以重新规划。')
+    expect(w.get('.review-card').text()).not.toContain('确认条件已满足')
+    expect(w.get('.review-card details summary').text()).toBe('查看技术详情')
+    expect(w.get('.review-card details').text()).toContain('错误代码：PLANNER_DECISION_NO_PROGRESS')
+    expect(w.get('.review-card details li').text()).toContain('relations[3].sourceKey · 引用了候选计划中未声明的任务')
+    const replan = w.findAll('.review-actions button').find(button => button.text() === '重新规划')!
+    expect(replan.attributes('disabled')).toBeUndefined()
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue(state())
+    await replan.trigger('click'); await flushPromises()
+    expect(agentosApi.applyWorkflowReview).toHaveBeenCalledWith('run-1', {
+      stepId: 'graph-1', decision: 'approved', comment: '', operationId: expect.any(String), expectedRunUpdatedAt: '2026-10-06T12:00:00Z',
+    })
+    expect(agentosApi.applyCopilotAction).not.toHaveBeenCalled()
+    expect(w.get('.wait-note[role="status"]').text()).toContain('重新规划已提交')
   })
   it('shows a rejected proposal as blocked and previews new requirements without approving failed work', async () => {
     vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), status: 'waiting_review', review: review(true), decision: { action: 'recover', reason: 'Retry failed nodes' }, steps: [{ stepId: 'A', name: '提取事实', status: 'failed' }] })
@@ -912,6 +983,9 @@ describe('task Copilot', () => {
     expect(w.get('.trace-toolbar').text()).toContain('已加载 4 条')
     expect(w.get('.trace-lanes').text()).toContain('规划 1')
     expect(w.get('.trace-lanes').text()).toContain('模型 1')
+    expect(w.find('.trace-event pre').exists()).toBe(false)
+    ;(w.get('.trace-event.lane-model').element as HTMLDetailsElement).open = true
+    await w.get('.trace-event.lane-model').trigger('toggle')
     expect(w.get('.trace-event.lane-model pre').text()).toContain('Model invocation metadata projected')
     expect(w.get('.load-more').text()).toContain('加载更多模型调用')
     await w.get('.trace-toolbar input').setValue('规划')
@@ -930,8 +1004,65 @@ describe('task Copilot', () => {
     await w.findAll('.copilot-tabs button')[1].trigger('click')
     expect(w.text()).toContain('read_document')
     expect(w.text()).toContain('step-2')
+    expect(w.find('pre').exists()).toBe(false)
+    ;(w.get('.trace-event').element as HTMLDetailsElement).open = true
+    await w.get('.trace-event').trigger('toggle')
     expect(w.get('pre').text()).toContain('call-1')
     await w.get('.trace-toolbar input').setValue('不存在')
     expect(w.findAll('.trace-event')).toHaveLength(0)
+  })
+  it('reads activity payloads only while their details are expanded and keeps open evidence current', async () => {
+    const serialize = vi.fn(() => ({ evidence: 'first recorded result' }))
+    const trace = { eventId: 'evidence', eventType: 'step_completed', observation: 'Recorded evidence', payload: { toJSON: serialize } }
+    const observation = { runId: 'run-1', traces: [trace] }
+    const w = await panel({ runtimeObservation: observation } as any)
+    expect(w.findAll('.copilot-tabs button')[1].text()).toContain('1')
+    expect(serialize).not.toHaveBeenCalled()
+    await w.findAll('.copilot-tabs button')[1].trigger('click'); await flushPromises()
+    await w.get('.trace-toolbar input').setValue('Recorded')
+    expect(w.findAll('.trace-event')).toHaveLength(1)
+    expect(serialize).not.toHaveBeenCalled()
+    const detail = w.get('.trace-event')
+    ;(detail.element as HTMLDetailsElement).open = true
+    await detail.trigger('toggle')
+    expect(w.get('.trace-event pre').text()).toContain('first recorded result')
+    expect(serialize).toHaveBeenCalledTimes(1)
+    await w.get('textarea').setValue('An unrelated draft')
+    expect(serialize).toHaveBeenCalledTimes(1)
+    const updated = vi.fn(() => ({ evidence: 'updated recorded result' }))
+    await w.setProps({ runtimeObservation: { ...observation, traces: [{ ...trace, payload: { toJSON: updated } }] } } as any)
+    expect(w.get('.trace-event pre').text()).toContain('updated recorded result')
+    expect(updated).toHaveBeenCalledTimes(1)
+    ;(detail.element as HTMLDetailsElement).open = false
+    await detail.trigger('toggle')
+    await w.setProps({ runtimeObservation: observation } as any)
+    expect(w.find('.trace-event pre').exists()).toBe(false)
+    expect(serialize).toHaveBeenCalledTimes(1)
+  })
+  it('keeps each model call associated with its own projections and tools separate', async () => {
+    const usage = { inputTokens: 2, outputTokens: 1, totalTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
+    const call = { model: 'test-model', usage, latencyMs: 12, outputPolicy: 'default', outputExhausted: false }
+    vi.mocked(agentosApi.listRunResourceCalls).mockResolvedValueOnce({ runId: 'run-1', items: [
+      { ...call, callId: 'first' }, { ...call, callId: 'second' },
+    ], total: 2 })
+    const w = await panel({ runtimeObservation: { runId: 'run-1', traces: [
+      { eventId: 'first', eventType: 'model_called', observation: 'First invocation', payload: {} },
+      { eventId: 'first-output', eventType: 'model_output', payload: { callId: 'first', evidence: 'First output' } },
+      { eventId: 'second', eventType: 'model_called', observation: 'Second invocation', payload: {} },
+      { eventId: 'separate-tool', eventType: 'tool_called', observation: 'Separate tool', payload: { callId: 'first' } },
+    ] } } as any)
+    await w.findAll('.copilot-tabs button')[1].trigger('click'); await flushPromises()
+    expect(w.get('.trace-toolbar').text()).toContain('已加载 3 条')
+    expect(w.findAll('.trace-event.lane-model')).toHaveLength(2)
+    expect(w.findAll('.trace-event.lane-tool')).toHaveLength(1)
+    const detail = w.findAll('.trace-event.lane-model')[0]
+    ;(detail.element as HTMLDetailsElement).open = true
+    await detail.trigger('toggle')
+    const evidence = JSON.parse(detail.get('pre').text())
+    expect(evidence.callId).toBe('first')
+    expect(evidence.trace.map((event: { eventId: string }) => event.eventId)).toEqual(['first', 'first-output'])
+    expect(detail.text()).toContain('First output')
+    expect(detail.text()).not.toContain('Second invocation')
+    expect(detail.text()).not.toContain('Separate tool')
   })
 })

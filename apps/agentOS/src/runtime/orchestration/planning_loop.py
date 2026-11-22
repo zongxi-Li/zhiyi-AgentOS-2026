@@ -7,13 +7,17 @@ The current planning round is durable before the model call and before applicati
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+import re
+from collections.abc import Awaitable, Callable, Mapping
 
+from pydantic import ValidationError
+
+from adapters.model.protocols import StructuredGenerationError
 from components.executor import ACGExecutionState
 from contracts.planning import TaskPlan
 from contracts.runtime_planning import (
     RuntimePlanningDecision, RuntimePlanningObservation, RuntimePlanningRound,
-    RuntimePlanningState,
+    RuntimePlanningState, RuntimePlanningFailure,
     RuntimeUserInput,
 )
 from contracts.workflow import RuntimeRunRecord, StepStatus, TraceEventType
@@ -22,6 +26,57 @@ from runtime.orchestration.planning_observation import RuntimePlanningObservatio
 
 
 REPAIRABLE_PLANNING_REJECTIONS = frozenset({"INVALID_PROPOSAL", "DEPENDENCY_NOT_CLOSED"})
+
+
+def _planning_failure_diagnostics(exc: Exception) -> tuple[RuntimePlanningFailure, dict]:
+    """Preserve typed causes without publishing exception messages or model values."""
+    from components.planner.task_decomposer import planning_validation_failures, safe_validation_failures
+
+    current, seen = exc, set()
+    code, retryable, structured = None, None, None
+    metadata, has_validation_details = {}, False
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        cause_metadata = getattr(current, "metadata", None)
+        cause_metadata = cause_metadata if isinstance(cause_metadata, Mapping) else {}
+        location = safe_validation_failures([cause_metadata])[0]
+        for key in ("stage", "callKey"):
+            if key in cause_metadata and location.get(key) == cause_metadata[key]:
+                metadata.setdefault(key, location[key])
+        for key in ("attemptCount", "retryCount"):
+            count = cause_metadata.get(key)
+            if type(count) is int and count >= 0:
+                metadata.setdefault(key, count)
+        has_validation_details |= (isinstance(current, ValidationError)
+            or bool(getattr(current, "validation_code", None))
+            or bool(cause_metadata.get("validationFailures")))
+        for attribute in ("code", "cause_code"):
+            candidate = getattr(current, attribute, None)
+            if isinstance(candidate, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,127}", candidate):
+                if code is None:
+                    code = candidate
+                elif code.startswith("PLANNER_FORMAL_") and candidate != code:
+                    metadata.setdefault("causeCode", candidate)
+                break
+        if retryable is None and isinstance(getattr(current, "retryable", None), bool):
+            retryable = current.retryable
+        if structured is None and isinstance(current, StructuredGenerationError):
+            structured = current
+        current = current.__cause__
+
+    stage = metadata.get("stage", "runtime_decision")
+    failures = planning_validation_failures(exc, stage=stage, call_key=metadata.get("callKey", "runtime_decision"))
+    if not has_validation_details and not any(item["code"] != "unclassified_validation_error" for item in failures):
+        failures = []
+    failure = RuntimePlanningFailure(
+        errorCode=code or ("PLANNER_DECISION_INVALID" if failures else "PLANNER_UNAVAILABLE"),
+        errorType=type(exc).__name__, retryable=bool(retryable), stage=stage, validationFailures=failures,
+    )
+    diagnostic = {"metadata": metadata} if metadata or structured is not None else {}
+    if structured is not None:
+        from components.planner.complexity import model_invocation_audit
+        diagnostic.update(attempts=structured.attempts, modelAudit=model_invocation_audit(structured.audit))
+    return failure, diagnostic
 
 
 class RuntimePlanningCoordinator(CollaboratorAccess):
@@ -135,6 +190,13 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
             return "continue"
         if state.active_step_ids or state.review_payload:
             raise ValueError("runtime planning requires a quiescent, resolved execution barrier")
+        if reason in {"resume", "restart"}:
+            from runtime.orchestration.runtime_recovery import pending_retry_dispatch
+            if pending_retry_dispatch(run, state):
+                # The retry authority already chose to execute this pending
+                # frontier. Review its new results at the normal superstep
+                # boundary, rather than asking Planner to re-decide old facts.
+                return "continue"
         if reason == "progress":
             if loop.restart_pending:
                 reason = "restart"
@@ -151,13 +213,20 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
                 if step.output_ref is not None
             } if loop.current is not None else set()
             tool_progress = bool(self._tool_output_refs(run, state) - observed_refs)
-            if not verified_progress and not tool_progress:
+            workspace_progress = False
+            if (run.execution_state.get("workspaceObservations")
+                    and set(state.output_refs.values()) - observed_refs):
+                from contracts.execution_evidence import workspace_observation_progress
+                workspace_progress = any(item.get("complete") is not True for item in
+                    workspace_observation_progress(run, self.execution_value_store))
+            if not verified_progress and not tool_progress and not workspace_progress:
                 return "continue"
             # Explicit verification controls retain local revision authority.
             if state.control_frames:
                 return "continue"
-            # A tool outcome (including a failed/denied call) is a fresh fact,
-            # not permission for the Agent to mutate its own ACG fragment.
+            # A committed understanding result also establishes a new planning
+            # boundary when workspace scope remains. Supplemental acquisition
+            # cannot depend on a tool call that the old plan never declared.
             reason = "verification" if verified_progress else "resume"
             loop = loop.model_copy(update={"last_verification_refs": refs})
         if reason in {"resume", "restart"} and any(s.status == StepStatus.FAILED for s in run.steps):
@@ -166,6 +235,12 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
         if reason in {"resume", "restart", "failure"} and loop.current and loop.current.status in {"observed", "decided"}:
             previous = loop.current.observation
             replay = self.observe(run, state, previous.wake_reason)
+            if not previous.committed_results:
+                # Preserve an admitted pre-index observation's identity and
+                # saved decision. A fresh boundary receives the new index.
+                replay = replay.model_copy(update={"committed_results": ()})
+            if not previous.context_catalog:
+                replay = replay.model_copy(update={"context_catalog": ()})
             if not previous.resource_requirements and previous.failure_source is None:
                 # Rounds written before resource observations retain their
                 # original idempotency identity and already-persisted decision.
@@ -196,8 +271,16 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
                 )
                 decision = RuntimePlanningDecision.model_validate(decision)
             except Exception as exc:
-                # Persist a safe wait, not a speculative fallback plan or raw model text.
-                decision = RuntimePlanningDecision(observationId=observation_id, action="wait", reason=f"Runtime Planner unavailable: {type(exc).__name__}")
+                # A technical failure owns a resumable barrier. Keep its typed
+                # diagnostic distinct from a model-authored external wait.
+                failure, details = _planning_failure_diagnostics(exc)
+                current = current.model_copy(update={"failure": failure})
+                reason = f"Runtime Planner unavailable: {failure.error_type} ({failure.error_code})"
+                diagnostic = {"runtimeEvent": "planner.runtime.failed", "observationId": observation_id,
+                    **failure.model_dump(mode="json", by_alias=True), **details}
+                self.trace_store.append(run, TraceEventType.RUNTIME_EVENT_CLASSIFIED,
+                    observation="Runtime Planner decision failed", payload=diagnostic)
+                decision = RuntimePlanningDecision(observationId=observation_id, action="wait", reason=reason)
             if self.decision_gate is not None:
                 from runtime.orchestration.workspace_review import record_workspace_review
                 record_workspace_review(run, observation, decision, loop)
@@ -241,42 +324,15 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
 
     @staticmethod
     def validate_decision(observation: RuntimePlanningObservation, decision: RuntimePlanningDecision) -> None:
-        if decision.observation_id != observation.fingerprint():
-            raise ValueError("Planner decision observation does not match the current snapshot")
-        if decision.action == "complete" and (observation.remaining_step_ids or observation.completion_blockers):
-            raise ValueError("Planner cannot complete unresolved work")
-        if decision.action == "complete" and observation.task_acceptance is not None:
-            results = {r.criterion_id: r for r in observation.task_acceptance_results}
-            if any(c.criterion_id not in results or results[c.criterion_id].outcome != "passed"
-                   for c in observation.task_acceptance.criteria):
-                raise ValueError("Planner cannot complete unverified task acceptance requirements")
-        if decision.action == "continue":
-            error = observation.continuation_error()
-            if error is not None:
-                raise ValueError(error)
-        if decision.wait_for is not None and decision.wait_for.kind == "node_available":
-            if decision.wait_for.node_id not in {node_id for node_id, _ in observation.resources}:
-                raise ValueError("Planner wait targets an unobserved node")
-        if decision.wait_for is not None and decision.wait_for.kind == "requirement_available":
-            condition = decision.wait_for
-            fact = next((r for r in observation.resource_requirements if r.step_id == condition.step_id), None)
-            if (condition.step_id not in observation.remaining_step_ids or fact is None
-                    or fact.requirement_id != condition.requirement_id or fact.ready):
-                raise ValueError("Planner wait must target a current observed blocked requirement")
+        if problem := observation.decision_error(decision):
+            raise ValueError(problem[1])
         if decision.action == "recover":
-            if observation.recovery_action not in {"retry", "rebind"} or len(observation.failed_step_ids) != 1:
-                raise ValueError("Recovery authority has no supported retry for this failure")
-            if observation.failure_source == "scheduler":
+            from runtime.orchestration.binding import recovery_requires_resource_readiness
+            if recovery_requires_resource_readiness(observation):
                 fact = next((r for r in observation.resource_requirements
                     if r.step_id == observation.failed_step_ids[0]), None)
                 if fact is None or not fact.ready:
-                    raise ValueError("Scheduler recovery requires currently eligible resources")
-        if decision.action == "revise":
-            if observation.failure_type in {"policy", "storage"}:
-                raise ValueError("Semantic revision cannot bypass integrity or policy failures")
-            patch = decision.task_plan_patch
-            if patch.mission_id != observation.mission_id or patch.base_plan_version != observation.plan_version:
-                raise ValueError("Planner revision targets a stale or different TaskPlan")
+                    raise ValueError("Recovery requires currently eligible execution resources")
 
     def _verification_refs(self, run, state) -> tuple[str, ...]:
         return tuple(sorted(state.output_refs[s.step_id] for s in run.steps

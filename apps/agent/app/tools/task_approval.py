@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from app.tools.permissions import ApprovalDecision
 from contracts.task_operator_policy import task_approval_scope_matches, task_operator_policy_projection
+from contracts.tools import ToolExecutionAuthorizationLost
 from contracts.workflow import MissionRecordState, RunRecordState, WorkflowStatus
 
 
@@ -110,7 +111,7 @@ class TaskApprovalCoordinator:
             return None
         if (scope["workspaceId"] != authorization.workspace_id
                 or scope["grantId"] != authorization.grant_id):
-            raise PermissionError("Tool approval workspace identity changed")
+            raise ToolExecutionAuthorizationLost("Tool approval workspace identity changed")
         permit_id = run.execution_state.get("executionPermitId")
 
         def validate():
@@ -123,10 +124,10 @@ class TaskApprovalCoordinator:
                     or not permit_id or current.execution_state.get("executionPermitId") != permit_id
                     or current.execution_state.get("supersededByRunId")
                     or self.workspace_scope(current) != scope):
-                raise PermissionError("Formal tool approval no longer belongs to a live execution")
+                raise ToolExecutionAuthorizationLost("Formal tool approval no longer belongs to a live execution")
             binding = current.execution_state.get("executionBindings", {}).get(context.step.step_id)
             if binding is not None and binding.get("attemptId") != context.attempt_id:
-                raise PermissionError("Formal tool approval belongs to an obsolete Attempt")
+                raise ToolExecutionAuthorizationLost("Formal tool approval belongs to an obsolete Attempt")
 
         return FormalApprovalContext(run.mission_id, run.run_id, context.step.step_id,
                                      context.attempt_id, context.commit_id, scope, validate)
@@ -163,7 +164,7 @@ class TaskApprovalCoordinator:
             if context is not None:
                 context.validate()
                 if context.workspace_scope.get("resourceId", resource_id) != resource_id:
-                    raise PermissionError("Tool resource differs from the frozen workspace binding")
+                    raise ToolExecutionAuthorizationLost("Tool resource differs from the frozen workspace binding")
             if approval_decision and approval_decision.get("source") == "policy":
                 policy = self.store.get_task_operator_policy(context.mission_id)
                 if (not self._matches(policy, context)

@@ -26,7 +26,7 @@ def test_planner_preset_has_no_task_count_target() -> None:
 def test_planner_control_instructions_defer_to_schema_and_runtime_contract() -> None:
     system = planner_system_prompt()
     assert "Declare control policies only when the current contract permits them." in system
-    assert "represent necessary checks and corrections with bounded\nforward-dependent tasks." in system
+    assert "represent necessary checks and corrections with\nforward-dependent tasks." in system
     assert "Use supported verification_loop semantics instead of cycles" not in system
 
 

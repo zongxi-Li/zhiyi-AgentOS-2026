@@ -3,7 +3,64 @@ from __future__ import annotations
 
 from typing import Any
 from dataclasses import dataclass
+import re
 from pydantic import BaseModel, ConfigDict, Field
+
+
+HOST_TOOL_FAILURE_CODES = frozenset({
+    "EXECUTION_LEASE_LOST", "SCHEDULER_UNAVAILABLE",
+    "EXECUTION_RESOURCE_UNAVAILABLE", "EXECUTION_CAPACITY_UNAVAILABLE",
+    "EXECUTION_AUTHORIZATION_LOST",
+    "NO_ELIGIBLE_RESOURCE", "NO_MODEL_ENDPOINT",
+})
+
+
+def safe_tool_failure_details(value: object) -> dict[str, Any]:
+    """Reference-only host facts; never tool arguments or provider messages."""
+    if not isinstance(value, dict):
+        return {}
+    result = {}
+    for key in ("stepId", "attemptId", "commitId", "tool", "resourceId", "operationKey", "phase"):
+        item = value.get(key)
+        if (isinstance(item, str) and item and len(item) <= 1024
+                and not any(c in item for c in "\x00\r\n")):
+            result[key] = item
+    reason = value.get("schedulingReason")
+    if isinstance(reason, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,127}", reason):
+        result["schedulingReason"] = reason
+    candidates = value.get("candidateReasons")
+    if isinstance(candidates, (tuple, list)):
+        safe_candidates = []
+        for candidate in candidates[:16]:
+            if not isinstance(candidate, dict):
+                continue
+            resource_id = candidate.get("resourceId")
+            reasons = candidate.get("reasons")
+            if (not isinstance(resource_id, str) or not resource_id or len(resource_id) > 1024
+                    or any(c in resource_id for c in "\x00\r\n") or not isinstance(reasons, (tuple, list))):
+                continue
+            safe_reasons = list(dict.fromkeys(reason for reason in reasons
+                if isinstance(reason, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,127}", reason)))
+            safe_candidates.append({"resourceId": resource_id, "reasons": safe_reasons})
+        result["candidateReasons"] = safe_candidates
+    return result
+
+
+class HostToolExecutionError(RuntimeError):
+    """A host-owned scheduling or execution failure, outside model correction."""
+
+    def __init__(self, code: str, message: str, *, retryable: bool = False,
+                 details: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.retryable = retryable
+        self.details = safe_tool_failure_details(details)
+
+
+class ToolExecutionAuthorizationLost(PermissionError):
+    """A live host authority changed; tool arguments cannot restore it."""
+
+    code = "EXECUTION_AUTHORIZATION_LOST"
 
 
 class ToolDefinition(BaseModel):

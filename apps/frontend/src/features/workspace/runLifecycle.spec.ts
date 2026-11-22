@@ -2,10 +2,27 @@ import { computed, ref } from 'vue'
 import { useChatWorkflowPresentation } from '@/composables/useChatWorkflowPresentation'
 import { capabilitiesFixture } from '@/test/fixtures/runCapabilities'
 import { describe, it, expect } from 'vitest'
-import { projectRunLifecycle, mapRunPhase } from './runLifecycle'
+import { projectRunLifecycle, mapRunPhase, runningRecoveryMessage } from './runLifecycle'
 const run = (status = 'running') => ({ missionId: 'm', runId: 'r', runtimeRevision: 4, status } as any)
 const project = (detail: any, progress?: any) => projectRunLifecycle({ missionId: 'm', runId: 'r', run: detail, progress })
 describe('shared lifecycle authority', () => {
+  it.each(['running', 'waiting_review', 'failed'])('keeps current %s execution facts above an old activation message', status => {
+    const detail = { ...run(status), lifecyclePhase: 'recovery',
+      lifecycleMessage: 'Graph activated; awaiting verified execution handoff.',
+      formalControl: { status: 'ACTIVATED', permitStatus: 'ISSUED' }, steps: [] }
+    expect(runningRecoveryMessage(detail)).toBeNull()
+    expect(project(detail).phase).toBe(({ running: 'RUNNING', waiting_review: 'WAITING_REVIEW', failed: 'FAILED' } as const)[status as 'running' | 'waiting_review' | 'failed'])
+  })
+  it('retains actual cleanup after a Permit while retiring a superseded handoff note', () => {
+    const detail = { ...run('running'), lifecyclePhase: 'recovery',
+      lifecycleMessage: '节点执行失败，正在停止并行执行并等待清理',
+      formalControl: { status: 'ACTIVATED', permitStatus: 'ISSUED' } }
+    expect(runningRecoveryMessage(detail)).toBe(detail.lifecycleMessage)
+    expect(project(detail).phase).toBe('RECOVERING')
+    const awaiting = { ...detail, status: 'retrying', formalControl: null,
+      lifecycleMessage: 'Graph activated; awaiting verified execution handoff.' }
+    expect(runningRecoveryMessage(awaiting)).toBe(awaiting.lifecycleMessage)
+  })
   it.each(['pending','planning','running','waiting_review','retrying','failed','completed','succeeded','cancelled','superseded','queued','unknown'])('maps %s without message or view fallbacks', status => {
     expect(project(run(status)).phase).toBe(({ pending:'QUEUED', planning:'PLANNING', running:'RUNNING', waiting_review:'WAITING_REVIEW', retrying:'RECOVERING', failed:'FAILED', completed:'COMPLETED', succeeded:'COMPLETED', cancelled:'CANCELLED', superseded:'SUPERSEDED', queued:'QUEUED', unknown:'UNKNOWN' } as any)[status])
   })

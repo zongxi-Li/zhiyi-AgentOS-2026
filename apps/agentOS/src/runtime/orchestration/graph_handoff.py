@@ -22,8 +22,8 @@ from components.communicator.provenance import provenance_checksum
 from domain.identity_graph.resolver import IdentityResolver
 from runtime.orchestration.graph_revision import GraphProvider, source_provenance, safe_cut
 from runtime.orchestration.graph_materialization import validate_acceptance_ancestry
-from runtime.projections.graph_steps import restore_initial_source_steps
-from runtime.orchestration.planning_commit import fingerprint, fingerprint_observation
+from runtime.projections.graph_steps import restore_initial_source_steps, restore_revision_source_steps
+from runtime.orchestration.planning_commit import fingerprint, fingerprint_observation, protected_execution_nodes
 from runtime.orchestration.permit_recovery import assert_replay_safe_operations
 from runtime.orchestration.state_persistence import acg_execution_state_from_run
 from runtime.orchestration.semantic_revision import SemanticRevisionService
@@ -50,6 +50,41 @@ class GraphHandoffAuthority:
                 or staged_store.db_path == store.db_path):
             raise HandoffEvidenceError("handoff requires the authoritative Workflow and separate checkpoint stores")
         self.runtime, self.store, self.staged_store = runtime, store, staged_store
+
+    def _source_package(self, run, blueprint):
+        """Read the package that actually executed, including older compilers.
+
+        Recompiling a persisted graph cannot authenticate an immutable source:
+        even an ordering-only compiler fix can produce different package bytes.
+        The activation and materialization journals preserve those exact bytes.
+        Pre-activation legacy sources still require the strict compiler fallback.
+        """
+        sources = [item for item in self.store.activations_for_run(run.run_id)
+                   if item.candidate_graph_version == blueprint.version]
+        if not sources:
+            return ACGGraphCompiler().compile_package(blueprint, run_id=run.run_id)
+        if len(sources) != 1:
+            raise HandoffEvidenceError("source activation identity is ambiguous")
+        activation = sources[0]
+        materialization = self.store.get_materialization(activation.materialization_id)
+        if (activation.status != "ACTIVATED_PAUSED" or activation.mission_id != run.mission_id
+                or activation.graph_id != blueprint.graph_id or materialization is None
+                or materialization.source_run_id != run.run_id or materialization.mission_id != run.mission_id
+                or materialization.graph_id != blueprint.graph_id
+                or materialization.candidate_graph_version != blueprint.version
+                or materialization.source_graph_version != activation.source_graph_version
+                or materialization.source_kind != activation.source_kind
+                or materialization.source_commit_id != activation.source_commit_id
+                or materialization.package_checksum != activation.package_checksum
+                or materialization.commitment_fingerprint != activation.commitment_fingerprint
+                or materialization.proof_fingerprint != activation.proof_fingerprint):
+            raise HandoffEvidenceError("source activation materialization mismatch")
+        package = materialization.package
+        if (package.run_id != run.run_id or package.blueprint_id != blueprint.graph_id
+                or package.blueprint_version != blueprint.version
+                or package.blueprint_hash != stable_checksum(blueprint.model_dump(mode="json", by_alias=True))):
+            raise HandoffEvidenceError("source immutable package blueprint mismatch")
+        return package
 
     def _validated_candidate(self, activation_id, key):
         rt, store = self.runtime, self.store
@@ -134,7 +169,7 @@ class GraphHandoffAuthority:
                 or old.graph_id != activation.graph_id or old.version != activation.source_graph_version
                 or original_plan.plan_version != source.sources.plan_version):
             raise HandoffEvidenceError("source Identity version mismatch")
-        old_package = ACGGraphCompiler().compile_package(old, run_id=run.run_id)
+        old_package = self._source_package(run, old)
         if any(identity.metadata.get(k) != v for k, v in {
                 "workflowId": run.workflow_id, "runtimeGraphId": old.graph_id,
                 "taskPlanVersion": original_plan.plan_version}.items()):
@@ -170,21 +205,28 @@ class GraphHandoffAuthority:
         # Reconstruct only a historical validation view; never persist or execute it.
         # The accepted static fingerprint proves every reconstructed byte. Changes
         # to pending source semantics that cannot be recovered fail closed.
+        source_nodes = {n.key: n for n in original_plan.nodes}
+        with repos.storage.read() as conn:
+            rows = [dict(row) for row in conn.execute("""SELECT semantic_key,task_id,payload_json FROM task_plan_nodes
+                WHERE mission_id=? AND plan_version=? ORDER BY semantic_key""", (run.mission_id, original_plan.plan_version))]
+        if {row["semantic_key"] for row in rows} != set(source_nodes):
+            raise HandoffEvidenceError("source Identity plan mapping is incomplete")
+        source_bindings = {}
+        for row in rows:
+            bound = repos.task_bindings.find_for_task(row["task_id"], identity.blueprint_id)
+            if len(bound) != 1 or bound[0].binding_type.value != "primary" or not old.has_node(bound[0].acg_node_id):
+                raise HandoffEvidenceError("source Identity semantic snapshot mapping mismatch")
+            source_bindings[row["semantic_key"]] = bound[0].acg_node_id
         source_run = run.model_copy(deep=True)
         source_run.acg_blueprint = old.model_dump(mode="json", by_alias=True)
         source_run.steps = [s for s in source_run.steps if s.step_id in {n.node_id for n in old.step_nodes()}]
         source_run.execution_state.update(cp_state.model_dump(mode="json", by_alias=True))
         source_run.execution_state.update(taskPlan=original_plan.model_dump(mode="json", by_alias=True),
             taskPlanVersion=original_plan.plan_version, compiledACGPackage=old_package.model_dump(mode="json", by_alias=True),
-            taskBindings=[b.model_dump(mode="json", by_alias=True) for b in proposal.next_bindings if b.acg_node_id in {s.step_id for s in source_run.steps}])
+            taskBindings=[{"planNodeKey": node.key, "acgNodeId": source_bindings[node.key]} for node in original_plan.nodes])
+        restore_revision_source_steps(rt, source_run, old, proposal.candidate_graph,
+            protected_step_ids=protected_execution_nodes(source_run, cp_state, provider.node_commits(source_run)))
         restore_initial_source_steps(rt, source_run, old)
-        source_nodes = {n.key: n for n in original_plan.nodes}
-        source_bindings = {b["planNodeKey"]: b["acgNodeId"] for b in source_run.execution_state["taskBindings"]}
-        with repos.storage.read() as conn:
-            rows = [dict(row) for row in conn.execute("""SELECT semantic_key,task_id,payload_json FROM task_plan_nodes
-                WHERE mission_id=? AND plan_version=? ORDER BY semantic_key""", (run.mission_id, original_plan.plan_version))]
-        if set(source_bindings) != set(source_nodes) or {row["semantic_key"] for row in rows} != set(source_nodes):
-            raise HandoffEvidenceError("source Identity plan mapping is incomplete")
         source_identity_nodes = []
         for row in rows:
             node_key = row["semantic_key"]

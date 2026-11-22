@@ -12,9 +12,9 @@ const entry = (version: number, current = false): GraphVersionEntry => ({ bluepr
 const history = (version: number, runId = 'r'): GraphVersionHistory => ({ runId, graphId: 'g', currentBlueprintId: `bp${version}`,
   currentGraphVersion: version, items: Array.from({ length: version }, (_, index) => entry(index + 1, index + 1 === version)) })
 const settle = async () => { for (let index = 0; index < 8; index++) await nextTick() }
-const setup = () => {
+const setup = (initialLive: GraphProjection | null = graph(2)) => {
   const runId = ref<string | null>('r')
-  const live = ref<GraphProjection | null>(graph(2))
+  const live = ref<GraphProjection | null>(initialLive)
   const watermark = ref(1)
   const api = { getGraphVersions: vi.fn().mockResolvedValue(history(2)),
     getGraphSnapshot: vi.fn(async (_run: string, id: string | null) => graph(Number(id?.replace('bp', '') || 2))) }
@@ -24,6 +24,85 @@ const setup = () => {
 }
 
 describe('workspace graph versions', () => {
+  it('uses the matching live graph without requesting a redundant current snapshot', async () => {
+    const { scope, state, api } = setup()
+    await settle()
+    expect(state.displayGraph.value?.graphVersion).toBe(2)
+    expect(state.snapshotError.value).toBe('')
+    expect(state.snapshotLoading.value).toBe(false)
+    expect(api.getGraphSnapshot).not.toHaveBeenCalled()
+    scope.stop()
+  })
+
+  it.each(['before', 'after'])('clears an obsolete snapshot failure when live data recovers %s the request fails', async timing => {
+    const { scope, state, api, live } = setup(null)
+    let rejectSnapshot!: (error: Error) => void
+    api.getGraphSnapshot.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSnapshot = reject }))
+    await settle()
+    expect(state.snapshotLoading.value).toBe(true)
+    if (timing === 'after') {
+      rejectSnapshot(new Error('offline'))
+      await settle()
+      expect(state.snapshotError.value).toBeTruthy()
+    }
+    live.value = graph(2)
+    await settle()
+    if (timing === 'before') rejectSnapshot(new Error('late failure'))
+    await settle()
+    expect(state.displayGraph.value?.graphVersion).toBe(2)
+    expect(state.snapshotError.value).toBe('')
+    expect(state.snapshotLoading.value).toBe(false)
+    scope.stop()
+  })
+
+  it('retains a failed comparison snapshot when the current live graph recovers', async () => {
+    const { scope, state, api, live } = setup(null)
+    api.getGraphSnapshot.mockRejectedValue(new Error('offline'))
+    state.comparing.value = true
+    await settle()
+    expect(state.snapshotError.value).toBeTruthy()
+    live.value = graph(2)
+    await settle()
+    expect(state.displayGraph.value?.graphVersion).toBe(2)
+    expect(state.snapshotError.value).toBeTruthy()
+    expect(state.difference.value).toBeNull()
+    api.getGraphSnapshot.mockImplementation(async (_run, id) => graph(Number(id?.replace('bp', ''))))
+    await state.retrySnapshot()
+    expect(state.snapshotError.value).toBe('')
+    expect(state.difference.value?.addedNodeIds).toEqual(['b'])
+    scope.stop()
+  })
+
+  it('ignores an old selection failure even before its abort watcher runs', async () => {
+    const { scope, state, api } = setup()
+    await settle()
+    let rejectSnapshot!: (error: Error) => void
+    api.getGraphSnapshot.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSnapshot = reject }))
+    state.select('bp1')
+    await settle()
+    state.follow()
+    rejectSnapshot(new Error('obsolete selection'))
+    await settle()
+    expect(state.displayGraph.value?.graphVersion).toBe(2)
+    expect(state.snapshotError.value).toBe('')
+    expect(state.snapshotLoading.value).toBe(false)
+    scope.stop()
+  })
+
+  it('ignores a late failure from a superseded retry of the same version', async () => {
+    const { scope, state, api } = setup(null)
+    let rejectSnapshot!: (error: Error) => void
+    api.getGraphSnapshot.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSnapshot = reject }))
+    await settle()
+    await state.retrySnapshot()
+    expect(state.displayGraph.value?.graphVersion).toBe(2)
+    rejectSnapshot(new Error('obsolete request'))
+    await settle()
+    expect(state.snapshotError.value).toBe('')
+    expect(state.snapshotLoading.value).toBe(false)
+    scope.stop()
+  })
+
   it('keeps an activated version selected when its Identity blueprint is promoted', async () => {
     const { scope, state, api } = setup()
     await settle()

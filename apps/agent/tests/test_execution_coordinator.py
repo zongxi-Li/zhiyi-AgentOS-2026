@@ -188,7 +188,7 @@ def _review_run(status="waiting_review", *, graph_version=1, blocked=False):
 
 
 def _review_coordinator(monkeypatch, tmp_path, run, command, resume):
-    monkeypatch.setattr("support.run_execution_fence.acquire_run_fence", lambda *_: nullcontext())
+    monkeypatch.setattr("components.scheduler.run_execution_fence.acquire_run_fence", lambda *_: nullcontext())
     state = {"run": run, "command": command}
     calls = []
 
@@ -252,6 +252,31 @@ async def test_startup_review_wait_never_dispatches_before_continuation_confirms
         assert resumed[0][3] != server_thread
     assert not calls and _trusted_user_context.get() is before
     assert run.status.value == "waiting_review"
+    await coordinator.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry", ["startup", "submit"])
+@pytest.mark.parametrize("allowed", [False, True])
+async def test_blocked_derivation_replay_restores_owner_without_dispatching_old_graph(monkeypatch, tmp_path, entry, allowed):
+    from app.security.internal_auth import _trusted_user_context
+
+    run, command = _review_run(blocked=True), _review_dispatch()
+    seen = []
+
+    def resume(current):
+        seen.append((current.run_id, _trusted_user_context.get().user_id))
+        return None  # Derivation has not yet produced a new Permit/Dispatch.
+
+    coordinator, runtime, _, calls = _review_coordinator(monkeypatch, tmp_path, run, command, resume)
+    runtime.workspace_review_continuation.can_replan = lambda _: False
+    runtime.workspace_review_continuation.can_resume = lambda _: allowed
+    if entry == "startup":
+        assert await coordinator.startup() == []
+    else:
+        assert await coordinator.submit(run.run_id) is False
+    assert seen == ([(run.run_id, command.actor_id)] if allowed else [])
+    assert not calls and run.status.value == "waiting_review"
     await coordinator.shutdown()
 
 
@@ -331,7 +356,7 @@ async def test_dispatch_transient_failures_use_existing_wakeup_without_terminali
         def fence(*_):
             fail_once()
             return nullcontext()
-        monkeypatch.setattr("support.run_execution_fence.acquire_run_fence", fence)
+        monkeypatch.setattr("components.scheduler.run_execution_fence.acquire_run_fence", fence)
 
     def validate(current, accepted):
         if boundary == "permit":

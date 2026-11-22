@@ -18,6 +18,7 @@
         <div class="workspace-explorer__meta-row">
           <code class="workspace-explorer__mission-id" :title="projection.mission.missionId">{{ projection.mission.missionId }}</code>
           <span v-if="workspaceRoot" class="workspace-explorer__workspace-root" :title="workspaceRoot">{{ workspaceRoot }}</span>
+          <button v-else-if="workspaceRootError" class="workspace-explorer__workspace-retry" type="button" @click="workspaceRootRetry += 1">工作区读取失败，重试</button>
         </div>
       </div>
     </header>
@@ -120,7 +121,6 @@ import { missionDisplayObjective, missionDisplayLabel } from './missionSemanticD
 import { ArrowDown, ArrowLeft, ArrowRight, FolderOpened } from '@element-plus/icons-vue'
 import type { MissionWorkspaceProjection, WorkspaceEntry } from '@/services/api/agentos'
 import { agentosApi } from '@/services/api/agentos'
-import { getElectronBridge } from '@/platform/electron/bridge'
 import { workspaceEntryIcon } from './workspaceEntryIcon'
 import { useDragReorder } from '@/composables/useDragReorder'
 import {
@@ -153,19 +153,24 @@ const openVersionGraph = () => {
   if (entry) emit('open', entry)
 }
 
-// —— 本机工作区：桌面壳当前绑定优先，网页端回退 mission 工作区清单（与 ProblemsPanel 同一解析顺序）——
+// Project 路径来自 Mission 冻结的工作区，不能使用桌面文件浏览器的全局目录。
 const workspaceRoot = ref('')
-const resolveWorkspaceRoot = async () => {
-  const missionId = props.projection.mission.missionId
-  if (!missionId) { workspaceRoot.value = ''; return }
+const workspaceRootError = ref(false)
+const workspaceRootRetry = ref(0)
+watch([() => props.projection.mission.missionId, workspaceRootRetry], async ([missionId], _previous, onCleanup) => {
+  const controller = new AbortController()
+  let current = true
+  onCleanup(() => { current = false; controller.abort() })
+  workspaceRoot.value = ''
+  workspaceRootError.value = false
+  if (!missionId) return
   try {
-    const folder = await getElectronBridge()?.workspace?.current?.()
-    if (folder?.root) { workspaceRoot.value = folder.root; return }
-    const listing = await agentosApi.listWorkspaceFiles(missionId, '.')
-    workspaceRoot.value = listing.workspaceRoot || ''
-  } catch { workspaceRoot.value = '' }
-}
-watch(() => props.projection.mission.missionId, resolveWorkspaceRoot, { immediate: true })
+    const listing = await agentosApi.listWorkspaceFiles(missionId, '.', { signal: controller.signal })
+    if (current) workspaceRoot.value = listing.workspaceRoot || ''
+  } catch {
+    if (current) workspaceRootError.value = true
+  }
+}, { immediate: true })
 
 const expandedSections = ref<Record<string, boolean>>({
   overview: true,
@@ -398,6 +403,20 @@ const formatOrder = (order: number) => String(order + 1).padStart(2, '0')
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.workspace-explorer__workspace-retry {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  color: var(--wb-text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-explorer__workspace-retry:hover { text-decoration: underline; }
 
 .workspace-tree {
   flex: 1;

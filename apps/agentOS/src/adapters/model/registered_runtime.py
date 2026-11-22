@@ -733,7 +733,7 @@ class RegisteredModelRuntime:
         if public_activity_pending:
             yield emit("model.activity", activity_payload(0.0))
         try:
-            data = decode_json_object("".join(buffer))
+            data = decode_json_object("".join(buffer), finish_reason=finish_reason)
         except ModelInvocationError as exc:
             raise StructuredGenerationError(
                 "MODEL_OUTPUT_INVALID_JSON",

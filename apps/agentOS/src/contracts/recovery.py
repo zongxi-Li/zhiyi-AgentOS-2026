@@ -126,6 +126,12 @@ class SemanticPatchRequest(BaseModel):
             patch.remove_relations,
             patch.relations,
             patch.control_policies is not None,
+            patch.expected_artifacts is not None,
+            # Scope and planning phase affect what work is required even when
+            # every executable node is retained. Ordinary annotations alone
+            # must not create an otherwise empty graph revision.
+            patch.metadata.get("workspaceScope"),
+            patch.metadata.get("workspaceDiscovery"),
         )):
             raise ValueError("SemanticPatchRequest requires a semantic TaskPlan change")
         return self

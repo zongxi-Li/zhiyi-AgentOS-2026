@@ -623,6 +623,7 @@ import { workflowApi } from '@/services/api/workflow'
 import { conversationApi, type Conversation } from '@/services/api/conversation'
 import { useChatStore, type ChatWorkflowBinding, type Message } from '@/stores/chat'
 import { conversationCacheMetric } from '@/features/chat/cacheMetrics'
+import { normalizeExecutionSummary } from '@/features/chat/executionSummary'
 import { useRunDelivery } from '@/composables/useRunDelivery'
 import { useChatWorkflowPresentation } from '@/composables/useChatWorkflowPresentation'
 import { useWorkflowProgress } from '@/composables/useWorkflowProgress'
@@ -1406,8 +1407,8 @@ const responseTimingRows = computed(() => {
 const cacheMetric = computed(() => conversationCacheMetric(chatStore.messages, chatStore.isStreaming))
 
 // —— 命令/文件执行与审批（自主对话区迁入信息栏）：按消息顺序聚合全对话工作项 ——
-const conversationWorkItems = computed(() => chatStore.messages
-  .flatMap(message => (message.executionSummary || []).map(item => ({ ...item }))))
+const conversationWorkItems = computed(() => normalizeExecutionSummary(chatStore.messages
+  .flatMap(message => (message.executionSummary || []).map(item => ({ ...item })))))
 const pendingWorkApprovalCount = computed(() => conversationWorkItems.value
   .filter(item => item.approval?.status === 'pending').length)
 

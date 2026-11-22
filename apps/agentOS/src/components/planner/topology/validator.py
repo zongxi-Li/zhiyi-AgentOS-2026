@@ -1,9 +1,32 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from contracts.planning import SemanticTaskRelationType
 
 from .errors import TopologyCompileError, TopologyConflict, TopologyConflictCode
 from .model import CandidateTopology, EdgeMutationPolicy, TopologyEdge
+
+
+def validate_relation_endpoints(known: set[str], edges: Iterable[TopologyEdge]) -> None:
+    invalid = tuple(edge for edge in edges if edge.source_key not in known or edge.target_key not in known)
+    if not invalid:
+        return
+    raise TopologyCompileError(
+        TopologyConflict(
+            code=TopologyConflictCode.UNKNOWN_TASK_REFERENCE,
+            phase="final_validation",
+            repairable_edges=tuple(edge for edge in invalid
+                if edge.mutation_policy is EdgeMutationPolicy.REPAIRABLE and edge.original_relation_index is not None),
+            fixed_edges=tuple(edge for edge in invalid if edge.mutation_policy is EdgeMutationPolicy.FIXED),
+            field_paths=tuple(
+                ("relations", edge.original_relation_index, field)
+                for edge in invalid if edge.original_relation_index is not None
+                for field, key in (("sourceKey", edge.source_key), ("targetKey", edge.target_key)) if key not in known
+            ),
+        ),
+        "candidate topology edge references an unknown task",
+    )
 
 
 def validate_candidate(candidate: CandidateTopology) -> None:
@@ -23,12 +46,8 @@ def validate_candidate(candidate: CandidateTopology) -> None:
             ),
             "candidate topology does not satisfy every capability requirement",
         )
+    validate_relation_endpoints(known, candidate.edges)
     for edge in candidate.edges:
-        if edge.source_key not in known or edge.target_key not in known:
-            raise TopologyCompileError(
-                TopologyConflict(code=TopologyConflictCode.UNKNOWN_TASK_REFERENCE, phase="final_validation"),
-                "candidate topology edge references an unknown task",
-            )
         if edge.source_key == edge.target_key:
             raise TopologyCompileError(
                 TopologyConflict(code=TopologyConflictCode.SELF_DEPENDENCY, phase="final_validation"),

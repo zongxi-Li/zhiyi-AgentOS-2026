@@ -10,7 +10,7 @@ import sys
 import pytest
 
 from contracts.runtime_events import RuntimeEvent
-from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord
+from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus
 from runtime.events.live_events import RuntimeEventBroker, RuntimeEventOverflow
 from runtime.projections.runtime_display import RuntimeDisplayProjection, public_narrative
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
@@ -38,6 +38,58 @@ def store_at(path):
     store.save_run(RuntimeRunRecord(runId="run", missionId="mission", workflowId="test", domain="test",
                                    runtimeEngine="acg", executionState={"planningDeferred": True}))
     return store
+
+
+@pytest.mark.parametrize("queue_attempt", ["a1", "stale"])
+def test_queue_replay_preserves_only_the_current_admission_without_inventing_an_agent(tmp_path, queue_attempt):
+    from contracts.workflow import StepStatus, WorkflowStep, WorkflowStatus
+
+    store = store_at(tmp_path / "queued.db")
+    run = store.get_run("run")
+    run.status = WorkflowStatus.RUNNING
+    run.steps = [WorkflowStep(stepId="node", name="Read sources", agentName="reader", status=StepStatus.PENDING)]
+    run.execution_state.update({"attemptIds": {"node:1:root": "a1"},
+        "schedulingStates": {"node": {"status": "queued", "attemptId": queue_attempt,
+            "queuedAt": "2026-11-18T05:30:00Z", "reason": "NO_CAPACITY"}}})
+    store.save_run(run)
+    original = store.get_run("run").model_dump_json()
+    broker = RuntimeEventBroker(store=store)
+    broker.publish_from_thread("run", event("node.queued", {"nodeTitle": "Read sources", "agentName": "reader",
+        "queuedAt": "2026-11-18T05:30:00Z", "reason": "NO_CAPACITY", "arguments": {"secret": "PRIVATE"}}))
+    restarted = RuntimeEventBroker(store=SQLiteWorkflowStore(store.db_path))
+    restarted.bind_run("run", store, rebase=True)
+    snapshot = restarted.snapshot("run").payload
+    queued = next(item for item in snapshot["events"] if item["eventType"] == "node.queued")
+    assert queued["payload"] == {"nodeTitle": "Read sources", "agentName": "reader",
+        "queuedAt": "2026-11-18T05:30:00Z", "reason": "NO_CAPACITY"}
+    assert ("a1" in snapshot["retiredAttempts"].get("node", [])) == (queue_attempt != "a1")
+    assert store.get_run("run").model_dump_json() == original
+    broker.flush()
+    restarted.flush()
+
+
+def test_waiting_run_snapshot_reconciles_only_matching_ended_attempts(tmp_path):
+    store = store_at(tmp_path / "settled.db")
+    broker = RuntimeEventBroker(store=store)
+    broker.publish_from_thread("run", event("node.started"))
+    broker.publish_from_thread("run", event("model.started"))
+    broker.publish_from_thread("run", event("model.output.delta", {"delta": '{"summary":"read material"}'}))
+    broker.publish_from_thread("run", event("node.started", attempt="live", node="other"))
+    run = store.get_run("run")
+    run.status = WorkflowStatus.WAITING_REVIEW
+    run.current_step_id = "graph"
+    run.acg_blueprint = {"graphId": "graph"}
+    run.execution_state.update({"checkpointId": "display-fixture", "planningLoop": {},
+        "reviewPayload": {"subjectType": "planner", "subjectId": "graph"},
+        "attemptIds": {"node:1:root": "a1", "other:1:root": "prior"},
+        "taskSettlement": {"a1": {"taskState": "ended", "outcome": "cancelled"},
+            "live": {"taskState": "ended", "outcome": "failed"}}})
+    store.save_run(run)
+    before = store.get_run("run").model_dump_json()
+    reloaded = RuntimeEventBroker(store=store).snapshot("run").payload
+    assert reloaded["settledAttempts"] == [{"nodeId": "node", "attemptId": "a1", "status": "cancelled"}]
+    assert "read material" in json.dumps(reloaded["events"])
+    assert store.get_run("run").model_dump_json() == before
 
 
 def test_paused_authority_diagnostic_survives_restart_without_mutating_run(tmp_path):
@@ -279,6 +331,43 @@ def test_model_activity_cannot_reopen_a_durably_failed_run(tmp_path):
     broker.publish_from_thread('run', event('model.output.delta', {'publicText': 'late output'}))
     assert broker.snapshot('run').payload['events'][-1]['eventType'] == 'run.failed'
     broker.flush()
+
+
+def test_explicit_recovery_rebases_nonterminal_display_and_notifies_subscribers(tmp_path):
+    from contracts.workflow import StepStatus, WorkflowStep, WorkflowStatus
+
+    async def run_test():
+        store = store_at(tmp_path / 'paused-recovery.db')
+        run = store.get_run('run')
+        run.status = WorkflowStatus.RUNNING
+        store.save_run(run)
+        broker = RuntimeEventBroker(store=store)
+        broker.publish_from_thread('run', event('model.started'))
+        broker.publish_from_thread('run', event('model.output.delta', {'publicText': 'previous evidence'}))
+        stream = broker.subscribe('run')
+        await anext(stream)
+
+        run.status = WorkflowStatus.RETRYING
+        run.steps = [WorkflowStep(stepId='node', name='Node', agentName='agent', status=StepStatus.PENDING)]
+        run.execution_state['executionBindings'] = {'node': {'attemptId': 'a1'}}
+        store.save_run(run)
+        broker.bind_run('run', store, rebase=True)
+        snapshot = await asyncio.wait_for(anext(stream), timeout=1)
+        assert snapshot.event_type == 'runtime.display.snapshot'
+        assert snapshot.payload['sequence'] == snapshot.sequence
+        assert snapshot.payload['retiredAttempts']['node'] == ['a1']
+        assert 'previous evidence' in json.dumps(snapshot.payload)
+        sequence = snapshot.sequence
+        broker.publish_from_thread('run', event('model.output.delta', {'publicText': 'late old output'}))
+        assert broker.snapshot('run').sequence == sequence
+        broker.publish_from_thread('run', event('model.started', attempt='a2'))
+        started = await asyncio.wait_for(anext(stream), timeout=1)
+        assert started.attempt_id == 'a2'
+        assert started.event_type == 'model.started'
+        await stream.aclose()
+        broker.flush()
+
+    asyncio.run(run_test())
 
 
 def test_rebased_stream_drops_all_retired_attempt_frames(tmp_path):

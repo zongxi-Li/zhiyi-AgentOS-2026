@@ -133,6 +133,8 @@ def test_initial_validation_retains_first_and_repaired_issues_in_trace_and_sse(i
              "fieldPath": ["tasks", 0, "objective"]}
     repair_start = next(event for event in events if event.get("stage") == "repair" and event.get("status") == "started")
     assert repair_start["validationFailures"] == [first]
+    # A repeated unchanged invalid candidate stops correction; there is no
+    # fixed repair count to exhaust or to encode in this diagnostic test.
     assert llm.calls == (3 if repair_succeeds else 4) and not agent.calls and not saved.steps
     if repair_succeeds:
         assert events[-1]["kind"] == "completed" and ledger.latest(run.mission_id)

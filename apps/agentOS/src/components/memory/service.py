@@ -3,6 +3,7 @@
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
+import math
 
 from contracts.memory import MemoryPolicy, MemoryQuery, MemoryRecord, MemoryType
 from components.communicator.contracts import estimate_tokens
@@ -85,8 +86,11 @@ class MemoryService:
         """Apply metadata admission before lexical/vector scoring and RRF fusion."""
         # Admission and expiry happen before either ranker competes for slots.
         now = datetime.now(timezone.utc)
+        scoped_values = getattr(self._store, "values_for_scope", None)
+        records = (scoped_values(query.scope) if query.scope is not None and callable(scoped_values)
+                   else self._store.values())
         candidates = [
-            record for record in self._store.values()
+            record for record in records
             if record.expires_at is None or record.expires_at > now
         ]
         admitted_records = retrieve(
@@ -94,7 +98,10 @@ class MemoryService:
             query.model_copy(update={"limit": len(candidates)}),
         )
         lexical = lexical_scores(admitted_records, query.query)
-        lexical_rank = sorted(admitted_records, key=lambda item: (-lexical[item.memory_id], item.memory_id))
+        # RRF combines actual retrieval matches. A position assigned to a
+        # zero-score document cannot turn it into relevant step context.
+        lexical_rank = sorted((record for record in admitted_records if lexical[record.memory_id] > 0),
+            key=lambda item: (-lexical[item.memory_id], item.memory_id))
         fallback_reason = None
         vector_enabled = self.embedding_adapter is not None and self.vector_index is not None
         if vector_enabled:
@@ -110,7 +117,8 @@ class MemoryService:
             vector_rows = []
             fallback_reason = "SEMANTIC_MODEL_NOT_CONFIGURED"
         allowed_ids = {record.memory_id for record in admitted_records}
-        vector_rows = [item for item in vector_rows if item[0] in allowed_ids]
+        vector_rows = [item for item in vector_rows
+                       if item[0] in allowed_ids and math.isfinite(item[1]) and item[1] > 0]
         vector_rank = {memory_id: index for index, (memory_id, _) in enumerate(vector_rows, 1)}
         vector_score = dict(vector_rows)
         lexical_positions = {record.memory_id: index for index, record in enumerate(lexical_rank, 1)}
@@ -121,14 +129,14 @@ class MemoryService:
                 vectorScore=vector_score.get(record.memory_id, 0.0),
                 fusedScore=(
                     1.0 / (60 + lexical_positions[record.memory_id])
-                    + (
-                        1.0 / (60 + vector_rank[record.memory_id])
-                        if vector_enabled and fallback_reason is None and record.memory_id in vector_rank
-                        else 0.0
-                    )
+                    if record.memory_id in lexical_positions else 0.0
+                ) + (
+                    1.0 / (60 + vector_rank[record.memory_id])
+                    if record.memory_id in vector_rank else 0.0
                 ),
             )
             for record in admitted_records
+            if record.memory_id in lexical_positions or record.memory_id in vector_rank
         ]
         hits.sort(key=lambda item: (-item.fused_score, item.memory_id))
         by_id = {record.memory_id: record for record in admitted_records}

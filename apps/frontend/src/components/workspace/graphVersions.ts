@@ -47,12 +47,13 @@ export const createGraphVersions = (
   const pinnedKey = ref<string | null>(null)
   const comparing = ref(false)
   const loading = ref(false)
-  const snapshotLoading = ref(false)
+  const snapshotPending = ref(false)
   const error = ref('')
-  const snapshotError = ref('')
+  const snapshotFailures = shallowRef<Record<string, boolean>>({})
   const snapshots = shallowRef<Record<string, GraphProjection>>({})
   let generation = 0
   let listRequest = 0
+  let snapshotRequest = 0
   let controller: AbortController | null = null
   const entries = computed(() => [...(history.value?.items || [])].sort((a, b) => a.graphVersion - b.graphVersion))
   const current = computed(() => entries.value.find(entry => entry.current) || null)
@@ -64,21 +65,29 @@ export const createGraphVersions = (
     return index > 0 ? entries.value[index - 1] : null
   })
   const cached = (entry: GraphVersionEntry | null) => entry ? snapshots.value[graphVersionKey(entry)] || null : null
+  const available = (entry: GraphVersionEntry) => entry.current && liveGraph.value?.graphId === entry.graphId
+    && liveGraph.value.graphVersion === entry.graphVersion ? liveGraph.value : cached(entry)
   const displayGraph = computed(() => {
     if (!selected.value) return following.value ? liveGraph.value : null
-    if (selected.value.current && liveGraph.value?.graphId === selected.value.graphId
-      && liveGraph.value.graphVersion === selected.value.graphVersion) return liveGraph.value
-    return cached(selected.value)
+    return available(selected.value)
   })
   const previousGraph = computed(() => cached(previous.value))
   const difference = computed(() => comparing.value && previousGraph.value && displayGraph.value
     ? compareGraphs(previousGraph.value, displayGraph.value) : null)
+  const required = computed(() => selected.value
+    ? [selected.value, ...(comparing.value && previous.value ? [previous.value] : [])] : [])
+  const selectionIdentity = computed(() => JSON.stringify(required.value.map(entry => [graphVersionKey(entry), entry.current])))
+  const liveSelectionKey = computed(() => selected.value?.current && liveGraph.value && available(selected.value) === liveGraph.value
+    ? selectedKey.value : null)
+  const snapshotLoading = computed(() => snapshotPending.value && required.value.some(entry => !available(entry)))
+  const snapshotError = computed(() => required.value.some(entry => !available(entry) && snapshotFailures.value[graphVersionKey(entry)])
+    ? '图快照加载失败，请重试' : '')
 
-  const ensureSnapshot = async (entry: GraphVersionEntry, signal: AbortSignal, expectedGeneration: number) => {
+  const ensureSnapshot = async (entry: GraphVersionEntry, expectedRun: string, signal: AbortSignal, isCurrent: () => boolean) => {
     const key = graphVersionKey(entry)
-    if (snapshots.value[key]) return
-    const graph = await api.getGraphSnapshot(runId.value!, entry.blueprintId, { signal })
-    if (signal.aborted || generation !== expectedGeneration) return
+    if (available(entry)) return
+    const graph = await api.getGraphSnapshot(expectedRun, entry.blueprintId, { signal })
+    if (!isCurrent()) return
     // A current graph can advance during the request. Never cache it under an older version.
     if (graph.graphId !== entry.graphId || graph.graphVersion !== entry.graphVersion) throw new Error('图版本已更新，请刷新版本列表')
     const { workspaceReview: _currentReview, ...snapshot } = graph
@@ -89,18 +98,27 @@ export const createGraphVersions = (
     controller = new AbortController()
     const signal = controller.signal
     const expectedGeneration = generation
-    snapshotError.value = ''
-    const entry = selected.value
-    if (!entry || !runId.value) { snapshotLoading.value = false; return }
-    snapshotLoading.value = true
+    const request = ++snapshotRequest
+    const expectedRun = runId.value
+    const expectedSelection = selectionIdentity.value
+    const entries = required.value
+    const isCurrent = () => !signal.aborted && expectedGeneration === generation && request === snapshotRequest
+      && runId.value === expectedRun && selectionIdentity.value === expectedSelection
+    const failures = { ...snapshotFailures.value }
+    for (const entry of entries) delete failures[graphVersionKey(entry)]
+    snapshotFailures.value = failures
+    if (!entries.length || !expectedRun) { snapshotPending.value = false; return }
+    snapshotPending.value = true
     try {
-      const requests = [ensureSnapshot(entry, signal, expectedGeneration)]
-      if (comparing.value && previous.value) requests.push(ensureSnapshot(previous.value, signal, expectedGeneration))
-      await Promise.all(requests)
-    } catch {
-      if (!signal.aborted && expectedGeneration === generation) snapshotError.value = '图快照加载失败，请重试'
+      await Promise.all(entries.map(async entry => {
+        try {
+          await ensureSnapshot(entry, expectedRun, signal, isCurrent)
+        } catch {
+          if (isCurrent() && !available(entry)) snapshotFailures.value = { ...snapshotFailures.value, [graphVersionKey(entry)]: true }
+        }
+      }))
     } finally {
-      if (!signal.aborted && expectedGeneration === generation) snapshotLoading.value = false
+      if (isCurrent()) snapshotPending.value = false
     }
   }
   const refresh = async () => {
@@ -135,6 +153,7 @@ export const createGraphVersions = (
   watch(runId, () => {
     generation++
     listRequest++
+    snapshotRequest++
     controller?.abort()
     history.value = null
     snapshots.value = {}
@@ -142,14 +161,14 @@ export const createGraphVersions = (
     pinnedKey.value = null
     comparing.value = false
     loading.value = false
-    snapshotLoading.value = false
+    snapshotPending.value = false
     error.value = ''
-    snapshotError.value = ''
+    snapshotFailures.value = {}
     void refresh()
   }, { immediate: true, flush: 'sync' })
   watch(watermark, () => { void refresh() })
-  watch([selectedKey, comparing, () => previous.value && graphVersionKey(previous.value)], () => { void loadSelection() })
-  onScopeDispose(() => { generation++; listRequest++; controller?.abort() })
+  watch([selectionIdentity, liveSelectionKey], () => { void loadSelection() })
+  onScopeDispose(() => { generation++; listRequest++; snapshotRequest++; controller?.abort() })
   return { history, entries, current, selected, selectedKey, previous, following, historical, comparing,
     loading, snapshotLoading, error, snapshotError, displayGraph, previousGraph, difference,
     select, follow, refresh, retrySnapshot: loadSelection }

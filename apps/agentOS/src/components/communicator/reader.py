@@ -40,8 +40,16 @@ class CommunicationReader:
 
     def describe_sources(self) -> list[dict]:
         return [self._broker.describe_reference(run_id=self._run_id,
-            consumer_step_id=self._consumer_step_id, output_ref=reference)
-            for reference in self._output_refs.values()]
+            consumer_step_id=self._consumer_step_id, output_ref=reference,
+            producer_step_id=producer)
+            for producer, reference in self._output_refs.items()]
+
+    def describe_path(self, producer_step_id: str, fields: Iterable[str], *, value_path=()) -> dict:
+        output_ref = self._output_refs.get(producer_step_id)
+        if output_ref is None:
+            raise CommunicationAccessError("TOPOLOGY_DENIED", "producer step is not available to this communication reader")
+        return self._broker.describe_reference_path(run_id=self._run_id, consumer_step_id=self._consumer_step_id,
+            output_ref=output_ref, producer_step_id=producer_step_id, requested_fields=fields, value_path=value_path)
 
     @property
     def operation_store(self):
@@ -81,17 +89,19 @@ class CommunicationReader:
                 "producer step is not available to this communication reader",
             )
         limit = self._max_tokens
-        if self.model_budget is not None:
+        if self.model_budget is not None and self.model_budget.max_read_tokens is not None:
             limit = min(limit, self.model_budget.max_read_tokens) if limit is not None else self.model_budget.max_read_tokens
         pack = await self._broker.read_reference(
             run_id=self._run_id,
             consumer_step_id=self._consumer_step_id,
             output_ref=output_ref,
+            producer_step_id=producer_step_id,
             requested_fields=fields,
             max_tokens=limit,
             reason=reason,
             operation_id=operation_id,
             supplemental_limit=self.model_budget.total_tokens if self.model_budget else None,
+            supplemental_read=True,
         )
         self._record(pack, operation_id)
         return pack
@@ -100,6 +110,7 @@ class CommunicationReader:
         self, producer_step_id: str, fields: Iterable[str], *, cursor: str | None = None,
         page_tokens: int, reason: str = "",
         operation_id: str = "",
+        value_path: tuple[str | int, ...] = (),
     ) -> tuple[ContextPack, str | None]:
         """Read one authorized page; retain its pack for normal provenance recording."""
         output_ref = self._output_refs.get(producer_step_id)
@@ -107,16 +118,20 @@ class CommunicationReader:
             raise CommunicationAccessError(
                 "TOPOLOGY_DENIED", "producer step is not available to this communication reader"
             )
-        if ((self.model_budget is not None and page_tokens > self.model_budget.max_read_tokens)
+        if ((self.model_budget is not None and self.model_budget.max_read_tokens is not None
+                and page_tokens > self.model_budget.max_read_tokens)
                 or (self._max_tokens is not None and page_tokens > self._max_tokens)):
             from .broker import EntropyBudgetExceededError
             raise EntropyBudgetExceededError("requested page exceeds frozen read budget")
         pack, next_cursor = await self._broker.read_reference_page(
             run_id=self._run_id, consumer_step_id=self._consumer_step_id,
             output_ref=output_ref, requested_fields=fields, cursor=cursor,
+            producer_step_id=producer_step_id,
             page_tokens=page_tokens, reason=reason,
             operation_id=operation_id,
             supplemental_limit=self.model_budget.total_tokens if self.model_budget else None,
+            supplemental_read=True,
+            value_path=value_path,
         )
         self._record(pack, operation_id)
         return pack, next_cursor

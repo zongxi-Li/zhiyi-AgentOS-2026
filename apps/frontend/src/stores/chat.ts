@@ -8,6 +8,7 @@ import { apiUrl } from '@/platform'
 import type { AsyncWorkflowStartResponse } from '@/services/api/workflow'
 import type { ConversationLaunchContext } from '@/features/mission/request'
 import { compactionFailureMessage, conversationInput, estimateContextInput } from '@/features/chat/compaction'
+import { mergeExecutionSummary, normalizeExecutionSummary } from '@/features/chat/executionSummary'
 import { conversationLaunchCommand, matchesConversationLaunchContext } from '@/features/mission/command'
 import { createMissionLaunchAttempt, MissionLaunchStateError } from '@/features/mission/launchAttempt'
 import type { MissionLaunchResult } from '@/features/mission/launch'
@@ -546,7 +547,7 @@ export const useChatStore = defineStore('chat', () => {
         reasoningTokens: response.metadata?.reasoningTokens,
         outputTokens: response.metadata?.outputTokens,
         latencyMs: response.metadata?.latencyMs,
-        executionSummary: response.metadata?.executionSummary,
+        executionSummary: normalizeExecutionSummary(response.metadata?.executionSummary),
         agentMode: 'default'
       }
       messages.value.push(assistantMessage)
@@ -692,7 +693,6 @@ export const useChatStore = defineStore('chat', () => {
         const summaries = message.executionSummary || []
         const index = summaries.findIndex(item => item.stage === stage)
         const existing = index >= 0 ? summaries[index] : undefined
-        if (existing && ['completed', 'failed', 'cancelled'].includes(existing.status) && status === 'running') return
         const terminal = payload.terminal && typeof payload.terminal === 'object'
           ? payload.terminal as TerminalExecution
           : existing?.terminal
@@ -708,9 +708,7 @@ export const useChatStore = defineStore('chat', () => {
           ...(activity ? { activity } : {}),
           ...(approval ? { approval } : existing?.approval ? { approval: existing.approval } : {})
         }
-        if (index >= 0) summaries[index] = next
-        else summaries.push(next)
-        message.executionSummary = [...summaries]
+        message.executionSummary = mergeExecutionSummary(summaries, next)
       }
       const phaseForTool = (toolName: string) => {
         const phases: Record<string, string> = {
@@ -749,7 +747,11 @@ export const useChatStore = defineStore('chat', () => {
           const metadata = saved.metadata || {}
           message.content = saved.content || ''
           Object.assign(message, restoreMessageMetadata(metadata))
-          message.executionSummary = metadata.executionSummary || []
+          message.executionSummary = normalizeExecutionSummary([
+            ...(metadata.executionSummary || []),
+            ...(message.executionSummary || []).filter(item => item.approval
+              && ['approved', 'denied', 'expired'].includes(item.approval.status))
+          ])
           if (applyContextSnapshot(metadata.contextUsage)) message.contextUsage = contextUsageState.value!
           message.chatExecutionId = data.chatExecutionId
           message.chatExecutionState = metadata.chatExecutionState
@@ -1203,7 +1205,7 @@ export const useChatStore = defineStore('chat', () => {
         tokensUsed: msg.metadata?.totalTokens ?? msg.metadata?.tokens_used,
         modelInfo: msg.metadata?.effectiveModel ?? msg.metadata?.model_info,
         contextUsage: contextUsage(msg.metadata?.contextUsage),
-        executionSummary: msg.metadata?.executionSummary,
+        executionSummary: normalizeExecutionSummary(msg.metadata?.executionSummary),
         streamError: msg.metadata?.executionSummary?.find((stage: ExecutionSummaryItem) =>
           stage.stage === 'chat_stream' && stage.status !== 'completed')?.description,
         streamActivity: msg.role?.toLowerCase() === 'user' ? undefined : 'complete',

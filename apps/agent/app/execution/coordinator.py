@@ -45,9 +45,9 @@ class RunExecutionCoordinator:
             is_in_place_retry = run_status == "retrying"
             pending = getattr(run, "execution_state", {}).get("workspaceReviewContinuation")
             continuation = getattr(self.runtime, "workspace_review_continuation", None)
-            can_replan = getattr(continuation, "can_replan", lambda _: False)
+            can_resume = getattr(continuation, "can_resume", getattr(continuation, "can_replan", lambda _: False))
             is_workspace_review = (run_status == "waiting_review" and isinstance(pending, dict)
-                and (not pending.get("blocked") or can_replan(run)))
+                and (not pending.get("blocked") or can_resume(run)))
             if not (is_new_run or is_in_place_retry or is_workspace_review):
                 return False
             dispatch_store = getattr(self.runtime, "execution_dispatch_store", None)
@@ -151,8 +151,8 @@ class RunExecutionCoordinator:
             settled_review = (run.status.value == "waiting_review" or
                 getattr(run, "execution_state", {}).get("graphVersion", 0) > (pending or {}).get("sourceGraphVersion", 0))
             continuation = getattr(self.runtime, "workspace_review_continuation", None)
-            can_replan = getattr(continuation, "can_replan", lambda _: False)
-            if isinstance(pending, dict) and (not pending.get("blocked") or can_replan(run)) and settled_review:
+            can_resume = getattr(continuation, "can_resume", getattr(continuation, "can_replan", lambda _: False))
+            if isinstance(pending, dict) and (not pending.get("blocked") or can_resume(run)) and settled_review:
                 with self._dispatch_identity(command):
                     resumed = await run_blocking(continuation.resume, run) if continuation is not None else None
                 if resumed is None:

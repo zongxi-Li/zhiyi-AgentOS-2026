@@ -2,6 +2,7 @@ from __future__ import annotations
 
 
 import asyncio
+from dataclasses import replace
 
 import pytest
 
@@ -105,6 +106,34 @@ def test_reliable_event_is_idempotent_backpressured_and_acknowledged(tmp_path) -
     assert store.pending(run_id="run-1", consumer_step_id="sink") == ()
 
 
+def test_reliable_pending_keeps_all_messages_across_batches_and_run_boundaries(tmp_path) -> None:
+    store = SQLiteReliableCommunicationStore(tmp_path / "communication.sqlite3")
+    messages = [replace(_message(f"message-{index:03}"), sequence=index) for index in range(137)]
+    for message in reversed(messages):
+        store.publish(message)
+    store.publish(replace(_message("other-run"), run_id="run-2"))
+    store.publish(replace(_message("other-consumer"), consumer_step_id="other"))
+
+    pending = store.pending(run_id="run-1", consumer_step_id="sink")
+    assert pending == tuple(messages)
+    batch = store.pending(run_id="run-1", consumer_step_id="sink", limit=20)
+    assert batch == tuple(messages[:20])
+    with pytest.raises(PermissionError, match="another run"):
+        store.acknowledge(run_id="run-2", message_id=messages[0].message_id)
+    assert store.pending(run_id="run-1", consumer_step_id="sink") == pending
+    for message in batch:
+        store.acknowledge(run_id="run-1", message_id=message.message_id)
+        assert store.publish(message).status == "acked"
+    assert store.pending(run_id="run-1", consumer_step_id="sink") == tuple(messages[20:])
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, "10"])
+def test_reliable_pending_rejects_invalid_explicit_batch_size(tmp_path, limit) -> None:
+    store = SQLiteReliableCommunicationStore(tmp_path / "communication.sqlite3")
+    with pytest.raises(ValueError, match="positive integer"):
+        store.pending(run_id="run-1", consumer_step_id="sink", limit=limit)
+
+
 def test_blackboard_uses_snapshot_and_rejects_stale_cas(tmp_path) -> None:
     communication = SQLiteReliableCommunicationStore(tmp_path / "blackboard.sqlite3")
     version = communication.blackboard_write(
@@ -187,6 +216,16 @@ def test_debate_coordinator_is_bounded_and_requires_quorum() -> None:
         coordinator.advance()
     coordinator.submit(participant_step_id="right", artifact_ref="output:right")
     assert coordinator.advance() == (1, "critique")
+
+
+def test_debate_coordinator_advances_each_complete_phase_until_declared_end() -> None:
+    coordinator = DebateCoordinator(DebateSpec(participant_step_ids=("left", "right"), max_rounds=2, quorum=2))
+    expected = [(1, "critique"), (1, "vote"), (2, "propose"), (2, "critique"), (2, "vote"), (2, "complete")]
+    for next_state in expected:
+        for participant in ("left", "right"):
+            coordinator.submit(participant_step_id=participant,
+                artifact_ref=f"output:{coordinator.round}:{coordinator.phase}:{participant}")
+        assert coordinator.advance() == next_state
 
 
 @pytest.mark.parametrize("max_rounds", [None, 0, True, "1"])

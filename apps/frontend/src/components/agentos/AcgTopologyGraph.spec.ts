@@ -1,9 +1,14 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, h, KeepAlive, nextTick, ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { GraphProjection } from '@/services/api/agentos'
+import type { AcgStepState, GraphProjection } from '@/services/api/agentos'
+import { executionLayout } from '@/utils/acgExecutionLayout'
 import AcgTopologyGraph from './AcgTopologyGraph.vue'
 
+vi.mock('@/utils/acgExecutionLayout', async original => {
+  const actual = await original<typeof import('@/utils/acgExecutionLayout')>()
+  return { ...actual, executionLayout: vi.fn(actual.executionLayout) }
+})
 
 const { networks, flowCalls } = vi.hoisted(() => ({
   networks: [] as any[],
@@ -64,6 +69,46 @@ beforeEach(() => { vi.useFakeTimers(); networks.length = 0; vi.clearAllMocks() }
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.useRealTimers() })
 
 describe('execution flow integration', () => {
+  it('reuses layout across fresh runtime snapshots and recomputes only when layout inputs change', async () => {
+    const state: AcgStepState = { stepId: 'n3', status: 'running', agentName: 'worker', attempt: 1, retryCount: 0,
+      task: { taskId: 'task', missionId: 'mission', title: 'Task', objective: '', constraints: [], status: 'running',
+        metadata: {}, parentTaskId: 'parent-1' } }
+    const wrapper = await setup({ stepStates: [state] })
+    const flow = wrapper.findComponent('.mock-execution-flow')
+    const positions = flow.props('positions')
+    expect(executionLayout).toHaveBeenCalledTimes(1)
+    await wrapper.setProps({ stepStates: [{ ...state, status: 'completed', attempt: 2, outputSummary: 'Updated evidence',
+      task: { ...state.task!, status: 'completed', title: 'Updated task label' } }],
+      runtimePhases: { n3: 'COMPLETED' }, completedStepIds: ['n3'],
+      blueprint: { ...blueprint, nodes: blueprint.nodes.map(node => ({ ...node, name: `${node.name} updated` })),
+        edges: [...blueprint.edges].reverse().map(edge => ({ ...edge })) } })
+    expect(executionLayout).toHaveBeenCalledTimes(1)
+    expect(flow.props('positions')).toBe(positions)
+    expect(flow.props('statuses').n3.status).toBe('completed')
+
+    await wrapper.setProps({ stepStates: [{ ...state, task: { ...state.task!, parentTaskId: 'parent-2' } }] })
+    expect(executionLayout).toHaveBeenCalledTimes(2)
+    expect(flow.props('positions')).not.toBe(positions)
+
+    const reordered = { ...blueprint, nodes: blueprint.nodes.map((node, index) => ({ ...node, display: { displayOrder: 5 - index } })) }
+    await wrapper.setProps({ blueprint: reordered })
+    expect(executionLayout).toHaveBeenCalledTimes(3)
+    const dependencyChanged = { ...reordered, edges: reordered.edges.map((edge, index) => index === 0 ? { ...edge, targetId: 'n4' } : edge) }
+    await wrapper.setProps({ blueprint: dependencyChanged })
+    expect(executionLayout).toHaveBeenCalledTimes(4)
+    await wrapper.setProps({ blueprint: { ...dependencyChanged, nodes: [...dependencyChanged.nodes].reverse() } })
+    expect(executionLayout).toHaveBeenCalledTimes(5)
+  })
+  it('keeps recovered pending nodes idle despite old streaming phases', async () => {
+    const wrapper = await setup({ runtimePhases: { n3: 'STREAMING' },
+      stepStates: [{ stepId: 'n3', status: 'pending', agentName: 'worker', attempt: 2, retryCount: 1 }] })
+    await click(wrapper, '全部步骤')
+    const flow = wrapper.findComponent('.mock-execution-flow')
+    expect(flow.props('statuses').n3).toMatchObject({ status: 'pending', label: '待执行' })
+    expect(wrapper.get('[data-node="n3"]').text()).not.toContain('运行中')
+    await wrapper.setProps({ stepStates: [{ stepId: 'n3', status: 'running', agentName: 'worker', attempt: 2, retryCount: 1 }] })
+    expect(flow.props('statuses').n3).toMatchObject({ status: 'running', label: '运行中' })
+  })
   it('retains the topology renderer and camera when its Workbench is cached', async () => {
     const visible = ref(true)
     const phases = ref<Record<string, string>>({})

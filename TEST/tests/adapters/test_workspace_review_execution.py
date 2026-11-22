@@ -101,6 +101,11 @@ async def test_denied_revision_reenters_planner_and_keeps_completed_prefix(
             feedback.append(observation.planning_commit_rejection)
             assert feedback[-1]["code"] == "INVALID_PROPOSAL"
             assert "started or settled" in feedback[-1]["reason"]
+            archived = rt.execution_value_store.get_graph_patch(
+                run_id=run.run_id, patch_ref=feedback[-1]["proposalRef"])
+            assert archived["observationId"] == feedback[-1]["observationId"]
+            assert archived["patch"]["retireKeys"] == [task_plan.nodes[0].key]
+            assert archived["rejection"] == {key: feedback[-1][key] for key in ("code", "reason")}
             return workspace_review_decision(observation=observation, task_plan=task_plan)
         if not proposed and any(step.status == "completed" for step in observation.steps):
             proposed = True
@@ -197,6 +202,77 @@ async def test_answer_after_permit_restart_commits_cleared_review_and_resumes_on
     assert observations[0].wake_reason == "user_input"
     assert observations[0].human_answers[-1].answer == request.answer
     assert agent2.calls == [] and agent3.calls.count("A") == 1
+    assert [item["capabilityId"] for item in hands_stack.service.requests] == ["fs.list", "fs.read"]
+
+
+@pytest.mark.asyncio
+async def test_user_input_archives_superseded_blocked_proposal_and_resumes_same_run_after_restart(
+        initial_run, hands_stack, monkeypatch):
+    from contracts.runtime_planning import RuntimePlanningDecision
+    from runtime.orchestration.planning_interaction import RuntimePlanningInteraction
+    from runtime.orchestration.planning_operations import TaskOperationApplyRequest, TaskOperationPreviewRequest
+
+    rt, workflow, agent, run = configure(initial_run, hands_stack, monkeypatch)
+    initial_commit = run.execution_state["graphActivation"]["sourceCommitId"]
+    initial_run_ids = {item.run_id for item in workflow.list_runs(mission_id=run.mission_id).items}
+
+    def pause_after_prefix(*, observation, task_plan):
+        if observation.graph_version == 2 and observation.remaining_step_ids:
+            return RuntimePlanningDecision(observationId=observation.fingerprint(), action="wait",
+                reason="Reconsider the remaining repository scope")
+        return decide_runtime(observation=observation, task_plan=task_plan)
+
+    rt.runtime_planning_coordinator.planner_for_run = lambda _: SimpleNamespace(decide_runtime=pause_after_prefix)
+    paused = await rt.execute_prepared_run(run.run_id)
+    assert paused.status == WorkflowStatus.WAITING_REVIEW and agent.calls == ["A"]
+    assert paused.execution_state["graphVersion"] == 2
+    # This is a legacy live pointer from a superseded review, not the current
+    # wait's proposal or a new execution error. Preserve its complete body.
+    old_proposal = {"observationId": "superseded-observation", "sourceGraphVersion": 1,
+        "blocked": True, "errorCode": "ValueError", "reason": "historical host diagnostic",
+        "patch": {"originalProposal": ["retained evidence", "remaining scope"]}}
+    paused.execution_state["workspaceReviewContinuation"] = old_proposal
+    workflow.save_run(paused)
+
+    interaction = RuntimePlanningInteraction(rt)
+    proposal = await interaction.preview_operation(run.run_id, TaskOperationPreviewRequest(kind="user_input",
+        operationId="continue-current-review", content="Continue reading the remaining declared scope",
+        permission="task_collaboration"))
+    request = TaskOperationApplyRequest(proposalId=proposal["operationId"],
+        expectedRevision=proposal["action"]["expectedRevision"], permission="task_collaboration")
+    receipt = await interaction.operations.apply(run.run_id, request)
+    assert await interaction.operations.apply(run.run_id, request) == receipt
+    ready = workflow.get_run(run.run_id)
+    assert ready.status == WorkflowStatus.RETRYING
+    assert ready.completed_step_ids == paused.completed_step_ids == ["A"]
+    assert "workspaceReviewContinuation" not in ready.execution_state
+    retired = [event.payload for event in ready.trace
+        if event.payload.get("runtimeEvent") == "planner.runtime.continuation_retired"]
+    assert len(retired) == 1 and retired[0]["observationId"] == old_proposal["observationId"]
+
+    resumed, durable, resumed_agent = open_existing(workflow.db_path.parent, initial_commit)
+    install_execution(resumed, resumed_agent, hands_stack, monkeypatch)
+    resumed.execution_dispatch_store = SQLiteExecutionDispatchStore(durable.db_path)
+    resumed.execution_dispatch_enabled = True
+    archived = resumed.execution_value_store.get_graph_patch(run_id=run.run_id, patch_ref=retired[0]["proposalRef"])
+    assert archived["continuation"] == old_proposal
+    observations = []
+
+    def review_after_input(*, observation, task_plan):
+        observations.append(observation)
+        if observation.wake_reason == "user_input":
+            return RuntimePlanningDecision(observationId=observation.fingerprint(), action="continue",
+                reason="Continue the declared pending reads after reviewing the operator input")
+        return decide_runtime(observation=observation, task_plan=task_plan)
+
+    resumed.runtime_planning_coordinator.planner_for_run = lambda _: SimpleNamespace(decide_runtime=review_after_input)
+    assert await resumed.prepare_planning_wakeups() == [run.run_id]
+    result = await resumed.execute_prepared_run(run.run_id)
+    assert result.status == WorkflowStatus.COMPLETED, result.error
+    assert result.run_id == run.run_id and "A" not in resumed_agent.calls
+    assert observations[0].wake_reason == "user_input"
+    assert observations[0].user_inputs[-1].content == proposal["action"]["content"]
+    assert {item.run_id for item in workflow.list_runs(mission_id=run.mission_id).items} == initial_run_ids
     assert [item["capabilityId"] for item in hands_stack.service.requests] == ["fs.list", "fs.read"]
 
 

@@ -1,5 +1,5 @@
 <template>
-  <section v-if="visible" class="formal-control" :class="{ 'is-embedded': embedded, 'is-conversational': conversational }" aria-label="正式运行控制">
+  <section v-if="visible" class="formal-control" :class="{ 'is-embedded': embedded, 'is-conversational': conversational, 'is-actionable': conversational && !!action }" aria-label="正式运行控制">
     <header v-if="!conversational"><strong>{{ embedded ? '任务进展' : '运行控制' }}</strong><button type="button" :disabled="pending" @click="emit('refresh')">刷新</button></header>
     <LifecycleProgress v-if="embedded && !conversational" :phase="lifecycle.phase" />
     <dl v-if="!embedded && !conversational" aria-live="polite">
@@ -160,6 +160,14 @@ summary { cursor: pointer; }
 .formal-control.is-conversational { max-height: none; overflow: visible; margin: 0 0 22px; padding: 0; border: 0; border-radius: 0; background: transparent; }
 .is-conversational .formal-control__actions { justify-content: flex-start; flex-wrap: wrap; }
 .is-conversational .formal-control__hint { margin: 0 0 12px; }
+/* 待确认态：与上方时间线的确认提示行连成一张 accent 确认卡（顶条在 CopilotRunTimeline）。 */
+.formal-control.is-conversational.is-actionable { margin: 0 0 22px; padding: 13px 16px 14px; border: 1px solid color-mix(in srgb, var(--wb-accent) 40%, var(--cp-border)); border-radius: 0 0 12px 12px; background: color-mix(in srgb, var(--wb-accent) 5%, var(--wb-surface-section)); }
+.is-conversational.is-actionable .formal-control__hint { margin: 0 0 12px; color: var(--wb-text); font-size: 13px; }
+.is-conversational.is-actionable .formal-control__actions { justify-content: center; gap: 10px; }
+.is-conversational.is-actionable .formal-control__primary { min-height: 32px; padding: 6px 18px; border: 0; border-radius: 8px; font-size: 12px; font-weight: 600; white-space: nowrap; box-shadow: 0 1px 5px color-mix(in srgb, var(--wb-accent) 28%, transparent); }
+.is-conversational.is-actionable .formal-control__actions button:not(.formal-control__primary) { min-height: 32px; padding: 6px 14px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--wb-text-muted); }
+.is-conversational.is-actionable .formal-control__actions button:not(.formal-control__primary):hover:not(:disabled) { background: color-mix(in srgb, var(--wb-danger) 8%, transparent); color: var(--wb-danger); }
+.is-conversational.is-actionable .formal-control__meta { margin-top: 4px; }
 .formal-control__meta { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 16px; color: var(--wb-text-muted); font-size: 11px; }
 .formal-control__meta details { min-width: 0; margin-top: 10px; }
 .formal-control__meta details[open] { flex-basis: 100%; }

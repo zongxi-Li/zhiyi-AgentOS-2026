@@ -462,7 +462,7 @@ def test_rejection_feedback_does_not_clear_an_unrelated_execution_barrier(ready_
     assert run == original
 
 
-@pytest.mark.parametrize("proof", ["safe", "unproven", "policy"])
+@pytest.mark.parametrize("proof", ["components.safe", "unproven", "policy"])
 def test_native_readonly_proof_projects_recovery_option_without_retrying_work(ready_boundary, monkeypatch, proof):
     import runtime.orchestration.permit_recovery as module
     runtime, store, agent, run_id, state = ready_boundary
@@ -482,8 +482,8 @@ def test_native_readonly_proof_projects_recovery_option_without_retrying_work(re
     monkeypatch.setattr(module, "run_step_readonly_retry_proof", validate)
     original = run.model_copy(deep=True)
     observation = runtime.runtime_planning_coordinator.observe(run, state, "failure")
-    assert observation.recovery_action == ("retry" if proof == "safe" else "abort")
-    assert observation.readonly_recovery_proof == (readonly if proof == "safe" else None)
+    assert observation.recovery_action == ("retry" if proof == "components.safe" else "abort")
+    assert observation.readonly_recovery_proof == (readonly if proof == "components.safe" else None)
     assert bool(calls) == (proof != "policy")
     assert run == original and not agent.calls
 
@@ -493,6 +493,35 @@ def test_unconfigured_runtime_preserves_existing_execution(runtime_boundary):
     result = asyncio.run(runtime.execute_prepared_run(run_id))
     assert result.status == WorkflowStatus.COMPLETED
     assert agent.calls == ["A"]
+
+
+def test_copilot_rerun_prepares_a_new_plan_from_current_mission_intent(ready_boundary):
+    from contracts.mission_semantic import MissionSemanticRequest
+    from runtime.orchestration.planning_interaction import RuntimePlanningInteraction
+    from runtime.orchestration.planning_operations import TaskOperationApplyRequest, TaskOperationPreviewRequest
+
+    runtime, store, agent, run_id, _ = ready_boundary
+    source = asyncio.run(runtime.execute_prepared_run(run_id))
+    assert source.status == WorkflowStatus.COMPLETED and source.execution_state["outputRefs"]
+    store.set_task_copilot_permission(source.mission_id, "task_collaboration")
+    objective = "Reinspect input using the current workspace review strategy"
+    runtime.mission_semantic_service.commit(runtime.semantic_principal_provider(), MissionSemanticRequest(
+        missionId=source.mission_id, operationId="updated-objective", expectedMissionRevision=1,
+        objective=objective, constraints=[], sourceRefs=["input:brief"]))
+    service = RuntimePlanningInteraction(runtime)
+    proposal = asyncio.run(service.preview_operation(run_id, TaskOperationPreviewRequest(
+        kind="rerun", operationId="fresh-rerun", content="重新规划后运行", permission="task_collaboration")))
+    action = proposal["action"]
+    assert action["planningMode"] == "fresh" and action["reusedStepIds"] == action["executeStepIds"] == []
+
+    response = asyncio.run(service.operations.apply(run_id, TaskOperationApplyRequest(
+        proposalId=proposal["operationId"], expectedRevision=action["expectedRevision"],
+        permission="task_collaboration")))
+    child = store.get_run(response["receipt"]["runId"])
+    assert child.run_id != run_id and child.mission_id == source.mission_id
+    assert run_intent_basis(child).objective == objective and child.execution_state["planningDeferred"]
+    assert "taskPlan" not in child.execution_state and "outputRefs" not in child.execution_state
+    assert store.get_run(run_id) == source and agent.calls == ["A"]
 
 
 def test_replay_rejects_changed_proposal_identity_and_foreign_run(ready_boundary):

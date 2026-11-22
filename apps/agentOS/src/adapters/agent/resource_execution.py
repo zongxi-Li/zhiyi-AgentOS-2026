@@ -14,6 +14,7 @@ import httpx
 
 from contracts.resource.resource_signing import build_resource_signature
 from contracts.resource import ResourceEndpoint, RuntimeProfile
+from contracts.execution_context import execution_attempt_id, project_execution_context
 from adapters.agent.base import AgentOutput, AgentRunContext, BaseAgent
 
 
@@ -269,20 +270,24 @@ def build_resource_execution_adapter(
 
 def build_remote_execution_payload(context: AgentRunContext) -> dict[str, Any]:
     """Serialize only the step contract, never the full Runtime or Agent context."""
-    pack = context.context_pack
+    delivered = project_execution_context(context)
     basis = getattr(context, "mission_intent_basis", None)
     return {
         "runId": context.run.run_id,
         "missionId": context.task.mission_id,
         **({"missionIntentBasis": basis.model_dump(by_alias=True, mode="json")} if basis is not None else {}),
         "stepId": context.step.step_id,
-        "attemptId": str(getattr(pack, "attempt_id", "") or context.commit_id or ""),
+        "attemptId": execution_attempt_id(context),
         "commitId": str(context.commit_id or ""),
         "agentName": context.step.agent_name,
         "capability": context.step.capability,
         "goal": context.step.goal,
-        "input": dict(getattr(pack, "data", {}) or {}),
-        "evidenceRefs": list(getattr(pack, "evidence_refs", []) or []),
+        "input": delivered["data"],
+        "sourceData": delivered["sourceData"],
+        "evidenceRefs": delivered["evidenceRefs"],
+        "memory": delivered["memory"],
+        **({"executionGuidance": delivered["executionGuidance"]}
+           if "executionGuidance" in delivered else {}),
     }
 
 

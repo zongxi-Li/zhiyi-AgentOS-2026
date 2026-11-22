@@ -59,6 +59,7 @@ from contracts.planner_actions import (
     proposal_fingerprint,
 )
 from contracts.planning import TaskPlan
+from contracts.planning_results import planning_result_operation_id
 from contracts.mission_semantic import run_intent_basis
 from components.planner.htn import HTNError, htn_planning_enabled
 from components.planner.horizon import HorizonError, horizon_planning_enabled
@@ -69,17 +70,11 @@ from support.capabilities import CapabilityCatalog
 from support.stores.workflow_store import WorkflowStore
 
 
-ALL_READ_TARGETS: frozenset[str] = frozenset({"run_state", "capability_catalog", "evidence_refs", "method_catalog", "planning_frontier", "candidate_horizon"})
+ALL_READ_TARGETS: frozenset[str] = frozenset({"run_state", "capability_catalog", "evidence_refs", "method_catalog", "planning_frontier", "candidate_horizon", "step_output"})
 _HORIZON_READS = frozenset({"planning_frontier", "candidate_horizon"})
 _TERMINAL_RUN_STATUSES = frozenset(
     {WorkflowStatus.FAILED, WorkflowStatus.COMPLETED, WorkflowStatus.CANCELLED, WorkflowStatus.SUPERSEDED}
 )
-_MAX_STEPS = 256
-_MAX_BLOCKERS = 64
-_MAX_CAPABILITIES = 256
-_MAX_EVIDENCE_ITEMS = 128
-_MAX_ARTIFACT_REFS = 16
-_MAX_CHECKS = 16
 
 
 def _new_id(prefix: str) -> str:
@@ -162,6 +157,7 @@ class PlannerActionGateway:
         htn_selector: Any = None,
         horizon_selector: Any = None,
         cancellation_requested: Callable[[str], bool] | None = None,
+        result_context_provider: Callable[..., dict[str, Any]] | None = None,
     ):
         self.workflow_store = workflow_store
         self.capability_catalog = capability_catalog
@@ -176,6 +172,7 @@ class PlannerActionGateway:
         self.htn_selector = htn_selector
         self.horizon_selector = horizon_selector
         self.cancellation_requested = cancellation_requested or (lambda _run_id: False)
+        self.result_context_provider = result_context_provider
 
     # ------------------------------------------------------------- session
 
@@ -195,6 +192,8 @@ class PlannerActionGateway:
         if loop.current is None:
             raise ValueError("planning action session requires a persisted current planning round")
         default_reads = ALL_READ_TARGETS - {"method_catalog"} - _HORIZON_READS
+        if getattr(self, 'result_context_provider', None) is None:
+            default_reads -= {"step_output"}
         if self.htn_selector is not None and htn_planning_enabled():
             default_reads = default_reads | {"method_catalog"}
         if self.horizon_selector is not None and horizon_planning_enabled():
@@ -395,6 +394,15 @@ class PlannerActionGateway:
         # 6. duplicate / idempotent replay
         if recorded is not None:
             if replay:
+                if request.query is not None and request.query.target == "step_output":
+                    binding = self._check_binding(session, action_id, request.request_ref)
+                    if isinstance(binding, PlannerActionRejection):
+                        self._finish(action_id, session, "rejected", binding, started)
+                        return binding
+                    if request.query.target not in session.allowed_reads or self.result_context_provider is None:
+                        outcome = reject("UNAUTHORIZED_TARGET", "committed result read permission withdrawn", retryable=False)
+                        self._finish(action_id, session, "rejected", outcome, started)
+                        return outcome
                 if session.htn_used:
                     problem = self._check_htn_result(session, action_id, request, started)
                     if problem is not None:
@@ -444,6 +452,15 @@ class PlannerActionGateway:
         if session.horizon_used:
             problem = self._check_horizon_result(session, action_id, request, started)
             if problem is not None:
+                self._finish(action_id, session, "rejected", problem, started)
+                return problem
+        if request.query is not None and request.query.target == "step_output":
+            binding = self._check_binding(session, action_id, request.request_ref)
+            if isinstance(binding, PlannerActionRejection):
+                self._finish(action_id, session, "rejected", binding, started)
+                return binding
+            if request.query.target not in session.allowed_reads or self.result_context_provider is None:
+                problem = reject("UNAUTHORIZED_TARGET", "committed result read permission withdrawn", retryable=False)
                 self._finish(action_id, session, "rejected", problem, started)
                 return problem
         if isinstance(outcome, PlannerProposalReceipt):
@@ -654,6 +671,13 @@ class PlannerActionGateway:
                 projection: Any = self._read_run_state(run, loop)
             elif target == "capability_catalog":
                 projection = self._read_capability_catalog()
+            elif target == "step_output":
+                provider = getattr(self, 'result_context_provider', None)
+                if provider is None:
+                    raise ValueError("committed result reader is unavailable")
+                arguments = request.query.result.model_dump()
+                operation = planning_result_operation_id(loop.current.observation, arguments)
+                projection = provider(loop.current.observation, **arguments, operation_id=operation)
             elif target == "method_catalog":
                 projection = self.htn_selector.query(
                     plan=TaskPlan.model_validate(run.execution_state["taskPlan"]),
@@ -690,6 +714,8 @@ class PlannerActionGateway:
             result = result.model_copy(update={"run_state": projection})
         elif target == "capability_catalog":
             result = result.model_copy(update={"capability_catalog": projection})
+        elif target == "step_output":
+            result = result.model_copy(update={"step_output": projection})
         elif target == "method_catalog":
             result = result.model_copy(update={"method_catalog": projection})
         elif target in _HORIZON_READS:
@@ -800,16 +826,16 @@ class PlannerActionGateway:
             RunStepProjection(stepId=step.step_id, taskKey=step.task_key, status=step.status,
                               auditOutcome=step.audit_outcome, verificationReport=step.verification_report,
                               artifactCount=len(step.artifact_refs))
-            for step in observation.steps[:_MAX_STEPS]
+            for step in observation.steps
         )
-        blockers = tuple(str(item)[:200] for item in observation.completion_blockers[:_MAX_BLOCKERS])
+        blockers = tuple(observation.completion_blockers)
         return RunStateProjection(
             missionId=observation.mission_id, runId=observation.run_id, runStatus=run.status.value,
             graphId=observation.graph_id, graphVersion=observation.graph_version,
             planVersion=observation.plan_version, observationId=loop.current.observation_id,
             wakeReason=observation.wake_reason, steps=steps,
-            remainingStepIds=tuple(observation.remaining_step_ids[:_MAX_STEPS]),
-            completionBlockers=blockers, truncated=len(observation.steps) > _MAX_STEPS,
+            remainingStepIds=tuple(observation.remaining_step_ids),
+            completionBlockers=blockers,
         )
 
     def _read_capability_catalog(self) -> CapabilityCatalogProjection:
@@ -817,7 +843,7 @@ class PlannerActionGateway:
         capabilities = tuple(
             CapabilityProjection(
                 capabilityId=descriptor.capability_id, displayName=descriptor.display_name,
-                description=str(descriptor.description)[:1000],
+                description=str(descriptor.description),
                 planningStage=descriptor.planning_stage,
                 dependsOn=tuple(descriptor.depends_on),
                 optionalDependencies=tuple(descriptor.optional_dependencies),
@@ -827,26 +853,25 @@ class PlannerActionGateway:
                 riskLevelHint=str(descriptor.risk_level_hint),
                 domainHints=tuple(descriptor.domain_hints),
             )
-            for descriptor in descriptors[:_MAX_CAPABILITIES]
+            for descriptor in descriptors
         )
         return CapabilityCatalogProjection(capabilities=capabilities, count=len(descriptors),
-                                           truncated=len(descriptors) > _MAX_CAPABILITIES)
+                                           truncated=False)
 
     def _read_evidence(self, loop: RuntimePlanningState) -> EvidenceProjection:
         items = []
-        for step in loop.current.observation.steps[:_MAX_EVIDENCE_ITEMS]:
+        for step in loop.current.observation.steps:
             checks = tuple(
                 EvidenceCheckProjection(check=str(check.check), outcome=str(check.outcome))
                 for evidence in step.artifact_evidence
-                for check in evidence.checks[:_MAX_CHECKS]
+                for check in evidence.checks
             )
             items.append(EvidenceItemProjection(
                 stepId=step.step_id, taskKey=step.task_key, commitId=step.commit_id,
                 auditRef=step.audit_ref, auditOutcome=step.audit_outcome,
-                artifactRefs=tuple(step.artifact_refs[:_MAX_ARTIFACT_REFS]), checks=checks,
+                artifactRefs=tuple(step.artifact_refs), checks=checks,
             ))
-        return EvidenceProjection(items=tuple(items),
-                                  truncated=len(loop.current.observation.steps) > _MAX_EVIDENCE_ITEMS)
+        return EvidenceProjection(items=tuple(items))
 
     # ------------------------------------------------------------- helpers
 

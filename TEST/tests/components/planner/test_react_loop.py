@@ -16,6 +16,7 @@ from components.planner.react_loop import (
 )
 from components.planner.service import PlanningEngine
 from components.planner.unified_actions import PlannerActionGateway
+from components.planner.workspace_context import planning_task_plan_context
 from components.auditor import SQLiteDecisionStore
 from components.communicator.provenance_store import SQLiteProvenanceStore
 from components.environment.content import SQLiteContentManifestStore
@@ -23,7 +24,7 @@ from components.executor.value_store import SQLiteExecutionValueStore
 from components.memory.store import SQLiteMemoryStore
 from components.mission.store import WorkflowRegistry
 from contracts.planning import PlannedTask, TaskPlan, TaskPlanRelation
-from contracts.runtime_planning import RuntimePlanningDecision, RuntimePlanningState
+from contracts.runtime_planning import RuntimePlanningDecision, RuntimePlanningState, StepObservation
 from contracts.workflow import (
     ReviewDecision,
     WorkflowDefinition,
@@ -479,14 +480,65 @@ def test_invalid_turn_and_observation_mismatch_converge(waiting_boundary):
     _, store, _, run_id = waiting_boundary
     observation, task_plan = persisted_facts(store, run_id)
 
-    garbage = ReActFakeLLM([lambda p: {"hello": "world"}])
+    garbage = ReActFakeLLM([lambda p: {"hello": "world"}, lambda p: {"hello": "world"}])
     decision = make_loop(store, garbage, []).decide(observation=observation, task_plan=task_plan)
-    assert decision.action == "wait" and "invalid turn" in decision.reason
+    assert decision.action == "wait" and "no progress: repeated an invalid turn" in decision.reason
+    assert len(garbage.prompts) == 2
 
     forged = ReActFakeLLM([lambda p: decide_payload("forged" + "0" * 64, action="complete",
                                                     reason="forged binding")])
     decision = make_loop(store, forged, []).decide(observation=observation, task_plan=task_plan)
     assert decision.action == "wait" and "does not bind the current observation" in decision.reason
+
+
+def test_react_repairs_misnested_controls_before_registered_revision_handoff(waiting_boundary):
+    _, store, _, run_id = waiting_boundary
+    observation, task_plan = persisted_facts(store, run_id)
+    patch = patch_payload(observation.mission_id, "Review remaining evidence")
+
+    def register(payload):
+        return {"turnKind": "use_tool", "actionRequest": {"requestRef": "structure-repair",
+            "proposal": {"kind": "plan_revision", "patch": patch}}}
+
+    def wrong_level(payload):
+        assert payload["toolFeedback"][0]["outcome"] == "registered"
+        return {"turnKind": "decide", "finalDecision": {"observationId": payload["observationId"],
+            "action": "revise", "reason": "Use the registered revision",
+            "taskPlanPatch": {**patch, "waitFor": None, "question": None, "unknownControl": None}}}
+
+    def repair(payload):
+        feedback = payload["validationCorrection"]
+        fields = {tuple(item["fieldPath"]): item for item in feedback["fieldOwnership"]}
+        for field in ("waitFor", "question"):
+            assert fields[("finalDecision", "taskPlanPatch", field)]["declaredAtAncestorPaths"] == [
+                ["finalDecision", field]]
+        assert feedback["outputContract"]["decisionPath"] == ["finalDecision"]
+        assert payload["toolFeedback"][0]["outcome"] == "registered"
+        return {"turnKind": "decide", "finalDecision": {"observationId": payload["observationId"],
+            "action": "revise", "reason": "Use the registered revision", "taskPlanPatch": patch}}
+
+    llm = ReActFakeLLM([register, wrong_level, repair])
+    events = []
+    decision = make_loop(store, llm, events).decide(observation=observation, task_plan=task_plan)
+    assert decision.action == "revise" and decision.task_plan_patch.add_nodes[0].objective == "Review remaining evidence"
+    assert len(llm.prompts) == 3
+    assert len([event for event in events if event.get("runtimeEvent") == "planner.react.decided"]) == 1
+    assert all("unknownControl" not in json.dumps(event) for event in events)
+
+
+def test_react_repeated_structural_failure_ignores_changed_explanation(waiting_boundary):
+    _, store, _, run_id = waiting_boundary
+    observation, task_plan = persisted_facts(store, run_id)
+    patch = {**patch_payload(observation.mission_id, "Inspect remaining evidence"), "waitFor": None}
+
+    def invalid(reason):
+        return lambda payload: {"turnKind": "decide", "finalDecision": {
+            "observationId": payload["observationId"], "action": "revise", "reason": reason, "taskPlanPatch": patch}}
+
+    llm = ReActFakeLLM([invalid("First explanation"), invalid("Changed explanation")])
+    decision = make_loop(store, llm, []).decide(observation=observation, task_plan=task_plan)
+    assert decision.action == "wait" and "no progress: repeated an invalid turn" in decision.reason
+    assert len(llm.prompts) == 2
 
 
 def test_tool_failure_is_feedback_and_loop_continues(waiting_boundary):
@@ -562,3 +614,166 @@ def test_facade_opt_in_attaches_loop_only_when_enabled(waiting_boundary, monkeyp
     monkeypatch.setenv("AGENTOS_PLANNER_REACT_LOOP", "0")
     runtime2_engine = runtime._planning_engine_for_run(run)
     assert runtime2_engine.react_loop is None
+
+
+def test_formal_workspace_context_reaches_every_react_turn_from_one_verified_load(waiting_boundary):
+    _, store, _, run_id = waiting_boundary
+    observation, task_plan = persisted_facts(store, run_id)
+    observation = observation.model_copy(update={"workspace_discovery": {
+        "version": 1, "phase": "formal", "contextRef": "workspace-context:committed"}})
+    source_body = "original_config_text_must_reach_model_without_audit_copy"
+    material = {"sources": [{"sourceRef": "output:discovery", "summary": "Inspect the configuration"}],
+        "observations": [{"receiptRef": "receipt:config", "output": {"text": source_body}}]}
+    loads = []
+
+    def context_provider(current):
+        loads.append(current)
+        return material
+
+    def read_catalog(payload):
+        evidence = payload["workspaceMaterials"]
+        assert evidence["sources"]["trustClass"] == "agent_generated"
+        assert evidence["sources"]["content"] == material["sources"]
+        assert evidence["observations"]["trustClass"] == "verified_evidence"
+        assert evidence["observations"]["content"] == material["observations"]
+        assert "Agent findings remain claims to verify" in payload["instructions"]
+        return use_tool("workspace-vocabulary", "capability_catalog")
+
+    def finish(payload):
+        assert payload["workspaceMaterials"]["observations"]["content"] == material["observations"]
+        return decide_payload(payload["observationId"], reason="Plan with inspected configuration")
+
+    events = []
+    llm = ReActFakeLLM([read_catalog, finish])
+    loop = make_loop(store, llm, events)
+    loop.workspace_context_provider = context_provider
+    decision = loop.decide(observation=observation, task_plan=task_plan)
+    assert decision.reason == "Plan with inspected configuration"
+    assert loads == [observation] and len(llm.prompts) == 2
+    assert source_body not in json.dumps(events, ensure_ascii=False)
+    assert source_body not in json.dumps(loop.last_audit, ensure_ascii=False)
+    session = loop.gateway.get_session(next(event["sessionId"] for event in events
+        if event.get("runtimeEvent") == "planner.react.session_opened"))
+    assert source_body not in repr(vars(session))
+
+
+@pytest.mark.parametrize("discovery", [None, {"phase": "discovery", "contextRef": "context:pending"},
+    {"phase": "formal"}])
+def test_legacy_or_unreferenced_react_observations_do_not_load_workspace_bodies(waiting_boundary, discovery):
+    _, store, _, run_id = waiting_boundary
+    observation, task_plan = persisted_facts(store, run_id)
+    observation = observation.model_copy(update={"workspace_discovery": discovery})
+    llm = ReActFakeLLM([lambda payload: decide_payload(payload["observationId"])])
+    loop = make_loop(store, llm, [])
+
+    def unexpected_provider(current):
+        pytest.fail("Only a referenced formal workspace observation may load its source context")
+
+    loop.workspace_context_provider = unexpected_provider
+    decision = loop.decide(observation=observation, task_plan=task_plan)
+    assert decision.reason == "model decided"
+    assert "workspaceMaterials" not in llm.prompts[0]
+
+
+def workspace_delivery_snapshot(store, run_id, *, formal=True, coverage_complete=False,
+                                analysis_done=True):
+    observation, task_plan = persisted_facts(store, run_id)
+    final = PlannedTask(key="step:final", title="Deliver review", objective="Report the repository findings",
+        capabilityRequirements=("artifact_generation",), logicalRole="final_synthesis")
+    task_plan = task_plan.model_copy(update={
+        "nodes": (*task_plan.nodes, final),
+        "relations": (*task_plan.relations, TaskPlanRelation(
+            sourceKey="step:B", targetKey=final.key, relationType="depends_on")),
+        "metadata": {**task_plan.metadata, **({"workspaceDiscovery": {
+            "version": 1, "phase": "formal", "scopeOrigin": "inferred"}} if formal else {})},
+    })
+    steps = tuple(step.model_copy(update={"status": "pending", "output_ref": None, "commit_id": None})
+        if step.task_key == "step:B" and not analysis_done else step for step in observation.steps)
+    observation = observation.model_copy(update={
+        "steps": (*steps, StepObservation(stepId="final", taskKey=final.key, status="pending")),
+        "remaining_step_ids": ("final",) if analysis_done else ("B", "final"),
+        "workspace_observations": ({"kind": "directory", "path": ".", "operation": "read",
+            "recursive": True, "complete": coverage_complete,
+            "missingReads": [] if coverage_complete else ["src/main.py"],
+            "missingReadCount": 0 if coverage_complete else 1,
+            "missingListings": [], "missingListingCount": 0, "unsupportedEntries": []},),
+    })
+    # The gateway reads the same isolated persisted boundary as the model.
+    run = store.get_run(run_id)
+    run.execution_state["taskPlan"] = task_plan.model_dump(by_alias=True, mode="json")
+    current = run.execution_state["planningLoop"]["current"]
+    current.update(observation=observation.model_dump(by_alias=True, mode="json"),
+        observationId=observation.fingerprint(), decision=None, status="observed")
+    store.save_run(run)
+    return observation, task_plan
+
+
+def test_formal_react_repairs_premature_delivery_through_registered_local_revision(waiting_boundary):
+    _, store, _, run_id = waiting_boundary
+    observation, task_plan = workspace_delivery_snapshot(store, run_id)
+    marker = "untrusted premature delivery prose must not enter audit"
+
+    def premature(payload):
+        assert "validationCorrection" not in payload
+        assert payload["taskPlan"] == planning_task_plan_context(task_plan, observation)
+        assert payload["workspaceReviewFallback"]["action"] == "revise"
+        return decide_payload(payload["observationId"], action="continue", reason=marker)
+
+    def register_repair(payload):
+        correction = payload["validationCorrection"]
+        assert correction["previousCandidate"]["action"] == "continue"
+        assert correction["validationErrors"][0]["loc"] == ["action"]
+        assert "input" not in correction["validationErrors"][0]
+        assert "ctx" not in correction["validationErrors"][0]
+        return {"turnKind": "use_tool", "actionRequest": {"requestRef": "repair-source-gap",
+            "proposal": {"kind": "plan_revision",
+                "patch": payload["workspaceReviewFallback"]["taskPlanPatch"]}}}
+
+    def local_revision(payload):
+        assert payload["toolFeedback"][0]["outcome"] == "registered"
+        return {"turnKind": "decide", "finalDecision": payload["workspaceReviewFallback"]}
+
+    llm = ReActFakeLLM([premature, register_repair, local_revision])
+    events = []
+    loop = make_loop(store, llm, events)
+    decision = loop.decide(observation=observation, task_plan=task_plan)
+    assert decision.action == "revise" and len(llm.prompts) == 3
+    assert all(payload["taskPlan"] == llm.prompts[0]["taskPlan"] for payload in llm.prompts)
+    patch = decision.task_plan_patch
+    assert {node.logical_role for node in patch.add_nodes} == {"workspace_acquisition", "workspace_review"}
+    assert not patch.retire_keys and not patch.replace_keys
+    assert loop.last_audit["toolActions"] == 1
+    assert marker not in json.dumps(events, ensure_ascii=False)
+    assert marker not in json.dumps(loop.last_audit, ensure_ascii=False)
+    assert len([event for event in events if event.get("runtimeEvent") == "planner.react.decided"]) == 1
+
+
+def test_formal_react_repeated_invalid_delivery_converges_without_count_limit(waiting_boundary):
+    _, store, _, run_id = waiting_boundary
+    observation, task_plan = workspace_delivery_snapshot(store, run_id)
+    llm = ReActFakeLLM([
+        lambda payload: decide_payload(payload["observationId"], action="continue", reason="Deliver now"),
+        lambda payload: decide_payload(payload["observationId"], action="continue", reason="Different prose"),
+    ])
+    events = []
+    loop = make_loop(store, llm, events)
+    decision = loop.decide(observation=observation, task_plan=task_plan)
+    assert decision.action == "wait" and "no progress" in decision.reason
+    assert len(llm.prompts) == 2
+    assert not any(event.get("runtimeEvent") == "planner.react.decided" for event in events)
+
+
+@pytest.mark.parametrize("formal,coverage_complete,analysis_done", [
+    (False, False, True), (True, True, True), (True, False, False),
+])
+def test_react_delivery_check_preserves_legacy_complete_and_intermediate_execution(
+        waiting_boundary, formal, coverage_complete, analysis_done):
+    _, store, _, run_id = waiting_boundary
+    observation, task_plan = workspace_delivery_snapshot(store, run_id,
+        formal=formal, coverage_complete=coverage_complete, analysis_done=analysis_done)
+    llm = ReActFakeLLM([lambda payload: decide_payload(payload["observationId"], action="continue")])
+    decision = make_loop(store, llm, []).decide(observation=observation, task_plan=task_plan)
+    assert decision.action == "continue" and len(llm.prompts) == 1
+    assert "validationCorrection" not in llm.prompts[0]
+    if not formal:
+        assert "workspaceReviewFallback" not in llm.prompts[0]

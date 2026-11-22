@@ -543,6 +543,20 @@ describe('AgentOS v2 application API', () => {
     expect(states[1]).toMatchObject({ stepId: 'n2', status: 'waiting_review', retryCount: 1 })
   })
 
+  it('keeps the new pending Attempt authoritative while earlier Identity records remain queryable', () => {
+    const identityNode = { task: { taskId: 'task_1' }, acgNodeId: 'n1', attempts: [{
+      attempt: { attemptId: 'old', runId: 'run_1', taskId: 'task_1', attemptNumber: 1, status: 'failed', failureReason: 'old failure' },
+      executions: [], resourceUse: null,
+    }] }
+    const lifecycles = [{ stepId: 'n1', attemptId: 'old', phase: 'prepared', sequence: 1 }]
+    const [state] = stepStatesFromRun({ steps: [{ stepId: 'n1', name: '重新审查', agentName: 'agent',
+      status: 'pending', attempt: 2, retryCount: 1 }] }, executionTree([identityNode], lifecycles), lifecycles)
+    expect(state).toMatchObject({ status: 'pending', attempt: 2, retryCount: 1 })
+    expect(state.errorSummary).toBeUndefined()
+    expect(state.nodeExecutions).toHaveLength(1)
+    expect(state.attempts?.[0]).toMatchObject({ attemptId: 'old', status: 'failed' })
+  })
+
   it('enriches execution-tree matched nodes and falls back to base for unmatched ones', () => {
     const identityNode = {
       task: { taskId: 'task_2', missionId: 'mission_1', title: '一致性检查', objective: '核对素材', constraints: [], status: 'running', metadata: {} },

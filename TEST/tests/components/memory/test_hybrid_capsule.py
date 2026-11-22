@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
 from components.memory.retrieval import DeterministicEmbeddingAdapter, InMemoryVectorIndex
 from components.memory.service import MemoryService
 from components.memory.store import MemoryStore
@@ -28,11 +32,69 @@ def test_hybrid_retrieval_admits_scope_before_bm25_vector_rrf() -> None:
     )
 
     assert records[0].memory_id == "relevant"
-    assert {record.memory_id for record in records} == {"relevant", "other"}
-    assert {hit.memory_id for hit in hits} == {"relevant", "other"}
+    assert {record.memory_id for record in records} == {"relevant"}
+    assert {hit.memory_id for hit in hits} == {"relevant"}
     assert "foreign" not in event.hit_refs
     assert event.mode == "bm25"
     assert event.fallback_reason == "SEMANTIC_MODEL_NOT_CONFIGURED"
+
+
+@pytest.mark.parametrize("query", ["unrelated vaccination", "   "])
+def test_no_relevant_memory_returns_empty_instead_of_filling_the_limit(query):
+    service = MemoryService()
+    service.remember(_record("first", "scheduler lease capacity"))
+    service.remember(_record("second", "repository source inspection"))
+
+    records, hits, event = service.hybrid_search(MemoryQuery(query=query, scope="run-1", limit=10))
+
+    assert records == hits == []
+    assert event.hit_refs == [] and service.last_retrieval_event == event
+
+
+def test_vector_only_match_is_retained_without_adding_zero_or_nonfinite_similarity_rows():
+    class Embedding:
+        def embed(self, text):
+            return [1.0]
+
+    class Index:
+        def upsert(self, memory_id, vector):
+            pass
+
+        def search(self, vector, limit):
+            return [("semantic", 0.8), ("foreign", 0.9), ("expired", 0.9),
+                ("wrong-type", 0.9), ("zero", 0.0), ("negative", -0.1), ("nan", float("nan"))]
+
+    service = MemoryService(embedding_adapter=Embedding(), vector_index=Index())
+    for memory_id in ("semantic", "zero", "negative", "nan"):
+        service.remember(_record(memory_id, "automobile repair"))
+    service.remember(_record("foreign", "automobile repair", scope="run-2"))
+    expired = _record("expired", "automobile repair").model_copy(update={
+        "expires_at": datetime.now(timezone.utc) - timedelta(seconds=1)})
+    service.remember(expired)
+    service.remember(_record("wrong-type", "automobile repair").model_copy(update={"memory_type": MemoryType.EPISODIC}))
+
+    records, hits, event = service.hybrid_search(MemoryQuery(query="car maintenance", scope="run-1",
+        memoryTypes=[MemoryType.EVIDENCE], limit=10))
+
+    assert [record.memory_id for record in records] == ["semantic"]
+    assert len(hits) == 1 and hits[0].lexical_score == 0 and hits[0].vector_score == 0.8
+    assert event.mode == "bm25_vector_rrf" and event.hit_refs == ["semantic"]
+
+
+def test_unavailable_vector_index_falls_back_only_to_actual_lexical_matches():
+    class BrokenIndex(InMemoryVectorIndex):
+        def search(self, vector, limit):
+            raise OSError("unavailable")
+
+    service = MemoryService(embedding_adapter=DeterministicEmbeddingAdapter(), vector_index=BrokenIndex())
+    service.remember(_record("relevant", "scheduler lease capacity"))
+    service.remember(_record("unrelated", "creative writing"))
+
+    records, hits, event = service.hybrid_search(MemoryQuery(query="lease", scope="run-1", limit=10))
+
+    assert [record.memory_id for record in records] == ["relevant"]
+    assert [hit.memory_id for hit in hits] == ["relevant"]
+    assert event.mode == "lexical_fallback" and event.fallback_reason == "VECTOR_INDEX_UNAVAILABLE"
 
 
 def test_vector_index_can_be_rebuilt_from_authoritative_store() -> None:

@@ -29,17 +29,20 @@ class ModelRequestBudget(BaseModel):
 
 
 class SupplementalReadBudget(BaseModel):
-    """Frozen bounds for model-initiated reads, separate from initial prefetch."""
+    """Optional frozen limits for supplemental reads; a page is a work unit."""
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
     version: Literal["supplemental-read.v1"] = "supplemental-read.v1"
-    max_read_tokens: int = Field(default=4096, alias="maxReadTokens", ge=1, strict=True)
+    max_read_tokens: int | None = Field(default=None, alias="maxReadTokens", ge=1, strict=True)
     page_tokens: int = Field(default=1024, alias="pageTokens", ge=1, strict=True)
-    total_tokens: int = Field(default=16384, alias="totalTokens", ge=1, strict=True)
+    total_tokens: int | None = Field(default=None, alias="totalTokens", ge=1, strict=True)
 
     @model_validator(mode="after")
     def validate_limits(self) -> "SupplementalReadBudget":
-        if self.page_tokens > self.max_read_tokens or self.max_read_tokens > self.total_tokens:
+        if ((self.max_read_tokens is not None and self.page_tokens > self.max_read_tokens)
+                or (self.total_tokens is not None and (
+                    self.page_tokens > self.total_tokens
+                    or self.max_read_tokens is not None and self.max_read_tokens > self.total_tokens))):
             raise ValueError("page <= read <= total budget is required")
         return self
 

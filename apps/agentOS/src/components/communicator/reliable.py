@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
 import sqlite3
-from typing import Any, Literal, Protocol
+from typing import Literal, Protocol
 
 
 class CommunicationBackpressureError(RuntimeError):
@@ -49,7 +48,7 @@ class ReliableMessage:
 
 class ReliableCommunicationStore(Protocol):
     def publish(self, message: ReliableMessage, *, backlog_limit: int) -> ReliableMessage: ...
-    def pending(self, *, run_id: str, consumer_step_id: str, limit: int = 100) -> tuple[ReliableMessage, ...]: ...
+    def pending(self, *, run_id: str, consumer_step_id: str, limit: int | None = None) -> tuple[ReliableMessage, ...]: ...
     def acknowledge(self, *, run_id: str, message_id: str) -> ReliableMessage: ...
     def blackboard_snapshot(self, *, run_id: str, partition: str) -> tuple[int, dict[str, str]]: ...
     def blackboard_write(self, *, run_id: str, partition: str, key: str, artifact_ref: str, expected_version: int, append: bool = False) -> int: ...
@@ -93,16 +92,21 @@ class SQLiteReliableCommunicationStore:
             )
             return message
 
-    def pending(self, *, run_id: str, consumer_step_id: str, limit: int = 100) -> tuple[ReliableMessage, ...]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                """SELECT message_id, run_id, producer_step_id, consumer_step_id, artifact_ref,
+    def pending(self, *, run_id: str, consumer_step_id: str, limit: int | None = None) -> tuple[ReliableMessage, ...]:
+        """Return every pending reference unless the caller explicitly requests a batch."""
+        if limit is not None and (type(limit) is not int or limit < 1):
+            raise ValueError("communication pending limit must be a positive integer")
+        query = """SELECT message_id, run_id, producer_step_id, consumer_step_id, artifact_ref,
                           correlation_id, causation_id, sequence, schema_hash, status
                    FROM communication_messages
                    WHERE run_id = ? AND consumer_step_id = ? AND status = 'pending'
-                   ORDER BY sequence, message_id LIMIT ?""",
-                (run_id, consumer_step_id, max(1, limit)),
-            ).fetchall()
+                   ORDER BY sequence, message_id"""
+        parameters: tuple[object, ...] = (run_id, consumer_step_id)
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters += (limit,)
+        with self._connect() as conn:
+            rows = conn.execute(query, parameters).fetchall()
         return tuple(ReliableMessage(*row) for row in rows)
 
     def acknowledge(self, *, run_id: str, message_id: str) -> ReliableMessage:
@@ -198,10 +202,23 @@ class DebateSpec:
             raise ValueError("debate must be bounded and quorum must fit participants")
 
 
+def next_debate_phase(round: int, phase: str, max_rounds: int) -> tuple[int, str]:
+    """Advance one committed phase while preserving the caller's explicit round bound."""
+    if type(max_rounds) is not int or max_rounds < 1:
+        raise ValueError("DEBATE session requires explicit positive maxRounds")
+    if type(round) is not int or round < 1 or round > max_rounds:
+        raise ValueError("DEBATE round is outside its declared range")
+    if phase == "propose":
+        return round, "critique"
+    if phase == "critique":
+        return round, "vote"
+    if phase == "vote":
+        return (round + 1, "propose") if round < max_rounds else (round, "complete")
+    raise ValueError("DEBATE phase is not active")
+
+
 class DebateCoordinator:
     """Reference-only propose/critique/vote round state machine."""
-
-    phases = ("propose", "critique", "vote")
 
     def __init__(self, spec: DebateSpec) -> None:
         self.spec = spec
@@ -223,19 +240,12 @@ class DebateCoordinator:
         submissions = self._submissions.get((self.round, self.phase), {})
         if len(submissions) < self.spec.quorum:
             raise RuntimeError("DEBATE_QUORUM_UNREACHED")
-        index = self.phases.index(self.phase)
-        if index < len(self.phases) - 1:
-            self.phase = self.phases[index + 1]
-        elif self.round < self.spec.max_rounds:
-            self.round += 1
-            self.phase = "propose"
-        else:
-            self.phase = "complete"
+        self.round, self.phase = next_debate_phase(self.round, self.phase, self.spec.max_rounds)
         return self.round, self.phase
 
 
 __all__ = [
     "BlackboardConflictError", "CommunicationBackpressureError", "DebateCoordinator",
     "DebateSpec", "ReliableCommunicationStore", "ReliableMessage",
-    "SQLiteReliableCommunicationStore",
+    "SQLiteReliableCommunicationStore", "next_debate_phase",
 ]

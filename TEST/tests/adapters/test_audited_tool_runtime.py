@@ -7,6 +7,7 @@ import asyncio
 import pytest
 
 from adapters.tool.audited_runtime import AuditedToolRuntime, ToolAuthorizationError
+from contracts.tools import hands_tools
 
 
 class _RecordingToolRuntime:
@@ -79,3 +80,37 @@ def test_audited_tool_stream_checks_scope_before_delegate() -> None:
     assert delegate.calls == []
     assert asyncio.run(collect("search")) == [{"type": "delta"}]
     assert runtime.events == [{"type": "tool_streamed", "tool": "search"}]
+
+
+def test_native_scope_cannot_regrow_after_binding_rescoping_or_text_dispatch() -> None:
+    class NativeTools(_RecordingToolRuntime):
+        list_tools = staticmethod(hands_tools)
+
+        def bind_context(self, context, guard):
+            return self
+
+    delegate = NativeTools()
+    runtime = AuditedToolRuntime(delegate=delegate, allowed_tools={"run_tests", "write_file"})
+    readonly = runtime.scoped({"fs.read", "fs.list"})
+    rebound = readonly.bind_context(object(), lambda: None).scoped(runtime.allowed_tools)
+    assert rebound.allowed_tools == frozenset({"fs.read", "fs.list"})
+    assert {tool.name for tool in rebound.list_tools()} == rebound.allowed_tools
+    for name in ("shell.exec", "fs.write", "fs.patch", "run_tests", "write_file", "shell__exec"):
+        with pytest.raises(ToolAuthorizationError):
+            asyncio.run(rebound.execute(name, {}))
+    with pytest.raises(ToolAuthorizationError):
+        asyncio.run(rebound.run("execute a command"))
+    assert delegate.calls == []
+    assert asyncio.run(rebound.execute("fs.read", {"path": "note.txt"})) == {"ok": True}
+
+
+def test_unchanged_scope_retains_existing_text_entrypoint() -> None:
+    runtime = AuditedToolRuntime(delegate=_RecordingToolRuntime(), allowed_tools={"search"})
+    assert asyncio.run(runtime.scoped({"search"}).run("query")) == {"text": "query"}
+
+
+def test_read_only_phase_cannot_use_text_entrypoint_even_when_catalog_already_narrow() -> None:
+    runtime = AuditedToolRuntime(delegate=_RecordingToolRuntime(), allowed_tools={"fs.read"})
+    restricted = runtime.scoped({"fs.read"}, allow_unstructured_run=False)
+    with pytest.raises(ToolAuthorizationError):
+        asyncio.run(restricted.scoped({"fs.read"}).bind_context(object(), None).run("command"))

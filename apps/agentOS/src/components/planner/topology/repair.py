@@ -38,6 +38,7 @@ def conflict_context(conflict: TopologyConflict) -> dict[str, Any]:
         "code": conflict.code.value, "phase": conflict.phase,
         "cycleNodes": list(conflict.cycle_nodes),
         "cycleEdges": [_edge_dict(edge) for edge in conflict.cycle_edges],
+        "repairableEdges": [_edge_dict(edge) for edge in conflict.repairable_edges],
         "capabilityRequirements": [asdict(item) for item in conflict.capability_requirements],
         "bindingRejections": [asdict(item) for item in conflict.binding_rejections],
         "searchStatesExplored": conflict.search_states_explored,

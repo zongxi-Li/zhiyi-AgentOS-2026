@@ -14,6 +14,20 @@ describe('public streaming text', () => {
     expect(streamingContent('{"evidence_analysis":[{"id":"internal","description":"第一项"},{"description":"第二项')).toBe('第一项\n\n第二项')
     expect(streamingContent('{"constraints":["保持数据","权限不变')).toBe('保持数据\n\n权限不变')
   })
+  it('groups extracted facts and metrics while retaining Markdown inside a longer value', () => {
+    const output = '{"extracted_information":{"facts":[{"name":"根目录清单","value":"internal"},{"name":"README 结构"}],"metrics":[{"name":"目录数量"}]},"summary":"第一段\\n\\n第二段"}'
+    expect(streamingContent(output, true)).toBe(
+      '### 提取事实\n\n- 根目录清单\n- README 结构\n\n### 提取指标\n\n- 目录数量\n\n### 摘要\n\n第一段\n\n第二段'
+    )
+    expect(streamingContent('{"findings":["一项","第一段\\n\\n第二段","下一项"]}', true))
+      .toBe('### 分析发现\n\n- 一项\n\n第一段\n\n第二段\n\n- 下一项')
+  })
+  it('keeps short fields of each structured record together instead of creating separate paragraphs', () => {
+    const output = '{"facts":[{"name":"runtime 导入","description":"依赖 contracts"},{"name":"tools 封装","description":"薄封装"}]}'
+    expect(streamingContent(output, true)).toBe('### 提取事实\n\n- runtime 导入：依赖 contracts\n- tools 封装：薄封装')
+    // Unfinished records use the same layout as completed records.
+    expect(streamingContent(output.slice(0, -3), true)).toContain('- tools 封装：薄封装')
+  })
   it('suppresses private subtrees even when their values use public field names', () => {
     const output = '{"reasoning_content":{"summary":"PRIVATE"},"authorization":[{"description":"PRIVATE"}],"answer":"可见'
     expect(streamingContent(output)).toBe('可见')

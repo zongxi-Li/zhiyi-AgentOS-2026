@@ -49,7 +49,6 @@ from contracts.workflow import (
 )
 from components.resource.scheduler.models import (
     FATAL_SCHEDULING_REASONS,
-    SchedulerAllocationTimeout,
     SchedulerNoEligibleResource,
 )
 from components.resource.scheduler.leases import LeaseRenewalFailedError
@@ -77,7 +76,7 @@ from adapters.tool.protocols import configured_tool_runtime
 from support.stores._policy import acg_review_subject
 from runtime.compatibility.execution_migration import ExecutionEngineMigratingError
 from runtime.composition.ports import CollaboratorAccess, RuntimeCollaborators
-from runtime.orchestration.binding import RuntimeBindingService, execution_requirements_for, requirements_match_manifest
+from runtime.orchestration.binding import RuntimeBindingService, execution_requirements_for, requirements_match_manifest, queued_step_attempts
 from components.resource.model_quota import ModelCallQuota
 from runtime.orchestration.state_persistence import ACGStatePersistenceService
 from support.async_tasks import await_settled, cancel_and_wait
@@ -320,6 +319,12 @@ class ACGExecutionService(CollaboratorAccess):
         except Exception as exc:
             if stream is not None:
                 await await_settled(asyncio.create_task(stream.aclose(), name=f"acg-stream-error-close:{run.run_id}"))
+            # A resource waiter may observe cancellation before it ever owns an
+            # Agent. The graph wraps node errors, but that control decision must
+            # still converge to cancellation rather than failure/replanning.
+            if (self._cancellation_requested(run.run_id)
+                    or isinstance(getattr(exc, "cause", None), ExecutionRunCancelled)):
+                return await self._finalize_cancelled_run(run, execution_state)
             if isinstance(exc, ACGSuperstepError):
                 recovered = self._recover_remote_acg_failure(
                     run=run,
@@ -475,16 +480,36 @@ class ACGExecutionService(CollaboratorAccess):
         committed nodes remain completed and are replayed from the value store.
         Each step/resource pair gets at most one automatic failover attempt.
         """
-        resource_error = self._unwrap_resource_execution_error(error)
-        if resource_error is None or error.outcome_unknown or resource_error.outcome_unknown:
+        failed_step_ids = list(dict.fromkeys(error.failed_step_ids))
+        step_causes = error.step_causes
+        if not step_causes:
+            # Legacy single-node wrappers retain an unambiguous owner. A
+            # parallel frontier needs each failure's own settlement evidence.
+            if len(failed_step_ids) != 1:
+                return False
+            step_causes = {failed_step_ids[0]: error.cause}
+        if (set(step_causes) != set(failed_step_ids) or error.outcome_unknown
+                or any(not isinstance(cause, ResourceExecutionError) for cause in error.causes)):
             return False
+        resource_errors = {}
+        for step_id, cause in step_causes.items():
+            # A remote outage cannot authorize replay of a sibling's policy,
+            # storage or tool failure. Preserve those facts for Recovery.
+            if not isinstance(cause, ResourceExecutionError):
+                return False
+            resource_error = self._unwrap_resource_execution_error(cause)
+            if resource_error is None or resource_error.outcome_unknown:
+                return False
+            resource_errors[step_id] = resource_error
+        if not resource_errors:
+            return False
+        resource_error = resource_errors[failed_step_ids[0]]
 
         execution_bindings = run.execution_state.get("executionBindings")
         if not isinstance(execution_bindings, dict):
             return False
         history = list(run.execution_state.get("resourceFailoverHistory") or [])
         failed_resources: list[dict[str, str]] = []
-        failed_step_ids = list(dict.fromkeys(error.failed_step_ids))
         reset_step_ids = list(dict.fromkeys(
             [*error.failed_step_ids, *error.cancelled_step_ids]
         ))
@@ -606,7 +631,20 @@ class ACGExecutionService(CollaboratorAccess):
             resource_execution_adapters=self.resource_execution_adapters)
         binding_service.local_candidates(run)
 
+        failure_notifications = asyncio.Queue()
+        reported_failures = set()
+        committed_results = {}
+
+        def report_failure(step_id: str, failure: Exception) -> None:
+            if step_id not in reported_failures and not isinstance(failure, ExecutionRunCancelled):
+                reported_failures.add(step_id)
+                failure_notifications.put_nowait((step_id, failure))
+
         async def execute(step_id: str, state: ACGExecutionState):
+            from contracts.runtime_events import RuntimeEvent
+            from runtime.events.live_events import runtime_event_broker
+
+            committed_results.pop(step_id, None)
             scheduling_started = monotonic()
             execution_started: float | None = None
             execution_outcome = "failed"
@@ -661,7 +699,6 @@ class ACGExecutionService(CollaboratorAccess):
                     new_attempt_id() if self.identity_lifecycle is not None
                     else f"{run.run_id}:{step_id}:{step.attempt}:{loop_key}",
                 ))
-            allocation_deadline = monotonic() + self.scheduler_wait_timeout
             persisted = run.execution_state.get("executionBindings", {}).get(step_id)
             if (isinstance(persisted, dict) and persisted.get("attemptId") == attempt_id
                     and persisted.get("agentRegistration") is None
@@ -674,61 +711,70 @@ class ACGExecutionService(CollaboratorAccess):
             if existing_binding is not None and receipt is not None:
                 self.resource_plane.set_runtime_enabled(existing_binding.agent_registration.resource_id, enabled=False)
                 raise ResourceExecutionError("unfinished Agent operation requires explicit reconciliation", outcome_unknown=True)
-            retry_delay = 0.05
-            while True:
-                decision = self.resource_binder.bind_ready(
-                    run_id=run.run_id,
-                    step_id=step_id,
-                    attempt_id=attempt_id,
-                    requirement=requirement,
-                    agent_candidates=binding_service.local_candidates(run),
-                    existing_binding=existing_binding,
-                )
-                if decision.status == "allocated":
-                    break
-                if decision.status == "rejected" or (decision.reason or "") in FATAL_SCHEDULING_REASONS:
-                    rejected = ", ".join(
-                        f"{item.resource_id}:[{','.join(reason.value for reason in item.reasons)}]"
-                        for item in decision.candidates
-                        if item.reasons
-                    )
-                    raise SchedulerNoEligibleResource(
-                        f"{decision.reason}:{step_id}: "
-                        f"{rejected or 'no registered candidates'}",
-                        reason=decision.reason, step_id=step_id, candidates=decision.candidates,
-                    )
-                if monotonic() >= allocation_deadline:
-                    raise SchedulerAllocationTimeout(
-                        f"SCHEDULER_CAPACITY_TIMEOUT:{step_id}: "
-                        f"no lease after {self.scheduler_wait_timeout:g}s",
-                        step_id=step_id, candidates=decision.candidates,
-                    )
+
+            def check_allocation_authority():
                 if self._cancellation_requested(run.run_id):
+                    state.active_step_ids = [item for item in state.active_step_ids if item != step_id]
                     raise ExecutionRunCancelled(
                         f"run {run.run_id} cancelled while waiting for step {step_id} lease"
                     )
-                await asyncio.sleep(retry_delay)
-                retry_delay = min(1.0, retry_delay * 2)
+                if permit_authority is not None and "graphActivation" in run.execution_state:
+                    try:
+                        permit_authority.assert_dispatchable(run)
+                    except (ValueError, KeyError, TypeError) as exc:
+                        raise ExecutionRunCancelled("execution permit changed while waiting for resources") from exc
+
+            async def publish_queued(queued):
+                check_allocation_authority()
+                queued_at = utc_now().isoformat()
+                run.execution_state.setdefault("schedulingStates", {})[step_id] = {
+                    "status": "queued", "attemptId": attempt_id,
+                    "reason": queued.reason, "queuedAt": queued_at,
+                }
+                self.state_persistence.persist(run, state, projection_changed=True)
+                await runtime_event_broker.publish(run.run_id, RuntimeEvent(
+                    eventType="node.queued", runId=run.run_id, nodeId=step_id,
+                    attemptId=attempt_id, sequence=0,
+                    payload={"reason": queued.reason, "queuedAt": queued_at,
+                             "nodeTitle": step.name, "agentName": step.agent_name},
+                ))
+
+            decision = await self.resource_binder.wait_ready(
+                run_id=run.run_id,
+                step_id=step_id,
+                attempt_id=attempt_id,
+                requirement=requirement,
+                agent_candidates=lambda: binding_service.local_candidates(run),
+                existing_binding=existing_binding,
+                before_attempt=check_allocation_authority,
+                on_queued=publish_queued,
+            )
+            if decision.status == "rejected" or (decision.reason or "") in FATAL_SCHEDULING_REASONS:
+                rejected = ", ".join(
+                    f"{item.resource_id}:[{','.join(reason.value for reason in item.reasons)}]"
+                    for item in decision.candidates if item.reasons
+                )
+                raise SchedulerNoEligibleResource(
+                    f"{decision.reason}:{step_id}: {rejected or 'no registered candidates'}",
+                    reason=decision.reason, step_id=step_id, candidates=decision.candidates,
+                )
+            if decision.status != "allocated":
+                raise RuntimeError(f"scheduler returned unsettled allocation for step {step_id}")
             assert decision.binding is not None and decision.lease is not None
-            if permit_authority is not None and "graphActivation" in run.execution_state:
-                try:
-                    permit_authority.assert_dispatchable(run)
-                except (ValueError, KeyError, TypeError) as exc:
-                    self.resource_binder.release_binding(decision.binding)
-                    raise ExecutionRunCancelled("execution permit changed after resource allocation") from exc
             from components.resource.scheduler.binder import LeaseKeepAlive
 
             keep_alive = LeaseKeepAlive(
                 self.resource_binder.coordinator, decision.lease,
                 additional_leases=(decision.agent_lease,) if decision.agent_lease is not None else (),
             )
-            keep_alive.start()
             remote_adapter = None
             selected_resource_id = decision.binding.resource_id
             outcome_unknown = False
             step_execution_id = None
             cancellation_reason = "attempt_settled"
             try:
+                keep_alive.start()
+                check_allocation_authority()
                 binding = decision.binding
                 selected_resource_id = binding.resource_id
                 remote_adapter = self._remote_runtime_adapter(selected_resource_id)
@@ -760,6 +806,9 @@ class ACGExecutionService(CollaboratorAccess):
                     runner.agent_registrations[step_id] = binding.agent_registration
                     selected_profile = selected_agent.profile
                 run.execution_state.setdefault("logicalAgents", {})[step_id] = agent_id
+                step.status = StepStatus.RUNNING
+                step.started_at = utc_now()
+                run.execution_state.get("schedulingStates", {}).pop(step_id, None)
                 model_binding = self._resolve_model_binding(
                     step_id=step_id,
                     binding=binding,
@@ -817,6 +866,8 @@ class ACGExecutionService(CollaboratorAccess):
                     decision.binding.resource_id
                 )
                 base_events = self._reuse_persisted_lifecycle_events(base_events)
+                run.runtime_revision += 1
+                run.updated_at = utc_now()
                 self.workflow_store.save_run_with_events(run, base_events)
                 self._flush_identity_outbox()
                 if permit_authority is not None and "graphActivation" in run.execution_state:
@@ -835,9 +886,16 @@ class ACGExecutionService(CollaboratorAccess):
                         cancellation_reason = "lease_renewal_failure"
                         raise renewal_failure_task.result()
                     result = runner_task.result()
+                    committed = self.execution_value_store.get_node_commit(run_id=run.run_id, commit_id=commit_id)
+                    if (committed is not None and committed.get("stage") == "committed"
+                            and result.get("commitId") == commit_id):
+                        committed_results[step_id] = result
                 except asyncio.CancelledError as exc:
                     cancellation_reason = ("operator_cancel" if self._cancellation_requested(run.run_id)
                                            else str(exc) or "execution_cancelled")
+                    raise
+                except Exception as exc:
+                    report_failure(step_id, exc)
                     raise
                 finally:
                     results = await cancel_and_wait((runner_task, renewal_failure_task), reason=cancellation_reason)
@@ -857,30 +915,24 @@ class ACGExecutionService(CollaboratorAccess):
                 )])
                 self._flush_identity_outbox()
                 return result
-            except ExecutionRunCancelled:
+            except (ExecutionRunCancelled, asyncio.CancelledError) as exc:
                 execution_outcome = "cancelled"
-                reason = "operator_cancel" if self._cancellation_requested(run.run_id) else "execution_authority_changed"
-                self._save_attempt_events(run, [self._lifecycle_event(
-                    f"step.cancelled:{step_execution_id}", "step.cancelled", step_execution_id,
-                    {"runId": run.run_id, "attemptId": attempt_id,
-                     "stepExecutionId": step_execution_id, "reason": reason},
-                )])
-                self._flush_identity_outbox()
-                raise
-            except asyncio.CancelledError as exc:
-                execution_outcome = "cancelled"
-                reason = ("operator_cancel" if self._cancellation_requested(run.run_id)
-                          else str(exc) or "execution_cancelled")
-                self._save_attempt_events(run, [self._lifecycle_event(
-                    f"step.cancelled:{step_execution_id}", "step.cancelled", step_execution_id,
-                    {"runId": run.run_id, "attemptId": attempt_id,
-                     "stepExecutionId": step_execution_id, "reason": reason},
-                )])
-                self._flush_identity_outbox()
+                if self._cancellation_requested(run.run_id):
+                    cancellation_reason = "operator_cancel"
+                elif isinstance(exc, ExecutionRunCancelled):
+                    cancellation_reason = "execution_authority_changed"
+                else:
+                    cancellation_reason = str(exc) or "execution_cancelled"
+                if step_execution_id is not None:
+                    self._save_attempt_events(run, [self._lifecycle_event(
+                        f"step.cancelled:{step_execution_id}", "step.cancelled", step_execution_id,
+                        {"runId": run.run_id, "attemptId": attempt_id,
+                         "stepExecutionId": step_execution_id, "reason": cancellation_reason},
+                    )])
+                    self._flush_identity_outbox()
                 raise
             except Exception as exc:
-                from contracts.runtime_events import RuntimeEvent
-                from runtime.events.live_events import runtime_event_broker
+                report_failure(step_id, exc)
 
                 error_code = str(
                     getattr(exc, "code", None)
@@ -977,10 +1029,22 @@ class ACGExecutionService(CollaboratorAccess):
                             if cleanup_error is not None or stop_error is not None:
                                 settlement["cleanupErrorType"] = type(cleanup_error or stop_error).__name__
                             run.execution_state.setdefault("taskSettlement", {})[attempt_id] = settlement
+                            state.active_step_ids = [item for item in state.active_step_ids if item != step_id]
+                            run.active_step_ids = list(state.active_step_ids)
+                            run.execution_state["activeStepIds"] = list(state.active_step_ids)
+                            if execution_outcome == "cancelled" and step.status in {
+                                    StepStatus.PENDING, StepStatus.RUNNING, StepStatus.RETRYING}:
+                                self._transition_step(step, StepStatus.CANCELLED)
+                                step.error = "ACG node execution cancelled"
                             latest = self.workflow_store.get_run(run.run_id)
                             candidate = latest.model_copy(deep=True)
                             candidate.execution_state.setdefault("taskSettlement", {})[attempt_id] = settlement
                             candidate.execution_state.setdefault("stepPerformance", {})[step_id] = run.execution_state["stepPerformance"][step_id]
+                            candidate.active_step_ids = list(state.active_step_ids)
+                            candidate.execution_state["activeStepIds"] = list(state.active_step_ids)
+                            if execution_outcome == "cancelled":
+                                candidate.get_step(step_id).status = step.status
+                                candidate.get_step(step_id).error = step.error
                             for snapshot in (run, candidate):
                                 for item in snapshot.execution_state.get("schedulingDecisions", []):
                                     lease = item.get("lease") or {}
@@ -992,10 +1056,17 @@ class ACGExecutionService(CollaboratorAccess):
                             # Cleanup metadata is not another Run transition.
                             # Commit it with CAS without emitting run.finished again.
                             self.workflow_store.save_run_with_events(candidate, [], expected_snapshot=latest)
+                            if execution_outcome == "cancelled":
+                                await runtime_event_broker.publish(run.run_id, RuntimeEvent(
+                                    eventType="node.cancelled", runId=run.run_id, nodeId=step_id,
+                                    attemptId=attempt_id, sequence=0,
+                                ))
 
                 await await_settled(asyncio.create_task(cleanup(), name=f"acg-cleanup:{run.run_id}:{step_id}"))
 
         execute.prepare_superstep = runner.prepare_superstep
+        execute.failure_notifications = failure_notifications
+        execute.committed_results = committed_results
         return execute
 
     def _assert_agent_admission(self, context) -> None:
@@ -1375,6 +1446,7 @@ class ACGExecutionService(CollaboratorAccess):
         from runtime.events.live_events import runtime_event_broker
         return ACGNodeRunner(
             task=resolved_task,
+            workflow_store=self.workflow_store,
             run=run,
             workflow=workflow,
             steps=steps,
@@ -1442,10 +1514,15 @@ class ACGExecutionService(CollaboratorAccess):
             )
             return
         if event_type == "nodes_scheduled":
+            run.execution_state.pop("superstepSettlement", None)
             for step_id in event.get("stepIds", []):
+                # A graph-ready node has not acquired its Agent yet. Only the
+                # allocated execution path may publish RUNNING/startedAt.
                 step = run.get_step(str(step_id))
-                step.status = StepStatus.RUNNING
-                step.started_at = step.started_at or utc_now()
+                step.status = StepStatus.PENDING
+                step.started_at = None
+                step.completed_at = None
+                run.execution_state.setdefault("schedulingStates", {}).pop(str(step_id), None)
             run.active_step_ids = list(event.get("stepIds", []))
             run.current_step_id = state.current_step_id
         elif event_type == "node_completed":
@@ -1482,18 +1559,33 @@ class ACGExecutionService(CollaboratorAccess):
                 run,
                 {"type": "checkpoint_created", "checkpointId": checkpoint_id},
             )
-        elif event_type == "superstep_failed":
+        elif event_type in {"superstep_stopping", "superstep_failed"}:
             for step_id in event.get("failedStepIds", []):
+                run.execution_state.get("schedulingStates", {}).pop(str(step_id), None)
                 step = run.get_step(str(step_id))
                 if step.status in {StepStatus.PENDING, StepStatus.RUNNING, StepStatus.RETRYING}:
                     self._transition_step(step, StepStatus.FAILED)
-                    step.error = "ACG superstep node failed"
-            for step_id in event.get("cancelledStepIds", []):
-                step = run.get_step(str(step_id))
-                if step.status in {StepStatus.PENDING, StepStatus.RUNNING, StepStatus.RETRYING}:
-                    self._transition_step(step, StepStatus.CANCELLED)
-                    step.error = "ACG superstep cancelled after sibling failure"
-            run.active_step_ids = []
+                    step.error = str(event.get("errorCode") or "ACG superstep node failed")
+            if event_type == "superstep_stopping":
+                run.lifecycle_phase = WorkflowProgressPhase.RECOVERY
+                run.lifecycle_message = "节点执行失败，正在停止并行执行并等待清理"
+                run.execution_state["superstepSettlement"] = {
+                    "state": "stopping", "failedStepIds": list(event.get("failedStepIds") or []),
+                    "cancellingStepIds": list(event.get("cancelledStepIds") or []),
+                    "errorCode": event.get("errorCode"),
+                }
+            else:
+                for step_id in event.get("cancelledStepIds", []):
+                    run.execution_state.get("schedulingStates", {}).pop(str(step_id), None)
+                    step = run.get_step(str(step_id))
+                    if step.status in {StepStatus.PENDING, StepStatus.RUNNING, StepStatus.RETRYING}:
+                        self._transition_step(step, StepStatus.CANCELLED)
+                        step.error = "ACG superstep cancelled after sibling failure"
+                run.active_step_ids = []
+                run.execution_state["superstepSettlement"] = {
+                    "state": "ended", "failedStepIds": list(event.get("failedStepIds") or []),
+                    "cancelledStepIds": list(event.get("cancelledStepIds") or []),
+                }
         # 条件控制节点由图在超步边界内部推进，不会产生独立的节点事件。这里根据
         # 已持久化的 skippedStepIds 补齐 RuntimeRunRecord 的可见步骤状态，供查询、
         # 审计和取消逻辑一致地区分“未执行”与“条件明确跳过”。
@@ -1502,7 +1594,7 @@ class ACGExecutionService(CollaboratorAccess):
             if step.status == StepStatus.PENDING:
                 step.status = StepStatus.SKIPPED_BY_CONDITION
                 step.completed_at = utc_now()
-        if event_type not in {"superstep_completed", "superstep_failed"}:
+        if event_type not in {"superstep_completed", "superstep_failed", "superstep_stopping"}:
             if event_type == "node_completed":
                 node_trace_batch.append(self.trace_store.build_execution_event(run, event))
             else:
@@ -2030,6 +2122,15 @@ class ACGExecutionService(CollaboratorAccess):
             self.state_persistence.persist(run, execution_state)
         if run.status in self._terminal_run_statuses:
             return run
+        waiting = queued_step_attempts(run)
+        run.execution_state.pop("schedulingStates", None)
+        for step_id in waiting:
+            step = run.get_step(step_id)
+            if step.status in {StepStatus.PENDING, StepStatus.RETRYING}:
+                self._transition_step(step, StepStatus.CANCELLED)
+                step.error = "Cancelled while waiting for execution resources"
+        run.active_step_ids = [step_id for step_id in run.active_step_ids if step_id not in waiting]
+        run.execution_state["activeStepIds"] = list(run.active_step_ids)
         run.status = self.state_machine.transition(run.status, WorkflowStatus.CANCELLED)
         run.lifecycle_phase = WorkflowProgressPhase.CANCELLED
         run.lifecycle_message = self._lifecycle_messages[WorkflowProgressPhase.CANCELLED]

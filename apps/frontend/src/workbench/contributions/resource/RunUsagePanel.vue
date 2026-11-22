@@ -1,6 +1,6 @@
 <template>
   <InspectorSection title="任务用量" :badge="loading ? '更新中' : usage ? '当前运行' : '未观测'">
-    <div class="usage-panel" aria-label="当前任务资源统计" :aria-busy="loading">
+    <div class="usage-panel" aria-label="当前任务资源统计" :aria-busy="loading || callsLoading">
       <p v-if="error" class="usage-note" role="status">{{ error }}</p>
       <div class="usage-summary">
         <div class="usage-total"><span>累计已观测 Token</span><strong>{{ number(summary?.usageReportedCalls === 0 && summary?.callCount ? null : summary?.totalTokens) }}</strong><small>当前运行的模型消耗<span v-if="summary?.usageMissingCalls"> · {{ summary.usageMissingCalls }} 次调用未返回用量</span></small></div>
@@ -34,7 +34,7 @@
       <div class="usage-chart">
         <header><strong>模型使用情况</strong><span>{{ models.length }} 个模型</span></header>
         <p v-if="callsError" class="usage-note" role="status">{{ callsError }}</p>
-        <p v-else-if="!models.length" class="usage-note">{{ loading ? '正在读取模型调用记录…' : '暂无模型调用记录' }}</p>
+        <p v-else-if="!models.length" class="usage-note">{{ callsLoading ? '正在读取模型调用记录…' : '暂无模型调用记录' }}</p>
         <article v-for="model in models" :key="model.key" class="model-usage">
           <header><strong>{{ model.model }}</strong><span>{{ model.calls }} 次调用</span></header>
           <div class="model-usage__meta"><span>{{ model.provider }}</span><b>{{ number(model.tokens) }} Token <small>· {{ model.share.toFixed(1) }}%</small></b></div>
@@ -54,6 +54,7 @@ const props = defineProps<{ runId: string | null; runStatus?: string | null }>()
 const usage = ref<RunResourceUsage | null>(null)
 const calls = ref<ModelCallUsage[]>([])
 const loading = ref(false)
+const callsLoading = ref(false)
 const error = ref('')
 const callsError = ref('')
 let generation = 0
@@ -108,6 +109,7 @@ async function refresh() {
   controller = new AbortController()
   const signal = controller.signal
   loading.value = true
+  callsLoading.value = true
   const callsRequest = async () => {
     const items = new Map<string, ModelCallUsage>()
     const cursors = new Set<string>()
@@ -121,19 +123,25 @@ async function refresh() {
     } while (cursor && !signal.aborted)
     return [...items.values()]
   }
-  const [usageResult, callsResult] = await Promise.allSettled([
-    workflowApi.getRunResourceUsage(runId, { signal }), callsRequest()
+  // Summary and ledger have independent latency. Publish each as soon as it
+  // arrives; a long paginated ledger must not hold token/cache totals hostage.
+  await Promise.allSettled([
+    workflowApi.getRunResourceUsage(runId, { signal }).then(result => {
+      if (current !== generation) return
+      usage.value = result
+      error.value = ''
+    }, () => {
+      if (current === generation) error.value = usage.value ? '用量更新失败，显示上次统计。' : '暂时无法读取任务用量。'
+    }).finally(() => { if (current === generation) loading.value = false }),
+    callsRequest().then(result => {
+      if (current !== generation) return
+      calls.value = result
+      callsError.value = ''
+    }, () => {
+      if (current === generation) callsError.value = calls.value.length ? '模型明细更新失败，显示上次统计。' : '暂时无法读取模型调用明细。'
+    }).finally(() => { if (current === generation) callsLoading.value = false })
   ])
   if (current !== generation) return
-  if (usageResult.status === 'fulfilled') {
-    usage.value = usageResult.value
-    error.value = ''
-  } else error.value = usage.value ? '用量更新失败，显示上次统计。' : '暂时无法读取任务用量。'
-  if (callsResult.status === 'fulfilled') {
-    calls.value = callsResult.value
-    callsError.value = ''
-  } else callsError.value = calls.value.length ? '模型明细更新失败，显示上次统计。' : '暂时无法读取模型调用明细。'
-  loading.value = false
   if (!['completed', 'succeeded', 'superseded', 'failed', 'cancelled', 'canceled', 'interrupted'].includes(props.runStatus || '')) {
     timer = setTimeout(() => void refresh(), 15000)
   }
@@ -145,6 +153,7 @@ watch(() => props.runId, () => {
   error.value = ''
   callsError.value = ''
   loading.value = false
+  callsLoading.value = false
   void refresh()
 }, { immediate: true })
 watch(() => props.runStatus, () => { stop(); void refresh() })

@@ -149,6 +149,77 @@ def test_readonly_proof_rejects_a_hidden_write_request_or_unknown_activity(store
             {"workspaceId": "workspace", "grantId": "grant"}, store._connection)
 
 
+def _planning_snapshot(store, run, node, *, owner="__planner_context__"):
+    from contracts.planning_context import planning_context_key
+
+    operation = node.operation_id + ":tools:0:call:0"
+    original = store.get_tool_value(run_id=run.run_id, key=operation + ":request")
+    payload = {**original, "__planning_context__": {"version": 1, "runId": run.run_id,
+        "contextKind": "tool_request", "sourceRunId": run.run_id, "stepId": node.step_id,
+        "attemptId": node.attempt_id, "operationId": node.operation_id,
+        "originalRef": "tool:" + hashlib.sha256((run.run_id + ":" + operation + ":request").encode()).hexdigest(),
+        "status": "admitted", "trust": "host_recorded"}}
+    key = planning_context_key(payload)
+    reference = store.put_tool_value(run_id=run.run_id, step_id=owner, key=key, payload=payload)
+    return key, reference, payload
+
+
+def test_reading_request_diagnostics_cannot_change_retry_safety_or_fingerprint(store):
+    from runtime.orchestration.planning_context_catalog import build_planning_context_catalog
+
+    services, run, node, *_ = _native_attempt(store)
+    services.workflow_store = SimpleNamespace(get_mission=lambda _: SimpleNamespace(
+        title="Inspect source", domain="general", intent=None))
+    before = run_step_readonly_retry_proof(services, run, node.step_id)
+    entries = build_planning_context_catalog(services, run, workspace_snapshot={})
+    requests = [entry for entry in entries if entry.context_kind == "tool_request"]
+    assert len(requests) == 1
+    assert requests[0].step_id == node.step_id
+    assert requests[0].operation_id == node.operation_id
+    after = run_step_readonly_retry_proof(services, run, node.step_id)
+    proofs = []
+    assert_replay_safe_operations(services, run, readonly_proofs=proofs)
+    assert before == after == proofs[0]
+    assert before["readRequestCount"] == 1 and before["unconfirmedReadCount"] == 1
+    assert store.get_node_commit(run_id=run.run_id, commit_id=node.operation_id)["stage"] == "prepared"
+    assert run.completed_step_ids == []
+
+
+@pytest.mark.parametrize("defect", ["wrong_owner", "wrong_kind", "operation_bound", "changed_body", "wrong_run"])
+def test_diagnostic_exemption_requires_the_reserved_ledger_owner_and_exact_sealed_reference(store, defect):
+    run, node = _seed(store)
+    key, reference, payload = _planning_snapshot(store, run, node)
+    if defect in {"changed_body", "wrong_run"}:
+        if defect == "changed_body":
+            payload["request"]["capabilityId"] = "shell.exec"
+        else:
+            payload["__planning_context__"]["runId"] = "another-run"
+        _replace_payload(store, run.run_id, key, payload)
+    else:
+        column, value = {"wrong_owner": ("step_id", node.step_id), "wrong_kind": ("kind", "context"),
+            "operation_bound": ("operation_id", node.operation_id)}[defect]
+        with store._connection:
+            store._connection.execute(f"UPDATE execution_values SET {column}=? WHERE reference=?", (value, reference))
+    with pytest.raises(ValueError, match="undeclared request|another node or kind"):
+        _readonly_session_proof(run, node,
+            {"workspaceId": "workspace", "grantId": "grant"}, store._connection)
+
+
+def test_diagnostic_snapshot_marker_does_not_hide_a_new_undeclared_shell_request(store):
+    run, node = _seed(store)
+    _planning_snapshot(store, run, node)
+    operation = node.operation_id + ":tools:0:call:1"
+    request = _request(operation, "shell.exec", ".")
+    store.put_tool_value(run_id=run.run_id, step_id=node.step_id, key=operation + ":request", payload={
+        "request": request.model_dump(by_alias=True, mode="json"),
+        "identity": {"runId": run.run_id, "stepId": node.step_id,
+            "attemptId": node.attempt_id, "commitId": node.operation_id},
+        "__planning_context__": {"version": 1, "runId": run.run_id}})
+    with pytest.raises(ValueError, match="undeclared request"):
+        _readonly_session_proof(run, node,
+            {"workspaceId": "workspace", "grantId": "grant"}, store._connection)
+
+
 @pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])
 def test_terminal_read_receipt_without_cached_result_can_be_retry_safe(store, status):
     run, node = _seed(store)
@@ -165,7 +236,7 @@ def test_terminal_read_receipt_without_cached_result_can_be_retry_safe(store, st
     assert proof["confirmedReadCount"] == 1 and proof["unconfirmedReadCount"] == 0
 
 
-def _native_attempt(store, *, missing_receipt=True, terminal_status="failed"):
+def _native_attempt(store, *, missing_receipt=True, terminal_status="failed", tool="fs.read", model_tool="fs__read"):
     from adapters.agent.native import NativeGeneralAgent
     from components.executor.node_runner import ACGNodeRunner
     from contracts.execution import NodeExecutionRecord
@@ -176,7 +247,7 @@ def _native_attempt(store, *, missing_receipt=True, terminal_status="failed"):
     registry.register(agent)
     registration = registry.registration_for(agent)
     operation = ACGNodeRunner._commit_id("run", "S2", 0, execution_generation="generation")
-    _seed(store, missing_receipt=missing_receipt, commit_id=operation)
+    _seed(store, missing_receipt=missing_receipt, commit_id=operation, tool=tool, model_tool=model_tool)
     node = NodeExecutionRecord(operationId=operation,
         executionInstanceId="generation:run:S2:0:root", runId="run", stepId="S2",
         attemptId="attempt:S2:1", phase="prepared")
@@ -203,7 +274,8 @@ def _native_attempt(store, *, missing_receipt=True, terminal_status="failed"):
 
 
 @pytest.mark.parametrize("terminal_status", ["failed", "cancelled"])
-@pytest.mark.parametrize("capability", ["information_extraction", "verification"])
+@pytest.mark.parametrize("capability", ["information_extraction", "verification", "analysis",
+    "requirement_analysis", "architecture_design", "artifact_generation", "task_understanding", "evidence_analysis"])
 def test_ended_native_readonly_attempt_passes_permit_replay_safety_without_relabeling(store, terminal_status, capability):
     services, run, node, attempt, execution, _, _ = _native_attempt(store, terminal_status=terminal_status)
     run.get_step("S2").capability = capability
@@ -217,6 +289,66 @@ def test_ended_native_readonly_attempt_passes_permit_replay_safety_without_relab
     assert store.get_node_commit(run_id=run.run_id, commit_id=node.operation_id) == before
     assert before["stage"] == "prepared" and attempt.status.value == execution.status.value == terminal_status
     assert run.completed_step_ids == [] and run.execution_state.get("outputRefs", {}) == {}
+
+
+@pytest.mark.parametrize("capability", ["information_retrieval", "industrial_capacity_analysis"])
+def test_native_prologue_capabilities_cannot_use_session_only_recovery(store, capability):
+    services, run, node, *_ = _native_attempt(store, missing_receipt=False)
+    run.get_step(node.step_id).capability = capability
+    with pytest.raises(ValueError, match=r"step S2: native .* execution requires its own recovery proof"):
+        assert_native_readonly_retry_safe(services, run, node)
+
+
+def test_material_workset_cannot_be_replayed_as_a_single_native_session(store):
+    services, run, node, *_ = _native_attempt(store)
+    run.get_step(node.step_id).input["workset"] = {"sourceManifestRefs": ["manifest"]}
+    with pytest.raises(ValueError, match="step S2: native workset execution requires its own recovery proof"):
+        assert_native_readonly_retry_safe(services, run, node)
+
+
+def test_capacity_failure_can_reconcile_a_cancelled_generic_sibling_without_an_attempt_for_the_queued_node(store):
+    from contracts.workflow import StepStatus, WorkflowStep
+
+    services, run, node, *_ = _native_attempt(store, terminal_status="cancelled")
+    sibling = run.get_step(node.step_id)
+    sibling.capability, sibling.status = "requirement_analysis", StepStatus.CANCELLED
+    run.steps.append(WorkflowStep(stepId="queued", name="queued", agentName=sibling.agent_name,
+        capability="information_retrieval", status=StepStatus.FAILED))
+    before = store.list_node_commits(run_id=run.run_id)
+    proofs = []
+    assert tuple(assert_replay_safe_operations(services, run, readonly_proofs=proofs)) == before
+    assert [proof["stepId"] for proof in proofs] == [sibling.step_id]
+    assert sibling.status is StepStatus.CANCELLED
+    assert run.get_step("queued").status is StepStatus.FAILED
+    assert store.list_node_commits(run_id=run.run_id) == before
+
+
+def test_native_session_recovery_requires_a_capability_registered_by_the_bound_agent(store):
+    services, run, node, *_ = _native_attempt(store)
+    run.get_step(node.step_id).capability = "unregistered_capability"
+    with pytest.raises(ValueError, match="step S2: capability .* is not registered"):
+        assert_native_readonly_retry_safe(services, run, node)
+
+
+@pytest.mark.parametrize("capability", ["requirement_analysis", "architecture_design", "artifact_generation"])
+@pytest.mark.parametrize("tool,model_tool", [("fs.write", "fs__write"), ("shell.exec", "shell__exec")])
+def test_generic_native_capabilities_still_cannot_retry_dispatched_writes_or_shell(store, capability, tool, model_tool):
+    services, run, node, *_ = _native_attempt(store, tool=tool, model_tool=model_tool)
+    run.get_step(node.step_id).capability = capability
+    with pytest.raises(ValueError, match="write, shell or unknown tool request"):
+        assert_native_readonly_retry_safe(services, run, node)
+
+
+@pytest.mark.parametrize("attempt_status", [None, "running", "succeeded"])
+def test_native_recovery_identifies_the_step_and_actual_attempt_rejection(store, attempt_status):
+    services, run, node, attempt, *_ = _native_attempt(store)
+    run.get_step(node.step_id).capability = "requirement_analysis"
+    if attempt_status is None:
+        services.identity_lifecycle.repositories.attempts.get = lambda _: None
+    else:
+        attempt.status.value = attempt_status
+    with pytest.raises(ValueError, match="step S2: read-only retry requires a failed or cancelled terminal Attempt"):
+        assert_native_readonly_retry_safe(services, run, node)
 
 
 @pytest.mark.parametrize("terminal_status", ["failed", "cancelled"])
@@ -310,8 +442,100 @@ def _empty_native_attempt(store, **kwargs):
     return seeded
 
 
+def _seed_memory_input(store, run, node, *, with_record=False):
+    from components.executor.memory_input import frozen_memory_policy, normalize_memory_policy
+
+    policy = normalize_memory_policy(run.get_step(node.step_id).input)
+    records = ([{"memoryId": "prior-finding", "memoryType": "episodic", "scope": run.run_id,
+        "content": {"finding": "previously verified dependency"}, "createdAt": "2026-11-16T00:00:00Z"}]
+        if with_record else [])
+    snapshot = {"schemaVersion": 1,
+        "identity": {"runId": run.run_id, "stepId": node.step_id,
+            "attemptId": node.attempt_id, "commitId": node.operation_id},
+        "policy": frozen_memory_policy(policy), "records": records,
+        "retrievalEvent": {"scope": run.run_id, "mode": "bm25", "budget": policy["tokenBudget"],
+            "hitRefs": [record["memoryId"] for record in records]} if policy["read"] else None}
+    reference = store.put_tool_value(run_id=run.run_id, step_id=node.step_id,
+        key=node.operation_id + ":memory-retrieval", payload=snapshot)
+    return reference, snapshot
+
+
+@pytest.mark.parametrize("before_model", [False, True])
+@pytest.mark.parametrize("read_memory", [False, True])
+def test_frozen_memory_is_an_execution_input_and_does_not_block_safe_recovery(store, before_model, read_memory):
+    prepare = _empty_native_attempt if before_model else _native_attempt
+    services, run, node, *_ = prepare(store)
+    if not read_memory:
+        run.get_step(node.step_id).input = {"memoryPolicy": {"read": False, "write": False}}
+    reference, snapshot = _seed_memory_input(store, run, node, with_record=read_memory)
+    before = list(store._connection.execute("SELECT * FROM execution_values ORDER BY reference"))
+    proof = assert_native_readonly_retry_safe(services, run, node)
+    assert proof["retrySafe"] is True
+    assert proof["modelTurnCount"] == (0 if before_model else 1)
+    assert proof["readRequestCount"] == (0 if before_model else 1)
+    assert list(store._connection.execute("SELECT * FROM execution_values ORDER BY reference")) == before
+    assert store.get_output(run_id=run.run_id, output_ref=reference) == snapshot
+    assert not run.completed_step_ids and not run.execution_state.get("outputRefs")
+
+
+@pytest.mark.parametrize("before_model", [False, True])
+@pytest.mark.parametrize("damage", ["ledger_run", "ledger_step", "ledger_kind", "ledger_operation",
+    "attempt", "policy", "schema", "scope", "event", "external_fields", "untrusted_key"])
+def test_recovery_trusts_only_the_exact_owned_validated_memory_input(store, before_model, damage):
+    prepare = _empty_native_attempt if before_model else _native_attempt
+    services, run, node, *_ = prepare(store)
+    reference, snapshot = _seed_memory_input(store, run, node, with_record=True)
+    if damage.startswith("ledger_"):
+        column, value = {"ledger_run": ("run_id", "other-run"), "ledger_step": ("step_id", "other-step"),
+            "ledger_kind": ("kind", "context"), "ledger_operation": ("operation_id", node.operation_id)}[damage]
+        with store._connection:
+            store._connection.execute(f"UPDATE execution_values SET {column}=? WHERE reference=?", (value, reference))
+    elif damage == "untrusted_key":
+        with store._connection:
+            store._connection.execute("DELETE FROM execution_values WHERE reference=?", (reference,))
+        store.put_tool_value(run_id=run.run_id, step_id=node.step_id,
+            key=node.operation_id + ":not-the-memory-input", payload=snapshot)
+    else:
+        if damage == "attempt": snapshot["identity"]["attemptId"] = "other-attempt"
+        elif damage == "policy": snapshot["policy"]["limit"] += 1
+        elif damage == "schema": snapshot["schemaVersion"] = True
+        elif damage == "scope": snapshot["records"][0]["scope"] = "other-run"
+        elif damage == "event": snapshot["retrievalEvent"]["hitRefs"] = []
+        elif damage == "external_fields": snapshot["request"] = {"invocationId": node.operation_id + ":hidden-write"}
+        _replace_payload(store, run.run_id, node.operation_id + ":memory-retrieval", snapshot)
+    with pytest.raises(ValueError):
+        assert_native_readonly_retry_safe(services, run, node)
+
+
+@pytest.mark.parametrize("before_model", [False, True])
+def test_valid_memory_input_never_hides_a_real_write_request(store, before_model):
+    prepare = _empty_native_attempt if before_model else _native_attempt
+    services, run, node, *_ = prepare(store)
+    _seed_memory_input(store, run, node)
+    operation = node.operation_id + ":tools:1:call:0"
+    store.put_tool_value(run_id=run.run_id, step_id=node.step_id, key=operation + ":request",
+        payload={"request": _request(operation, "fs.write", "note.txt").model_dump(by_alias=True, mode="json")})
+    with pytest.raises(ValueError):
+        assert_native_readonly_retry_safe(services, run, node)
+
+
+def test_memory_input_alone_cannot_authorize_recovery_and_is_included_in_its_evidence_fingerprint(store):
+    services, run, node, *_ = _empty_native_attempt(store)
+    _, snapshot = _seed_memory_input(store, run, node)
+    services.tool_non_invocation_prover = None
+    with pytest.raises(ValueError, match="no-dispatch proof"):
+        assert_native_readonly_retry_safe(services, run, node)
+    services.tool_non_invocation_prover = _session_non_invocation
+    first = assert_native_readonly_retry_safe(services, run, node)
+    snapshot["retrievalEvent"]["fallbackReason"] = "SEMANTIC_MODEL_NOT_CONFIGURED"
+    _replace_payload(store, run.run_id, node.operation_id + ":memory-retrieval", snapshot)
+    second = assert_native_readonly_retry_safe(services, run, node)
+    assert first["evidenceFingerprint"] != second["evidenceFingerprint"]
+
+
 @pytest.mark.parametrize("terminal_status", ["failed", "cancelled"])
-@pytest.mark.parametrize("capability", ["information_extraction", "verification"])
+@pytest.mark.parametrize("capability", ["information_extraction", "verification", "analysis",
+    "requirement_analysis", "architecture_design", "artifact_generation", "task_understanding", "evidence_analysis"])
 def test_ended_native_before_first_model_turn_requires_whole_session_non_invocation(store, terminal_status, capability):
     services, run, node, attempt, execution, *_ = _empty_native_attempt(store, terminal_status=terminal_status)
     run.get_step(node.step_id).capability = capability

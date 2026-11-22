@@ -26,12 +26,13 @@ from contracts.identity import SemanticTaskKey
 from contracts.htn import HTNExpansionProposal, HTNMethodCatalogProjection
 from contracts.horizon import PlanningFrontier, HorizonProposal, HorizonSelection
 from contracts.planning import TaskPlanPatch
+from contracts.planning_results import PlanningResultRead
 from contracts.runtime_planning import RuntimePlanningDecision
 
 
 PLANNER_ACTION_PROTOCOL_VERSION = 1
 
-ReadTarget = Literal["run_state", "capability_catalog", "evidence_refs", "method_catalog", "planning_frontier", "candidate_horizon"]
+ReadTarget = Literal["run_state", "capability_catalog", "evidence_refs", "method_catalog", "planning_frontier", "candidate_horizon", "step_output"]
 ProposalKind = Literal["candidate_tasks", "plan_revision", "method", "horizon"]
 
 RejectionCode = Literal[
@@ -83,11 +84,14 @@ class PlannerReadQuery(PlannerActionContract):
 
     target: ReadTarget
     target_key: SemanticTaskKey | None = Field(default=None, alias="targetKey")
+    result: PlanningResultRead | None = None
 
     @model_validator(mode="after")
     def method_query_target(self):
         if (self.target == "method_catalog") != (self.target_key is not None):
             raise ValueError("only method_catalog requires targetKey")
+        if (self.target == "step_output") != (self.result is not None):
+            raise ValueError("only step_output requires a result source query")
         return self
 
 
@@ -268,6 +272,7 @@ class PlannerReadResult(PlannerActionContract):
         default=None, alias="capabilityCatalog"
     )
     evidence: EvidenceProjection | None = None
+    step_output: dict | None = Field(default=None, alias="stepOutput")
     method_catalog: HTNMethodCatalogProjection | None = Field(default=None, alias="methodCatalog")
     frontier: PlanningFrontier | None = None
     horizon: HorizonProposal | None = None
@@ -311,6 +316,7 @@ class PlannerToolFeedback(PlannerActionContract):
         default=None, alias="capabilityCatalog"
     )
     evidence: EvidenceProjection | None = None
+    step_output: dict | None = Field(default=None, alias="stepOutput")
     method_catalog: HTNMethodCatalogProjection | None = Field(default=None, alias="methodCatalog")
     expansion: HTNExpansionProposal | None = None
     frontier: PlanningFrontier | None = None

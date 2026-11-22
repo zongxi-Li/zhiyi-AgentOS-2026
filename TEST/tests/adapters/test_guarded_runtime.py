@@ -490,6 +490,58 @@ def test_guarded_tool_maps_unknown_failure_without_argument_body() -> None:
     assert "private input" not in str(captured.value)
 
 
+@pytest.mark.parametrize('failure', ['lease', 'scheduler'])
+def test_guarded_tool_preserves_host_recovery_failure_without_retrying(failure):
+    from components.resource.scheduler.leases import LeaseRenewalFailedError
+    from components.resource.scheduler.models import SchedulerUnavailable
+
+    exception, code = ((LeaseRenewalFailedError, 'EXECUTION_LEASE_LOST') if failure == 'lease'
+                       else (SchedulerUnavailable, 'SCHEDULER_UNAVAILABLE'))
+
+    class Unavailable(_FailingTool):
+        calls = 0
+
+        async def execute(self, *_args, **_kwargs):
+            self.calls += 1
+            raise exception('private provider context')
+
+    delegate = Unavailable()
+    runtime = GuardedToolRuntime(delegate=delegate, retries=3)
+    with pytest.raises(ToolInvocationError) as captured:
+        asyncio.run(runtime.execute('search', {'query': 'private input'}))
+    assert captured.value.code == code
+    assert delegate.calls == 1
+    assert 'private' not in str(captured.value)
+
+
+@pytest.mark.parametrize("outcome_unknown", [False, True])
+def test_guarded_tool_keeps_host_failure_facts_without_retrying_or_exposing_arguments(outcome_unknown):
+    from adapters.tool.hands_http import HandsOutcomeUnknown
+    from contracts.tools import HostToolExecutionError
+
+    details = {"stepId": "reader", "tool": "fs.read", "resourceId": "hands", "operationKey": "op:1",
+        "phase": "tool_settlement", "request": {"path": "private-path"}}
+    error = (HandsOutcomeUnknown("private provider message") if outcome_unknown else
+        HostToolExecutionError("NO_ELIGIBLE_RESOURCE", "No eligible tool resource", details=details))
+    if outcome_unknown:
+        error.details = details
+
+    class Unavailable(_FailingTool):
+        calls = 0
+
+        async def execute(self, *_args, **_kwargs):
+            self.calls += 1
+            raise error
+
+    delegate = Unavailable()
+    runtime = GuardedToolRuntime(delegate=delegate, retries=3)
+    with pytest.raises(ToolInvocationError if outcome_unknown else HostToolExecutionError) as captured:
+        asyncio.run(runtime.execute("fs.read", {"path": "private-path"}))
+    assert delegate.calls == 1 and captured.value.retryable is False
+    assert captured.value.details == {key: value for key, value in details.items() if key != "request"}
+    assert "private" not in str(captured.value) + str(captured.value.details)
+
+
 def test_guarded_tool_stream_enforces_total_timeout() -> None:
     """流式工具在完整流生命周期内受总超时保护。"""
     runtime = GuardedToolRuntime(delegate=_StreamingTool())

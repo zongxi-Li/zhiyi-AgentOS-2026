@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from copy import deepcopy
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from contracts.identity import MissionId, SemanticTaskKey
 from contracts.content import WorksetSpec
@@ -24,7 +26,24 @@ _ALLOWED_METADATA_KEYS = {
     "planningBudget", "reasoningEffort", "reasoningPolicyReason",
     "requestedCapabilityProfile", "effectiveCapabilityProfile", "capabilityProfileReason",
     "missionIntentBasisRef",
+    "workspaceDiscovery", "workspaceScope",
 }
+
+
+def _planning_metadata(value):
+    unknown = set(value) - _ALLOWED_METADATA_KEYS
+    if unknown:
+        raise ValueError("metadata contains non-planning keys: " + ", ".join(sorted(unknown)))
+    return value
+
+
+def _metadata_field():
+    # A patch's metadata merges into the accepted plan. Advertise and validate
+    # the same namespace before the model hands its candidate to acceptance.
+    return Field(default_factory=dict, json_schema_extra={
+        "properties": {key: {} for key in sorted(_ALLOWED_METADATA_KEYS)},
+        "additionalProperties": False,
+    })
 
 
 def _reject_execution_identity(value: Any) -> None:
@@ -114,16 +133,15 @@ class PlannedTask(BaseModel):
         alias="producedArtifacts",
     )
     workset: WorksetSpec | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = _metadata_field()
+
+    _validate_metadata = field_validator("metadata")(_planning_metadata)
 
     @model_validator(mode="after")
     def validate_semantic_only(self) -> "PlannedTask":
         if self.parent_key == self.key:
             raise ValueError("PlannedTask cannot be its own parent")
         _reject_execution_identity(self.model_dump(by_alias=True))
-        unknown = set(self.metadata) - _ALLOWED_METADATA_KEYS
-        if unknown:
-            raise ValueError("PlannedTask metadata contains non-planning keys: " + ", ".join(sorted(unknown)))
         return self
 
 
@@ -141,7 +159,9 @@ class TaskPlan(BaseModel):
         default_factory=tuple,
         alias="expectedArtifacts",
     )
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = _metadata_field()
+
+    _validate_metadata = field_validator("metadata")(_planning_metadata)
 
     @model_validator(mode="after")
     def validate_graph(self) -> "TaskPlan":
@@ -219,10 +239,26 @@ class TaskPlan(BaseModel):
             for key in ready:
                 remaining.pop(key)
         _reject_execution_identity(self.metadata)
-        unknown = set(self.metadata) - _ALLOWED_METADATA_KEYS
-        if unknown:
-            raise ValueError("TaskPlan metadata contains non-planning keys: " + ", ".join(sorted(unknown)))
         return self
+
+
+def inherit_task_plan_constraints(current: TaskPlan, nodes: Sequence[PlannedTask]) -> tuple[PlannedTask, ...]:
+    """Carry accepted caller constraints to added work without trusting a model.
+
+    Mission requirements and human review are server-owned. Model-generated
+    constraints of those types are replaced by the accepted plan's exact values;
+    the new task's other semantic constraints remain intact.
+    """
+    reserved = {"mission_constraint", "user_human_review"}
+    inherited = []
+    for node in current.nodes:
+        for constraint in node.constraints:
+            if constraint.get("type") in reserved and constraint not in inherited:
+                inherited.append(constraint)
+    return tuple(node.model_copy(deep=True, update={"constraints": deepcopy([
+        *[constraint for constraint in node.constraints if constraint.get("type") not in reserved],
+        *inherited,
+    ])}) for node in nodes)
 
 
 class TaskImplementationBinding(BaseModel):
@@ -258,7 +294,20 @@ class TaskPlanPatch(BaseModel):
     control_policies: tuple[VerificationLoopPolicy, ...] | None = Field(
         default=None, alias="controlPolicies"
     )
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    expected_artifacts: tuple[str, ...] | None = Field(
+        default=None, alias="expectedArtifacts", exclude_if=lambda value: value is None
+    )
+    metadata: dict[str, Any] = _metadata_field()
+
+    _validate_metadata = field_validator("metadata")(_planning_metadata)
+
+    def changed_task_keys(self) -> set[str]:
+        """Tasks whose definitions or existing dependency obligations change."""
+        changed = set(self.retire_keys) | set(self.replace_keys)
+        for relation in self.remove_relations:
+            changed.update((relation.source_key, relation.target_key))
+        changed.update(relation.target_key for relation in self.relations)
+        return changed
 
     @model_validator(mode="after")
     def validate_increment(self) -> "TaskPlanPatch":
@@ -329,4 +378,5 @@ __all__ = [
     "TaskPlanRelation",
     "VerificationLoopPolicy",
     "WorksetSpec",
+    "inherit_task_plan_constraints",
 ]

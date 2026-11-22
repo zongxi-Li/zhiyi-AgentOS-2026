@@ -10,11 +10,62 @@ import type { RuntimeTraceObservation } from '@/workbench/runtime/observation'
 vi.mock('@/workbench/runtime/runtimeEvents', async original => ({ ...await original<typeof import('@/workbench/runtime/runtimeEvents')>(), acquireRunRuntimeStore: vi.fn(), releaseRunRuntimeStore: vi.fn() }))
 const wrappers: ReturnType<typeof mount>[] = []
 beforeEach(() => { vi.mocked(acquireRunRuntimeStore).mockImplementation(runId => runId ? new RunRuntimeStore(runId) : null) })
-afterEach(() => { wrappers.splice(0).forEach(w => w.unmount()); vi.clearAllMocks(); vi.useRealTimers() })
+afterEach(() => { wrappers.splice(0).forEach(w => w.unmount()); vi.restoreAllMocks(); vi.clearAllMocks(); vi.useRealTimers() })
 const plan: CopilotInitialPlan = { planVersion: 1, commitId: 'commit', commitmentRevision: 1,
   objective: '分析恢复策略', constraints: ['只做分析，不修改代码'], expectedArtifacts: ['报告'],
   tasks: [{ key: 'T1', title: '核对事实', objective: '确认输入', rationale: '为下游建立共同事实依据', acceptanceCriteria: ['标明来源'], sourceRefs: [] }] }
 describe('Copilot task timeline', () => {
+  it('shows queued work before model activity and exposes only an actually allocated Agent instance', async () => {
+    const store = new RunRuntimeStore('run')
+    vi.mocked(acquireRunRuntimeStore).mockReturnValue(store)
+    const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'running' } }); wrappers.push(w)
+    store.apply({ eventId: 'queued', runId: 'run', nodeId: 'read', attemptId: 'a1', sequence: 1, eventType: 'node.queued',
+      timestamp: '2026-11-18T10:00:00Z', payload: { nodeTitle: '核对依赖', agentName: '代码分析 Agent', queuedAt: '2026-11-18T10:00:00Z', reason: 'NO_CAPACITY' } })
+    await w.vm.$nextTick()
+    expect(w.text()).toContain('等待执行资源')
+    expect(w.text()).toContain('正在等待可用的 Agent 执行资源')
+    expect(w.text()).toContain('核对依赖')
+    expect(w.find('.agent-work__pool-link').exists()).toBe(false)
+    expect(w.text()).not.toContain('模型请求已发出')
+    store.apply({ eventId: 'started', runId: 'run', nodeId: 'read', attemptId: 'a1', sequence: 2, eventType: 'node.started',
+      payload: { agentName: '代码分析 Agent', agentRegistration: { agentId: 'analyst', instanceId: 'analyst-7', generation: 2 } } })
+    await w.vm.$nextTick()
+    expect(w.text()).not.toContain('等待执行资源')
+    expect(w.text()).toContain('analyst-7 · 第 2 代')
+    await w.get('.agent-work__pool-link').trigger('click')
+    expect(w.emitted('inspect-agent')).toEqual([['analyst-7']])
+    store.dispose()
+  })
+
+  it('formats approval evidence with one formatter and leaves it cached while the run clock ticks', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-11-17T10:00:02Z'))
+    const decidedAt = '2026-11-17T10:00:00Z'
+    const nextDecidedAt = '2026-11-17T10:00:01Z'
+    const expected = [decidedAt, nextDecidedAt].map(value => new Date(value).toLocaleString('zh-CN', { hour12: false }))
+    const nativeFormat = Object.getOwnPropertyDescriptor(Intl.DateTimeFormat.prototype, 'format')!.get!
+    const formatters = new Set<Intl.DateTimeFormat>()
+    const formatted = vi.spyOn(Intl.DateTimeFormat.prototype, 'format', 'get').mockImplementation(function (this: Intl.DateTimeFormat) {
+      formatters.add(this)
+      return nativeFormat.call(this)
+    })
+    const tool = { executionId: 'read', tool: 'fs.read', status: 'completed', stepId: 'node',
+      createdAt: decidedAt, approvalDecision: { source: 'policy' as const, decidedAt } }
+    const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'running', startedAt: decidedAt,
+      tools: [tool, { ...tool, executionId: 'invalid-time', approvalDecision: { source: 'policy', decidedAt: 'unavailable' } }],
+    } }); wrappers.push(w)
+    const approvals = () => w.findAll('[aria-label="工具审批记录"]')
+    expect(approvals()[0].text()).toContain(expected[0])
+    expect(approvals()[1].text()).toContain('unavailable')
+    expect(formatted).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(w.get('.run-timeline__status').text()).toContain('已运行 5 秒')
+    expect(formatted).toHaveBeenCalledTimes(1)
+    await w.setProps({ tools: [{ ...tool, approvalDecision: { source: 'policy', decidedAt: nextDecidedAt } }] })
+    expect(approvals()[0].text()).toContain(expected[1])
+    expect(formatted).toHaveBeenCalledTimes(2)
+    expect(formatters.size).toBe(1)
+  })
   it('keeps policy approval evidence inside its tool result without implying execution success', () => {
     const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'running', tools: [{
       executionId: 'command', tool: 'command.run', status: 'failed', stepId: 'node', attemptId: 'attempt',
@@ -138,25 +189,53 @@ describe('Copilot task timeline', () => {
     expect(w.findAll('.agent-work')).toHaveLength(1)
     expect(w.get('.agent-work__heading').text()).toContain('代码分析 Agent')
     expect(w.get('.agent-work__heading').text()).toContain('instance-7')
+    expect(w.get('.agent-work__state').text()).toBe('正在工作')
+    expect(w.get('.agent-work__identity').attributes('open')).toBeUndefined()
+    expect(w.get('.agent-work__assignment').text()).toContain('instance-7 · 第 2 代')
+    expect(w.get('.agent-work__task').text()).toBe('提取依赖')
+    await w.get('.agent-work__pool-link').trigger('click')
+    expect(w.emitted('inspect-agent')).toEqual([['instance-7']])
     expect(w.get('.agent-work').text()).toContain('glm-test')
     expect(w.get('.agent-work').text()).toContain('先检查目录。')
     expect(w.get('.run-timeline__tool-target').text()).toBe('src')
     expect(w.get('.run-timeline__tool-result').text()).toBe('main.py')
     expect(w.findAll('.run-timeline__output')).toHaveLength(2)
+    apply('node.completed', {})
+    await w.vm.$nextTick()
+    expect(w.get('.agent-work__state').text()).toBe('已完成')
+    store.dispose()
+  })
+  it('distinguishes parallel instances with the same display name by registration and assignment', async () => {
+    const store = new RunRuntimeStore('run')
+    vi.mocked(acquireRunRuntimeStore).mockReturnValue(store)
+    const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'running', tools: [
+      { executionId: 'read-a', tool: 'fs.read', stepId: 'a', attemptId: 'attempt-a', status: 'running', createdAt: '2026-11-18T01:00:01Z' },
+      { executionId: 'read-b', tool: 'fs.read', stepId: 'b', attemptId: 'attempt-b', status: 'running', createdAt: '2026-11-18T01:00:02Z' },
+    ] } }); wrappers.push(w)
+    for (const [index, nodeId] of ['a', 'b'].entries()) {
+      store.apply({ eventId: `instance-${nodeId}`, sequence: index + 1, runId: 'run', nodeId, attemptId: `attempt-${nodeId}`, eventType: 'node.started',
+        payload: { agentName: '审查 Agent', nodeTitle: `审查模块 ${nodeId}`, agentRegistration: { agentId: 'reviewer', instanceId: `instance-${nodeId}`, generation: index + 1 } } })
+    }
+    await w.vm.$nextTick()
+    expect(w.findAll('.agent-work__instance').map(el => el.text())).toEqual(['instance-a · 第 1 代', 'instance-b · 第 2 代'])
+    expect(w.findAll('.agent-work__task').map(el => el.text())).toEqual(['审查模块 a', '审查模块 b'])
+    await w.findAll('.agent-work__pool-link')[1].trigger('click')
+    expect(w.emitted('inspect-agent')).toEqual([['instance-b']])
     store.dispose()
   })
   it('shows execution reasoning before any answer is returned', async () => {
+    vi.useFakeTimers()
     const store = new RunRuntimeStore('run')
     vi.mocked(acquireRunRuntimeStore).mockReturnValue(store)
     const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'running' } }); wrappers.push(w)
     store.apply({ eventId: 'start', sequence: 1, runId: 'run', nodeId: 'node', eventType: 'model.started' })
     store.apply({ eventId: 'thought', sequence: 2, runId: 'run', nodeId: 'node', eventType: 'model.reasoning.delta', payload: { delta: '先检查输入依据，再核对约束。' } })
-    await w.vm.$nextTick()
+    await vi.advanceTimersByTimeAsync(16)
     expect(w.get('.run-timeline__reasoning').text()).toContain('先检查输入依据')
     expect(w.get('[aria-label="执行节点思考过程"]').text()).toContain('先检查输入依据')
     expect(w.get('.run-timeline__reasoning > summary').text()).toContain('思考过程')
     store.apply({ eventId: 'next-thought', sequence: 3, runId: 'run', nodeId: 'node', eventType: 'model.reasoning.delta', payload: { delta: '继续核对依赖关系。' } })
-    await w.vm.$nextTick()
+    await vi.advanceTimersByTimeAsync(16)
     expect(w.get('[aria-label="执行节点思考过程"]').text()).toContain('继续核对依赖关系。')
     expect(w.get('.run-timeline__output-heading').text()).toContain('正在思考')
     expect(w.find('.task-work-summary').exists()).toBe(false)
@@ -175,10 +254,17 @@ describe('Copilot task timeline', () => {
     const store = new RunRuntimeStore('run')
     vi.mocked(acquireRunRuntimeStore).mockReturnValue(store)
     const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'running' } }); wrappers.push(w)
-    store.apply({ eventId: 'start', sequence: 1, runId: 'run', nodeId: 'node', eventType: 'model.started' })
+    store.apply({ eventId: 'start', sequence: 1, runId: 'run', nodeId: 'node', eventType: 'model.started', payload: { nodeTitle: '验收核查' } })
     store.apply({ eventId: 'body', sequence: 2, runId: 'run', nodeId: 'node', eventType: 'model.output.delta', payload: { publicText: '四、质量要求\n设计必须具有业务依据。\n各项设计必须保持一致。\n五、执行约束\n不虚构测试结果。' } })
     store.apply({ eventId: 'end', sequence: 3, runId: 'run', nodeId: 'node', eventType: 'model.completed' })
     await w.vm.$nextTick()
+    const output = w.get('.run-timeline__node-output')
+    expect(output.attributes('open')).toBeUndefined()
+    expect(output.get('summary').text()).toContain('验收核查 · 节点输出')
+    expect(w.get('.run-timeline__output-preview').text()).toContain('四、质量要求')
+    await output.get('summary').trigger('click')
+    expect(output.attributes('open')).toBeDefined()
+    expect(w.find('.run-timeline__output-preview').exists()).toBe(false)
     expect(w.findAll('.run-timeline__text p').map(p => p.text())).toEqual([
       '四、质量要求', '设计必须具有业务依据。\n各项设计必须保持一致。', '五、执行约束', '不虚构测试结果。',
     ])
@@ -361,12 +447,18 @@ describe('Copilot task timeline', () => {
     expect(w.get('.run-timeline__output').text()).toContain('正在生成')
     expect(w.text()).not.toContain('PRIVATE')
     expect(store.nodes.node.phase).toBe('STREAMING')
+    const output = w.get('.run-timeline__node-output')
+    expect(output.attributes('open')).toBeDefined()
+    await output.get('summary').trigger('click')
+    expect(output.attributes('open')).toBeUndefined()
+    await output.get('summary').trigger('click')
     apply('model.output.delta', { delta: '，找到两项问题"}' })
     apply('model.completed')
     apply('node.completed')
     await w.vm.$nextTick()
     expect(w.get('.run-timeline__text').text()).toContain('已检查，找到两项问题')
     await w.setProps({ status: 'completed' })
+    expect(w.get('.run-timeline__node-output').attributes('open')).toBeDefined()
     expect(w.text()).toContain('已检查，找到两项问题')
     expect(w.text()).toContain('完整结果以步骤交付为准')
     expect(w.emitted('content')).toBeTruthy()
@@ -440,6 +532,40 @@ describe('Copilot task timeline', () => {
     await w.vm.$nextTick()
     expect(w.findAll('.run-timeline__tool')).toHaveLength(2)
     expect(w.findAll('.run-timeline__tool summary').map(item => item.text())).toEqual(['查看目录已完成', '查看目录执行中'])
+  })
+  it('updates each queued tool operation to running and completed without duplicate failure rows', async () => {
+    const store = { activity: reactive({ events: [] as any[], approvalRevision: 0 }), planning: reactive({ stage: null, draft: { nodes: [] } }) }
+    vi.mocked(acquireRunRuntimeStore).mockReturnValue(store as any)
+    const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'running' } }); wrappers.push(w)
+    const apply = (eventType: string, operationKey: string, extra: Record<string, unknown> = {}) => {
+      store.activity.events.push({ eventId: `${eventType}:${operationKey}`, eventType, nodeId: 'step', attemptId: 'attempt',
+        payload: { tool: 'fs.read', operationKey, target: 'source.py', ...extra } })
+    }
+    apply('tool.capacity_waiting', 'read:1')
+    apply('tool.capacity_waiting', 'read:2')
+    await w.vm.$nextTick()
+    expect(w.findAll('.run-timeline__tool')).toHaveLength(2)
+    expect(w.findAll('.run-timeline__tool summary').map(item => item.text())).toEqual(['读取文件等待执行资源', '读取文件等待执行资源'])
+    apply('tool.execution_started', 'read:1')
+    await w.vm.$nextTick()
+    expect(w.findAll('.run-timeline__tool')).toHaveLength(2)
+    expect(w.findAll('.run-timeline__tool summary').map(item => item.text())).toEqual(['读取文件执行中', '读取文件等待执行资源'])
+    apply('tool.execution_completed', 'read:1', { executionId: 'read-result', status: 'completed' })
+    await w.vm.$nextTick()
+    expect(w.findAll('.run-timeline__tool')).toHaveLength(2)
+    expect(w.findAll('.run-timeline__tool summary').map(item => item.text())).toEqual(['读取文件等待执行资源', '读取文件已完成'])
+    expect(w.text()).not.toContain('失败')
+  })
+  it('keeps another operation queued when a parallel tool receipt refreshes', () => {
+    const store = { activity: reactive({ events: [{ eventId: 'queued', eventType: 'tool.capacity_waiting', nodeId: 'step', attemptId: 'attempt',
+      timestamp: '2026-11-13T10:00:00Z', payload: { tool: 'fs.read', operationKey: 'read:2', target: 'second.py' } }] as any[], approvalRevision: 0 }), planning: reactive({ stage: null, draft: { nodes: [] } }) }
+    vi.mocked(acquireRunRuntimeStore).mockReturnValue(store as any)
+    const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'running', tools: [{
+      executionId: 'read-result-1', tool: 'fs.read', status: 'completed', stepId: 'step', attemptId: 'attempt', createdAt: '2026-11-13T10:00:01Z'
+    }] } }); wrappers.push(w)
+    expect(w.findAll('.run-timeline__tool')).toHaveLength(2)
+    expect(w.text()).toContain('等待执行资源')
+    expect(w.text()).toContain('second.py')
   })
   it('groups adjacent tool operations while keeping intervening messages in time order', () => {
     const at = (seconds: number) => `2026-11-14T10:00:${String(seconds).padStart(2, '0')}Z`

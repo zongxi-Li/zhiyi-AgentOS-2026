@@ -3,12 +3,11 @@
 from components.executor import ACGExecutionState
 from contracts.execution import WorkflowProgressPhase
 from contracts.runtime_planning import RuntimeConditionWake, RuntimePlanningState, requirement_fingerprint
-from contracts.resource import ExecutionRequirement
 from contracts.workflow import WorkflowStatus, TraceEventType, utc_now
-from runtime.orchestration.binding import assess_run_requirement
+from runtime.orchestration.binding import assess_run_requirement, effective_recovery_requirement
 from runtime.composition.ports import CollaboratorAccess
 from runtime.orchestration.state_persistence import acg_execution_state_from_run
-from runtime.orchestration.workspace_review import automatic_workspace_review
+from runtime.orchestration.workspace_review import automatic_workspace_review, retire_stale_workspace_continuation
 from support.stores._policy import validate_run_state
 
 
@@ -29,6 +28,8 @@ class RuntimePlanningWaitService(CollaboratorAccess):
         existing owners.
         """
         if not automatic_workspace_review(run):
+            return False
+        if (run.execution_state.get("reviewPayload") or {}).get("reasonCode") == "PLANNER_UNAVAILABLE":
             return False
         raw = run.execution_state.get("planningLoop") or {}
         current = raw.get("current") or {}
@@ -91,8 +92,7 @@ class RuntimePlanningWaitService(CollaboratorAccess):
         elif condition.kind == "requirement_available":
             if condition.step_id in set(state.completed_step_ids) | set(state.skipped_step_ids):
                 raise ValueError("resource wait targets settled work")
-            requirement = ExecutionRequirement.model_validate(
-                run.execution_state["bindingRequirements"][condition.step_id])
+            requirement = effective_recovery_requirement(run, condition.step_id)
             if requirement_fingerprint(requirement) != condition.requirement_id:
                 raise ValueError("resource wait requirement changed after arming")
             if timestamp >= condition.expires_at:
@@ -153,8 +153,7 @@ class RuntimePlanningWaitService(CollaboratorAccess):
         for fact in blocked:
             if fact.step_id in settled:
                 raise ValueError("resource observation targets settled work")
-            requirement = ExecutionRequirement.model_validate(
-                run.execution_state["bindingRequirements"][fact.step_id])
+            requirement = effective_recovery_requirement(run, fact.step_id)
             if requirement_fingerprint(requirement) != fact.requirement_id:
                 raise ValueError("resource observation requirement changed after waiting")
             requirements.append((fact.step_id, requirement))
@@ -191,6 +190,12 @@ class RuntimePlanningWaitService(CollaboratorAccess):
                 and dict(latest, checkpointId=None) != dict(proposed, checkpointId=None)):
             raise ValueError("planning wake found an unrelated checkpoint head")
         self.state_persistence.save_checkpoint(run, state)
+        retired = retire_stale_workspace_continuation(run, value_store=self.execution_value_store,
+            step_id=state.graph_id, operation_id=state.checkpoint_transition_key)
+        if retired is not None:
+            self.trace_store.append(run, TraceEventType.RUNTIME_EVENT_CLASSIFIED,
+                observation="Superseded blocked review proposal archived at the current Planner wake",
+                payload={"runtimeEvent": "planner.runtime.continuation_retired", **retired})
         run.execution_state.update(state.model_dump(by_alias=True, mode="json"))
         run.execution_state["planningLoop"] = loop.model_dump(by_alias=True, mode="json")
         run.current_step_id = None
@@ -204,7 +209,7 @@ class RuntimePlanningWaitService(CollaboratorAccess):
         """Validate a Planner barrier without approving node/control reviews."""
         validate_run_state(run)
         review = run.execution_state.get("reviewPayload") or {}
-        if (review.get("subjectType") != "planner" or review.get("reasonCode") != "PLANNER_WAIT"
+        if (review.get("subjectType") != "planner" or review.get("reasonCode") not in {"PLANNER_WAIT", "PLANNER_UNAVAILABLE"}
                 or review.get("observationId") != observation_id):
             raise ValueError("automatic wake cannot approve a node or control review")
         state = acg_execution_state_from_run(run)

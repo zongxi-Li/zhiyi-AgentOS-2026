@@ -388,6 +388,12 @@ ACGBlueprint = RuntimeBlueprintSpec
 class ACGValidationError(ValueError):
     """An ACG structural or graph validation failure."""
 
+    def __init__(self, message: str, *, validation_code: str | None = None,
+                 field_path: tuple[str | int, ...] = ()) -> None:
+        super().__init__(message)
+        self.validation_code = validation_code
+        self.field_path = field_path
+
 
 __all__ = [
     "ACGBlueprint", "RuntimeBlueprintSpec", "ACGEdge", "ACGNode", "ACGNodeBase",

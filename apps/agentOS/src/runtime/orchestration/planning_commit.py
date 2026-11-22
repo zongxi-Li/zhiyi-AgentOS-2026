@@ -25,11 +25,22 @@ from contracts.workflow import RuntimeRunRecord, RuntimeMissionRecord, MissionRe
 from contracts.acg.schema import RuntimeBlueprintSpec
 from support.capabilities import CapabilityCatalog
 from components.mission.planner_input import planner_input
+from runtime.orchestration.state_persistence import acg_execution_state_from_run
 from support.stores.planning_commit_store import content_fingerprint
 from contracts.initial_planning import InitialPlanningSourceProvenance, initial_strategy_fingerprint
 
 
 logger = logging.getLogger(__name__)
+
+
+def semantic_validation_rejection(exc):
+    """Return rule names and schema locations without candidate values or bodies."""
+    failures = planning_validation_failures(exc, stage="validation", call_key="runtime_decision")
+    locations = "; ".join(".".join(map(str, item["fieldPath"])) + ":" + item["code"] for item in failures)
+    reason = "candidate failed deterministic semantic validation"
+    if locations:
+        reason += "; " + locations
+    return PlanningCommitRejection(code=Code.INVALID_PROPOSAL, reason=reason[:500])
 
 
 def fingerprint(value):
@@ -59,6 +70,33 @@ def with_semantic_ancestors(plan, keys):
                 protected.add(parent)
                 pending.append(parent)
     return protected
+
+
+def protected_execution_nodes(run, state, receipts):
+    """Identify work whose identities and incoming dependencies are already in use."""
+    protected = set(run.completed_step_ids) | set(state.completed_step_ids) | set(state.skipped_step_ids)
+    protected.update(step.step_id for step in run.steps if (
+        step.status.value != "pending" or step.output or step.resolved_input
+        or step.started_at or step.completed_at or step.attempt or step.retry_count
+    ))
+    for channel in (state.output_refs, state.output_summaries, state.context_refs, state.memory_refs,
+                    state.trace_refs, state.provenance_refs, state.blackboard_snapshots, state.debate_sessions):
+        protected.update(channel)
+    operations = {str(receipt.get("commitId", "")) for receipt in receipts}
+    for binding in run.execution_state.get("taskBindings", ()):
+        step_id = binding["acgNodeId"]
+        if (f"single-step-retry:{run.run_id}:{step_id}" in operations
+                or any(operation.startswith(f"commit:{run.run_id}:{step_id}:") for operation in operations)):
+            protected.add(step_id)
+    return protected
+
+
+def protected_task_keys(run, state, plan, receipts):
+    protected = protected_execution_nodes(run, state, receipts)
+    return with_semantic_ancestors(plan, {
+        binding["planNodeKey"] for binding in run.execution_state.get("taskBindings", ())
+        if binding["acgNodeId"] in protected
+    })
 
 
 class RuntimePlanningCommitProvider:
@@ -200,8 +238,8 @@ class RuntimePlanningCommitProvider:
     def validate_proposal(self, request):
         try:
             return self._validate_proposal(request)
-        except (ValueError, KeyError, TopologyCompileError):
-            return PlanningCommitRejection(code=Code.INVALID_PROPOSAL, reason="candidate failed deterministic semantic validation")
+        except (ValueError, KeyError, TopologyCompileError) as exc:
+            return semantic_validation_rejection(exc)
 
     def _validate_proposal(self, request):
         def reject(code, reason):
@@ -271,26 +309,21 @@ class RuntimePlanningCommitProvider:
                     or not set(bound_tasks) <= {n.key for n in current.nodes}
                     or not {n.key for n in current.nodes if n.capability_requirements} <= set(bound_tasks)):
                 return reject(Code.INVALID_PROPOSAL, "formal task bindings are inconsistent")
-            protected = {b["planNodeKey"] for b in run.execution_state.get("taskBindings", ())
-                if any(s.step_id == b["acgNodeId"] and (s.status.value != "pending" or s.output
-                       or s.resolved_input or s.started_at or s.completed_at or s.attempt > 0
-                       or s.step_id in run.completed_step_ids
-                       or (run.execution_state.get("outputRefs") or {}).get(s.step_id))
-                       for s in run.steps)}
             receipts = self.node_commits(run)
-            protected.update(b["planNodeKey"] for b in run.execution_state.get("taskBindings", ())
-                if any(str(r.get("commitId", "")).startswith(f"commit:{run.run_id}:{b['acgNodeId']}:")
-                       or r.get("commitId") == f"single-step-retry:{run.run_id}:{b['acgNodeId']}"
-                       for r in receipts))
-            protected = with_semantic_ancestors(current, protected)
-            touched = set(self.payload.retire_keys) | set(self.payload.replace_keys)
-            touched |= {r.source_key for r in self.payload.remove_relations} | {r.target_key for r in self.payload.remove_relations}
-            touched |= {r.target_key for r in self.payload.relations}
+            protected = protected_task_keys(run, acg_execution_state_from_run(run), current, receipts)
+            touched = self.payload.changed_task_keys()
             if touched & protected:
                 return reject(Code.INVALID_PROPOSAL, "started or settled work cannot be changed")
             if self.payload.base_plan_version != current.plan_version:
                 return reject(Code.STALE_PLAN, "patch bases on another formal plan")
             next_plan = apply_task_plan_patch(current, self.payload, catalog)
+            from contracts.workspace_planning import workspace_planning_phase
+            if (workspace_planning_phase(current) is not None
+                    and workspace_planning_phase(next_plan) == "formal"
+                    and next_plan.metadata.get("workspaceScope") != current.metadata.get("workspaceScope")):
+                from runtime.orchestration.workspace_planning_context import validate_workspace_scope_sources
+                validate_workspace_scope_sources(run, self.runtime.execution_value_store,
+                    next_plan.metadata["workspaceScope"])
             # The compiler may infer capability/terminal edges absent from the
             # raw patch. Its validated result must preserve settled predecessors.
             prior_incoming = {r for r in current.relations if r.target_key in protected}
@@ -413,8 +446,8 @@ class RuntimePlanningCommitAuthority:
         """Called with Runtime Run lock held; no nested RunLock acquisition."""
         try:
             patch = TaskPlanPatch.model_validate(patch.model_dump(mode="json", by_alias=True))
-        except ValidationError:
-            return PlanningCommitRejection(code=Code.INVALID_PROPOSAL, reason="semantic revision patch is invalid")
+        except ValidationError as exc:
+            return semantic_validation_rejection(exc)
         provider = self._provider(run_id, patch, False)
         service = PlanningCommitService(current_state_provider=provider, store=self.store)
         if provider.authorize() is not True:
@@ -560,10 +593,14 @@ class RuntimePlanningCommitAuthority:
                 "constraintCount": len(profile.key_constraints),
                 "requiredCapabilityCount": len(profile.required_capabilities),
                 "expectedArtifactCount": len(profile.expected_artifacts)})
-            plan = engine.semantic_planner.plan_profile(mission_id=run.mission_id, profile=profile,
-                strategy="initial_commit_candidate", task_input=data,
-                existing_semantic_tasks=self.runtime._existing_semantic_task_catalog(run.mission_id),
-                use_llm=not bool(run.input.get("deterministicIntent")), planning_deadline=deadline, run_id=run_id)
+            from components.planner.workspace_discovery import build_workspace_discovery_plan
+            plan = (build_workspace_discovery_plan(run.mission_id, profile, data)
+                    if workflow.is_native_bootstrap else None)
+            if plan is None:
+                plan = engine.semantic_planner.plan_profile(mission_id=run.mission_id, profile=profile,
+                    strategy="initial_commit_candidate", task_input=data,
+                    existing_semantic_tasks=self.runtime._existing_semantic_task_catalog(run.mission_id),
+                    use_llm=not bool(run.input.get("deterministicIntent")), planning_deadline=deadline, run_id=run_id)
         # Server-owned immutable basis binds the candidate, including template planning.
         nodes = tuple(n.model_copy(deep=True, update={"constraints": [*n.constraints,
             *[dict(type="mission_constraint", value=c.text, constraintId=c.constraint_id,

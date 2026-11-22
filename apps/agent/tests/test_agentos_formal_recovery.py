@@ -13,7 +13,7 @@ import pytest
 from adapters.agent.invocation import AgentInvocationAdapter
 from contracts import stable_checksum
 from contracts.runtime_planning import RuntimePlanningDecision
-from contracts.workflow import ReviewDecision
+from contracts.workflow import ReviewDecision, StepStatus
 from adapters.agent.registry import AgentNotFound
 from app.api.agentos_v2 import create_router
 from app.execution.coordinator import RunExecutionCoordinator
@@ -163,6 +163,33 @@ def failed_formal_run(ready_handoff, monkeypatch):  # noqa: F811 - imported pyte
         client.close()
 
 
+@pytest.fixture(params=["failed", "cancelled"])
+def interrupted_formal_run(failed_formal_run, request):
+    client, runtime, agent, created, failed = failed_formal_run
+    # Shutdown may cancel every frontier step before restart marks its Run
+    # failed. Retain the existing terminal Attempt and its non-invocation proof.
+    failed.get_step("B").status = StepStatus(request.param)
+    if request.param == "cancelled":
+        # A restart may retain a plain Planner pause without any human review
+        # decision. Explicit recovery must resolve it in both preview and apply.
+        assert failed.execution_state["reviewPayload"]["subjectType"] == "planner"
+        failed.current_step_id = None
+        failed.trace = [event for event in failed.trace
+                        if event.event_type.value != "review_decided"]
+    runtime.workflow_store.save_run(failed)
+    persisted = runtime.workflow_store.get_run(failed.run_id)
+    assert persisted.status.value == "failed"
+    assert persisted.get_step("B").status.value == request.param
+    assert [step.step_id for step in persisted.steps
+            if step.status in {StepStatus.FAILED, StepStatus.CANCELLED}] == ["B"]
+    return client, runtime, agent, created, persisted
+
+
+def prefix_references(run):
+    return {field: run.execution_state.get(field, {}).get("A")
+            for field in ("outputRefs", "contextRefs", "memoryRefs", "traceRefs", "provenanceRefs")}
+
+
 def retry_url(created):
     return f'{PREFIX}/runs/{created["runId"]}/steps/B/retry'
 
@@ -177,8 +204,8 @@ def run_count(runtime, mission_id):
         return conn.execute("SELECT count(*) FROM runs WHERE mission_id=?", (mission_id,)).fetchone()[0]
 
 
-def test_http_formal_recovery_retains_run_permit_and_successful_prefix(failed_formal_run):
-    client, runtime, agent, created, failed = failed_formal_run
+def test_http_formal_recovery_retains_run_permit_and_successful_prefix(interrupted_formal_run):
+    client, runtime, agent, created, failed = interrupted_formal_run
     permit = failed.execution_state["executionPermitId"]
     trusted_call(client, RuntimeTaskOperations(runtime).assert_current_run_recovery, failed)
     offers = client.get(PREFIX + "/runs/" + failed.run_id).json()["actionCapabilities"]
@@ -193,6 +220,8 @@ def test_http_formal_recovery_retains_run_permit_and_successful_prefix(failed_fo
     saved = runtime.workflow_store.get_run(failed.run_id)
     assert saved.execution_state["executionPermitId"] == permit
     assert saved.execution_state["executionGeneration"] == failed.execution_state["executionGeneration"]
+    assert saved.execution_state["graphVersion"] == failed.execution_state["graphVersion"]
+    assert prefix_references(saved) == prefix_references(failed)
     assert saved.recovery_count == 1
     assert run_count(runtime, failed.mission_id) == 1
     replay = client.post(retry_url(created), json=retry_body(failed))
@@ -256,14 +285,15 @@ def test_http_recovery_requires_live_authority_and_settled_proof(failed_formal_r
     assert agent.calls == []
 
 
-def test_copilot_formal_recovery_and_lost_receipt_do_not_create_second_attempt(failed_formal_run, monkeypatch):
-    client, runtime, agent, created, failed = failed_formal_run
+def test_copilot_formal_recovery_and_lost_receipt_do_not_create_second_attempt(interrupted_formal_run, monkeypatch):
+    client, runtime, agent, created, failed = interrupted_formal_run
     base = f'{PREFIX}/runs/{failed.run_id}/copilot/actions'
     preview = client.post(base + "/preview", json={"operationId": "recover-proposal", "kind": "recover",
         "content": "从失败节点继续", "permission": "task_collaboration"})
     assert preview.status_code == 200, preview.text
     proposal = preview.json()
     assert proposal["action"]["retryMode"] == "current_run"
+    assert proposal["action"]["stepId"] == "B"
     assert proposal["action"]["reusedStepIds"] == ["A"]
     body = {"proposalId": proposal["operationId"], "expectedRevision": failed.runtime_revision,
             "permission": "task_collaboration"}
@@ -287,7 +317,12 @@ def test_copilot_formal_recovery_and_lost_receipt_do_not_create_second_attempt(f
     assert "当前运行" in receipt["assistant"]
     assert wait_run(client, created)["status"] == "completed"
     assert client.post(base, json=body).json() == receipt
-    assert runtime.workflow_store.get_run(failed.run_id).recovery_count == 1
+    saved = runtime.workflow_store.get_run(failed.run_id)
+    assert saved.recovery_count == 1
+    for field in ("executionPermitId", "executionGeneration", "graphVersion"):
+        assert saved.execution_state[field] == failed.execution_state[field]
+    assert prefix_references(saved) == prefix_references(failed)
+    assert run_count(runtime, failed.mission_id) == 1
     assert agent.calls == ["B", "C", "D"]
 
 

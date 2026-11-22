@@ -21,7 +21,7 @@ from adapters.model.prompt_runtime import planner_prompt_metadata, schema_hash, 
 from contracts.execution_evidence import WorkspaceObservationRequirement, workspace_observation_requirements
 
 
-INTENT_PROFILE_PROMPT_VERSION = "intent-profile.v4"
+INTENT_PROFILE_PROMPT_VERSION = "intent-profile.v6"
 
 
 class IntentLLM(Protocol):
@@ -47,15 +47,34 @@ _PROFILE_SCHEMA = {
         "workspaceObservations": {
             "type": "array",
             "items": WorkspaceObservationRequirement.model_json_schema(),
-            "description": "Extract explicit requests to inspect actual files or folders in the authorized workspace. "
+            "description": "Declare the source observations needed by the objective and explicit requests "
+                "to inspect actual files or folders in the authorized workspace. "
                 "Use a literal workspace-relative path ('.' for the selected folder), kind=file or directory. "
                 "operation=read requires full source text; for a directory it requires listing it and reading its files. "
                 "operation=list only requires directory enumeration. Set recursive=true only for a requested tree/codebase scan. "
                  "Code/repository review or a request to read file contents requires operation=read, not list; "
                  "a repository-wide review also requires recursive=true. Use list only for a requested names/tree-only view. "
-                "Preserve every explicitly requested scope, do not shrink it or add exclusions to save work. "
+                "A selected folder or named repository root locates the work; a general code/dependency "
+                "review does not by itself require reading VCS internals, caches or generated data. "
+                "Distinguish that inferred source coverage from caller-fixed evidence obligations using "
+                "workspaceScopeOrigin. Infer task-relevant source scope and use excludePaths for justified exclusions as literal "
+                "workspace-relative descendant prefixes, never glob patterns. Preserve every explicitly requested "
+                "scope and any explicit exclusions; a full scan without exclusions remains a full scan. "
                 "Use [] for reasoning over supplied text/materials without actual workspace inspection. "
                 "This declares evidence obligations, never tool permissions; do not invent absolute host paths.",
+        },
+        "workspaceScopeOrigin": {
+            "type": "string", "enum": ["explicit", "inferred"],
+            "description": "Classify who fixed the evidence coverage, not how the workspace is addressed. "
+                "Use inferred for a general code/repository/dependency review, even when the caller names "
+                "the repository root or selects a folder: discovery may refine task-relevant source coverage "
+                "from actual evidence. A literal location alone does not demand exhaustive reading of every "
+                "entry beneath it. Keep the caller's named source boundaries and constraints. "
+                "Use explicit when the caller fixes evidence obligations, such as particular files that must "
+                "be read, directory include/exclude requirements, or an exhaustive request to read every file "
+                "including VCS, generated or cached data. Preserve those obligations and explicit exclusions "
+                "in workspaceObservations; never relabel them as inferred to bypass them. "
+                "Use inferred with workspaceObservations=[] when no workspace inspection is required.",
         },
         "keyConstraints": {"type": "array", "items": {"type": "string"}},
         "requiredCapabilities": {"type": "array", "items": {"type": "string"}},
@@ -70,7 +89,8 @@ _PROFILE_SCHEMA = {
         "implicitRequirements": {"type": "array", "items": {"type": "string"}},
         "riskLevel": {"type": "string"},
     },
-    "required": ["primaryGoal", "requiredCapabilities", "estimatedComplexity", "evidenceScope", "webExtraction", "workspaceObservations"],
+    "required": ["primaryGoal", "requiredCapabilities", "estimatedComplexity", "evidenceScope", "webExtraction",
+        "workspaceObservations", "workspaceScopeOrigin"],
 }
 
 _NATIVE_FALLBACK = ["task_understanding", "analysis", "artifact_generation"]
@@ -90,6 +110,21 @@ def _workspace_read_intent(intent: str) -> tuple[bool, bool]:
         r"(?:读取|阅读|读完).{0,16}(?:文件|内容|代码|源码|仓库|项目)"
         r"|\bread\b.{0,32}\b(?:files?|contents?|source|code|repository|codebase)\b", text))
     return repository_review or reading, repository_review
+
+
+def _fixed_workspace_observations(intent, profile):
+    """Ground model-suggested obligations in the caller's actual wording."""
+    if profile.workspace_scope_origin != "explicit":
+        return ()
+    text = intent.replace("\\", "/").casefold()
+    exhaustive = bool(re.search(
+        r"(?:读取|读完|扫描|遍历|审查)\s*(?:所有|全部|每个|每一个)文件|(?:全量扫描|逐文件读取)"
+        r"|\b(?:read|scan|inspect|review)\s+(?:all|every)\s+files?\b", text))
+    return tuple(item for item in profile.workspace_observations if (
+        exhaustive and item.kind == "directory" and item.recursive
+        or item.path != "." and re.search(
+            r"(?<![\w./-])" + re.escape(item.path.casefold()) + r"(?![\w./-])", text)
+    ))
 
 
 class IntentParser:
@@ -346,6 +381,8 @@ class IntentParser:
         # Caller-owned scope cannot be weakened by semantic inference.
         if "workspaceObservations" in contract:
             profile.workspace_observations = list(workspace_observation_requirements(contract["workspaceObservations"]))
+            profile.workspace_scope_origin = "explicit"
+            profile.fixed_workspace_observations = tuple(profile.workspace_observations)
         else:
             requires_read, repository_review = _workspace_read_intent(intent)
             if requires_read:
@@ -357,8 +394,14 @@ class IntentParser:
                         operation="read", recursive=repository_review)]
                 profile.workspace_observations = [WorkspaceObservationRequirement(
                     path=item.path, kind=item.kind, operation="read",
-                    recursive=item.recursive or (repository_review and item.kind == "directory"))
+                    recursive=item.recursive or (repository_review and item.kind == "directory"),
+                    excludePaths=item.exclude_paths)
                     for item in inferred]
+            fixed = _fixed_workspace_observations(intent, profile)
+            profile.fixed_workspace_observations = fixed
+            profile.workspace_scope_origin = (
+                "explicit" if fixed and len(fixed) == len(profile.workspace_observations) else "inferred"
+            )
         if profile.workspace_observations:
             if profile.evidence_scope == "task_input_only":
                 raise ValueError("workspace inspection conflicts with task_input_only evidence scope")

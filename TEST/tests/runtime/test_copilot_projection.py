@@ -92,6 +92,80 @@ def test_stale_revision_diagnostics_do_not_replace_the_current_external_wait():
     assert result["canApprove"] and not result["decisionRejected"]
 
 
+def test_planner_generation_failure_is_replanning_instead_of_external_confirmation():
+    run = review_run()
+    run.execution_state["reviewPayload"].update(reasonCode="PLANNER_UNAVAILABLE",
+        reason="Runtime Planner unavailable: StructuredGenerationError")
+    current = SimpleNamespace(status="applied", observation_id="observation:1", decision=None,
+        failure={"errorCode": "PLANNER_DECISION_NO_PROGRESS", "errorType": "StructuredGenerationError",
+            "validationFailures": [{"stage": "decompose", "code": "unknown_task_reference",
+                "fieldPath": ["relations", 3, "sourceKey"], "message": "PRIVATE VALIDATION MESSAGE"}],
+            "rawResponse": "PRIVATE MODEL RESPONSE", "prompt": "PRIVATE PROMPT"})
+    before = json.dumps(run.execution_state)
+    result = review_summary(run, current)
+    assert result["kind"] == "planner_error" and result["reasonCode"] == "PLANNER_UNAVAILABLE"
+    assert result["errorCode"] == "PLANNER_DECISION_NO_PROGRESS"
+    assert result["errorType"] == "StructuredGenerationError"
+    assert result["validationFailures"] == [{
+        "stage": "decompose", "code": "unknown_task_reference", "fieldPath": ["relations", 3, "sourceKey"],
+    }]
+    assert result["canApprove"] and not result["decisionRejected"]
+    assert "重新规划" in result["displayReason"] and "已有结果已保留" in result["displayReason"]
+    assert "PRIVATE" not in json.dumps(result)
+    assert json.dumps(run.execution_state) == before
+    current.observation_id = "older"
+    stale = review_summary(run, current)
+    assert stale["errorCode"] == "PLANNER_UNAVAILABLE"
+    assert "validationFailures" not in stale
+
+
+def test_legacy_planner_unavailable_prefix_is_recognized_without_guessing_other_waits():
+    run = review_run()
+    run.execution_state["reviewPayload"]["reason"] = "Runtime Planner unavailable: ValidationError"
+    result = review_summary(run)
+    assert result["kind"] == "planner_error" and result["errorType"] == "ValidationError"
+    assert result["canApprove"]
+    run.execution_state["reviewPayload"]["reason"] = "外部文件提到 Runtime Planner unavailable: ValidationError"
+    assert review_summary(run)["kind"] == "planner_wait"
+
+
+def test_typed_durable_planning_failure_retains_current_code_and_type_in_projection():
+    from contracts.runtime_planning import RuntimePlanningFailure, RuntimePlanningObservation, RuntimePlanningRound
+
+    observation = RuntimePlanningObservation(missionId="mission", runId="run", graphId="graph",
+        graphVersion=6, planVersion=6, wakeReason="resume", goal="inspect repository", steps=(), remainingStepIds=())
+    current = RuntimePlanningRound(observationId=observation.fingerprint(), observation=observation, status="applied",
+        failure=RuntimePlanningFailure(errorCode="PLANNER_DECISION_NO_PROGRESS", errorType="StructuredGenerationError",
+            validationFailures=({"stage": "runtime_decision", "code": "value_error", "fieldPath": "taskPlanPatch"},)))
+    durable = RuntimePlanningRound.model_validate_json(current.model_dump_json(by_alias=True))
+    run = review_run()
+    run.execution_state["reviewPayload"].update(observationId=observation.fingerprint(),
+        reasonCode="PLANNER_UNAVAILABLE", reason="Runtime Planner unavailable: StructuredGenerationError")
+    result = review_summary(run, durable)
+    assert result["errorCode"] == "PLANNER_DECISION_NO_PROGRESS"
+    assert result["errorType"] == "StructuredGenerationError" and result["kind"] == "planner_error"
+    assert "validationFailures" not in result
+
+
+def test_planner_failure_never_replaces_questions_node_review_or_matching_revision_owner():
+    run = review_run()
+    run.execution_state["reviewPayload"].update(reasonCode="PLANNER_UNAVAILABLE",
+        reason="Runtime Planner unavailable: ValidationError", question={"prompt": "需要你的选择"})
+    assert review_summary(run)["kind"] == "planner_wait"
+    run.execution_state["reviewPayload"].pop("question")
+    question = SimpleNamespace(status="applied", decision=SimpleNamespace(question={"prompt": "需要你的选择"}))
+    assert review_summary(run, question)["kind"] == "planner_wait"
+    run.execution_state["reviewPayload"].update(subjectType="step", subjectId="node")
+    assert review_summary(run)["kind"] == "step_review"
+    run.execution_state["reviewPayload"].update(subjectType="planner", subjectId="graph")
+    run.execution_state["workspaceReviewContinuation"] = {"observationId": "observation:1", "blocked": True,
+        "reason": "正式图修订被拒绝", "errorCode": "INVALID_PROPOSAL"}
+    assert review_summary(run)["kind"] == "workspace_revision_blocked"
+    run.execution_state.pop("workspaceReviewContinuation")
+    run.execution_state["planningCommitRejection"] = {"observationId": "observation:1", "code": "INVALID_PROPOSAL"}
+    assert review_summary(run)["kind"] == "planner_rejected"
+
+
 def test_step_review_keeps_its_own_subject_and_is_not_a_workspace_revision_barrier():
     run = review_run(workspaceReviewContinuation={"observationId": "observation:1", "blocked": True})
     run.execution_state["reviewPayload"].update(subjectType="step", subjectId="read-1")

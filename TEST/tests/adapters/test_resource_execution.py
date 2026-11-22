@@ -16,6 +16,7 @@ from adapters.agent.resource_execution import (
 from adapters.agent.resource_execution import ResourceCredentialProvider
 from contracts.resource import ResourceEndpoint, RuntimeKind, RuntimeProfile
 from contracts.resource_signing import build_resource_signature
+from contracts.memory import MemoryRecord
 from adapters.agent.base import AgentOutput
 
 
@@ -65,9 +66,51 @@ async def test_http_adapter_sends_controlled_context_and_returns_agent_output() 
         "capability": "vision.infer",
         "goal": "classify",
         "input": {"imageRef": "artifact://image-1"},
+        "sourceData": {},
         "evidenceRefs": ["evidence-1"],
+        "memory": [],
     }
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_http_delivery_preserves_authorized_sources_frozen_memory_and_scheduler_attempt():
+    context = _context()
+    context.attempt_id = "scheduler-attempt"
+    context.context_pack.attempt_id = "legacy-pack-attempt"
+    context.context_pack.source_data = {
+        "reader-a": {"finding": "large original evidence\n" * 10_000},
+        "reader-b": {"finding": {"result": "different conclusion"}},
+    }
+    context.memory = [MemoryRecord(memoryId="frozen-memory", memoryType="episodic",
+        scope="run:run-1", content={"finding": "previous accepted conclusion"})]
+    context.run.execution_state = {"private": "unrelated node payload"}
+    context.memory_store = object()
+    context.execution_guidance = {"version": "execution-guidance.v1", "runId": context.run.run_id,
+        "stepId": context.step.step_id, "userInputs": [{"operationId": "finish",
+            "sourceRunId": context.run.run_id, "content": "Deliver from existing evidence; mark unknowns.",
+            "submittedAt": "2026-11-19T09:32:05Z"}]}
+    context.execution_guidance_reader = lambda: pytest.fail("Remote serialization must use frozen input")
+    received = []
+
+    async def handler(request):
+        received.append(json.loads(request.content))
+        return httpx.Response(200, json={"output": {"ok": True}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = HttpResourceExecutionAdapter(resource_id="edge-01", address="http://edge",
+            credential_provider=_Credentials(), client=client)
+        await adapter.run(context)
+
+    delivered = received[0]
+    assert delivered["attemptId"] == "scheduler-attempt"
+    assert delivered["sourceData"] == context.context_pack.source_data
+    assert delivered["memory"] == [context.memory[0].model_dump(by_alias=True, mode="json")]
+    assert delivered["executionGuidance"]["userInputs"] == context.execution_guidance["userInputs"]
+    assert delivered["executionGuidance"]["runId"] == context.run.run_id
+    assert delivered["executionGuidance"]["stepId"] == context.step.step_id
+    assert "run" not in delivered and "memoryStore" not in delivered
+    assert "unrelated node payload" not in json.dumps(delivered)
 
 
 @pytest.mark.asyncio

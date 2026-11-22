@@ -87,6 +87,8 @@ class RequirementReadiness(BaseModel):
 class SchedulerUnavailable(RuntimeError):
     """Coordination state cannot safely allocate a lease."""
 
+    code = "SCHEDULER_UNAVAILABLE"
+
 
 class SchedulerNoEligibleResource(RuntimeError):
     """The frozen binding policy has no executable resource in this Runtime."""
@@ -101,26 +103,12 @@ class SchedulerNoEligibleResource(RuntimeError):
         ]
 
 
-class SchedulerAllocationTimeout(TimeoutError):
-    """A READY node could not obtain capacity within its bounded queue window."""
-
-    def __init__(self, message: str, *, step_id=None, candidates=()):
-        super().__init__(message)
-        self.reason_code = "SCHEDULER_CAPACITY_TIMEOUT"
-        self.step_id = step_id
-        self.candidate_reasons = [
-            {"resourceId": item.resource_id, "reasons": [r.value for r in item.reasons]}
-            for item in candidates[:16]
-        ]
-
-
 __all__ = [
     "FATAL_SCHEDULING_REASONS",
     "CandidateDecision",
     "FilterReason",
     "ReadyNodeSchedulingResult",
     "RequirementReadiness",
-    "SchedulerAllocationTimeout",
     "SchedulerNoEligibleResource",
     "SchedulerUnavailable",
 ]

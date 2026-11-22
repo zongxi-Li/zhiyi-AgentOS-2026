@@ -9,6 +9,70 @@ const event = (sequence: number, eventType: string, nodeId = 'A', attemptId = 'a
 })
 
 describe('RunRuntimeStore streaming projection', () => {
+  it('replays resource queues without claiming execution and resolves them with an allocated Agent', () => {
+    const store = new RunRuntimeStore('run')
+    const queued = { ...event(1, 'node.queued'), payload: {
+      nodeTitle: '审查 Python', agentName: '分析 Agent', queuedAt: '2026-11-18T10:00:00Z', reason: 'NO_CAPACITY',
+    } }
+    store.apply({ ...event(2, 'runtime.display.snapshot', '', ''), payload: { schemaVersion: 1, events: [queued] } })
+    expect(store.nodes.A).toMatchObject({ status: 'QUEUED', phase: 'WAITING_RESOURCE', currentAttemptId: 'a1',
+      queuedAt: queued.payload.queuedAt, queueReason: 'NO_CAPACITY', modelStartedAt: null })
+    expect(store.nodes.A.agentRegistration).toBeUndefined()
+    store.apply({ ...event(3, 'node.started'), payload: { agentRegistration: { agentId: 'analyst', instanceId: 'worker-7', generation: 2 } } })
+    expect(store.nodes.A).toMatchObject({ status: 'RUNNING', phase: 'WAITING', queuedAt: null,
+      agentRegistration: { instanceId: 'worker-7', generation: 2 } })
+    store.apply({ ...queued, ...event(4, 'node.queued'), payload: queued.payload })
+    expect(store.nodes.A.status).toBe('RUNNING')
+    store.apply({ ...queued, ...event(5, 'node.queued', 'A', 'a2'), payload: queued.payload })
+    expect(store.nodes.A.status).toBe('QUEUED')
+    expect(store.nodes.A.agentRegistration).toBeUndefined()
+    store.apply(event(6, 'run.cancelled'))
+    expect(store.nodes.A).toBeUndefined()
+    expect(store.terminal).toBe(true)
+    store.dispose()
+  })
+
+  it.each([false, true])('archives retired snapshot output without leaving its previous Attempt active (completed=%s)', completed => {
+    const store = new RunRuntimeStore('run')
+    store.apply({ ...event(5, 'runtime.display.snapshot', '', ''), payload: {
+      schemaVersion: 1, events: [event(1, 'model.started'),
+        event(2, 'model.output.delta', 'A', 'a1', '{"content":"旧轮次已有证据"}'),
+        event(3, 'model.reasoning.delta', 'A', 'a1', '旧轮次思考'),
+        ...(completed ? [event(4, 'node.completed')] : [])],
+      retiredAttempts: { A: ['a1'] },
+    } })
+    expect(store.nodes.A).toBeUndefined()
+    expect(store.outputHistory).toMatchObject([{ nodeId: 'A', attemptId: 'a1', text: '旧轮次已有证据', reasoning: '旧轮次思考', state: completed ? 'completed' : 'interrupted' }])
+    store.apply(event(6, 'model.started', 'A', 'a1'))
+    expect(store.nodes.A).toBeUndefined()
+    store.apply(event(7, 'model.started', 'A', 'a2'))
+    expect(store.nodes.A.currentAttemptId).toBe('a2')
+    expect(store.nodes.A.phase).toBe('MODEL_STARTING')
+    store.dispose()
+  })
+  it.each([false, true])('keeps partial output and closes only the cancelled execution (snapshot=%s)', fromSnapshot => {
+    const store = new RunRuntimeStore('run')
+    const history = [
+      { ...event(1, 'node.started'), payload: { agentName: 'reader', agentRegistration: { agentId: 'reader', instanceId: 'worker', generation: 1 } } },
+      event(2, 'model.started'), event(3, 'model.output.delta', 'A', 'a1', '{"content":"partial result"}'),
+      event(4, 'node.started', 'B', 'live'),
+    ]
+    if (fromSnapshot) {
+      store.apply({ ...event(5, 'runtime.display.snapshot', '', ''), payload: { schemaVersion: 1, events: history,
+        settledAttempts: [{ nodeId: 'A', attemptId: 'a1', status: 'cancelled' }, { nodeId: 'B', attemptId: 'stale', status: 'cancelled' }] } })
+    } else {
+      history.forEach(frame => store.apply(frame))
+      store.apply(event(5, 'node.cancelled'))
+    }
+    store.apply(event(6, 'model.started'))
+    expect(store.nodes.A).toMatchObject({ status: 'CANCELLED', phase: 'CANCELLED',
+      agentRegistration: { instanceId: 'worker' }, outputBuffer: '{"content":"partial result"}' })
+    expect(store.nodes.B).toMatchObject({ status: 'RUNNING', currentAttemptId: 'live' })
+    store.apply(event(7, 'node.started', 'A', 'a2'))
+    store.apply(event(8, 'node.cancelled', 'A', 'a1'))
+    expect(store.nodes.A).toMatchObject({ status: 'RUNNING', currentAttemptId: 'a2' })
+    store.dispose()
+  })
   it('reconnects a terminal observation only on a newer formal active Run revision', () => {
     const fetchMock = vi.fn(() => new Promise(() => {}))
     vi.stubGlobal('fetch', fetchMock)
@@ -139,6 +203,23 @@ describe('RunRuntimeStore streaming projection', () => {
     } finally { client.disconnect(); store.dispose(); publish.mockRestore(); vi.unstubAllGlobals() }
   })
 
+  it('retains capacity waits as tool activity without failing the node or requesting approval', () => {
+    const store = new RunRuntimeStore('run')
+    store.apply(event(1, 'node.started'))
+    const waiting = { ...event(2, 'tool.capacity_waiting'), payload: {
+      tool: 'fs.read', operationKey: 'read:1', reason: 'capacity', target: 'source.py',
+    } }
+    store.apply(waiting)
+    store.apply(waiting)
+    expect(store.activity.events.filter(item => item.eventType === 'tool.capacity_waiting')).toEqual([waiting])
+    expect(store.activity.approvalRevision).toBe(0)
+    expect(store.nodes.A.status).toBe('RUNNING')
+    expect(store.terminal).toBe(false)
+    store.apply({ ...event(3, 'tool.execution_started'), payload: { tool: 'fs.read', operationKey: 'read:1' } })
+    store.apply({ ...event(4, 'tool.execution_completed'), payload: { tool: 'fs.read', operationKey: 'read:1', status: 'completed' } })
+    expect(store.nodes.A.status).toBe('RUNNING')
+    store.dispose()
+  })
   it('rebaselines after a restart and continues cumulative public text without duplication', () => {
     const store = new RunRuntimeStore('run')
     store.apply(event(99, 'model.output.delta', 'obsolete', 'old', 'stale'))
@@ -343,6 +424,40 @@ describe('RunRuntimeStore streaming projection', () => {
       store.apply(event(104, 'run.failed'))
       expect(store.nodes.A.outputBuffer).toBe('last')
       expect(store.terminal).toBe(true)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally { store.dispose(); vi.useRealTimers() }
+  })
+  it('combines node reasoning bursts before publishing the cumulative text', async () => {
+    vi.useFakeTimers()
+    const store = new RunRuntimeStore('run')
+    try {
+      store.apply(event(1, 'model.started'))
+      for (let i = 0; i < 100; i++) store.apply(event(i + 2, 'model.reasoning.delta', 'A', 'a1', '思'))
+      expect(store.nodes.A.reasoningBuffer).toBe('')
+      await vi.advanceTimersByTimeAsync(16)
+      expect(store.nodes.A.reasoningBuffer).toBe('思'.repeat(100))
+      store.apply(event(102, 'model.reasoning.delta', 'A', 'a1', '完成'))
+      store.apply(event(103, 'model.completed'))
+      expect(store.nodes.A.reasoningBuffer).toBe('思'.repeat(100) + '完成')
+      expect(vi.getTimerCount()).toBe(0)
+    } finally { store.dispose(); vi.useRealTimers() }
+  })
+  it('retains pending reasoning in history and isolates later attempts and terminal events', async () => {
+    vi.useFakeTimers()
+    const store = new RunRuntimeStore('run')
+    try {
+      store.apply(event(1, 'model.started'))
+      store.apply(event(2, 'model.reasoning.delta', 'A', 'a1', '旧轮次'))
+      store.apply(event(3, 'model.reasoning.delta', 'A', 'a2', '新轮次'))
+      expect(store.outputHistory).toMatchObject([{ attemptId: 'a1', reasoning: '旧轮次' }])
+      store.apply(event(4, 'model.reasoning.delta', 'A', 'a1', '迟到内容'))
+      store.apply(event(5, 'model.reasoning.delta', 'B', 'b1', '另一节点'))
+      store.apply(event(6, 'run.cancelled', '', ''))
+      expect(store.nodes.A.reasoningBuffer).toBe('新轮次')
+      expect(store.nodes.B.reasoningBuffer).toBe('另一节点')
+      expect(store.terminal).toBe(true)
+      await vi.advanceTimersByTimeAsync(32)
+      expect(store.nodes.A.reasoningBuffer).toBe('新轮次')
       expect(vi.getTimerCount()).toBe(0)
     } finally { store.dispose(); vi.useRealTimers() }
   })

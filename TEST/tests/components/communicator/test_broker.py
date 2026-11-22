@@ -197,3 +197,89 @@ def test_broker_pages_large_authorized_array_without_loss() -> None:
 
     assert rebuilt == expected
     assert len(broker.drain_events()) > 1
+
+
+def _paging_broker(payload: dict) -> tuple[CommunicationBroker, str]:
+    values = InMemoryExecutionValueStore()
+    reference = values.put_output(run_id="run-pages", step_id="produce", payload=payload)
+    broker = CommunicationBroker(
+        manifest=CommunicationManifest(run_id="run-pages", rules=(CommunicationRule(
+            producer_step_id="produce", consumer_step_id="consume",
+            allowed_fields=tuple(dict.fromkeys((*payload, "missing"))), channel="produce:consume",
+        ),)), value_store=values,
+    )
+    return broker, reference
+
+
+@pytest.mark.parametrize("expected", [
+    '边界\\"\n\t' * 100 + "尾部证据",
+    {f"entry-{index}": {"observed": index, "text": "真实内容"} for index in range(30)},
+])
+def test_paged_strings_and_mappings_reconstruct_the_complete_value(expected) -> None:
+    broker, reference = _paging_broker({"content": expected})
+    cursor = None
+    rebuilt = "" if isinstance(expected, str) else {}
+    while True:
+        page, next_cursor = asyncio.run(broker.read_reference_page(
+            run_id="run-pages", consumer_step_id="consume", output_ref=reference,
+            requested_fields=["content"], cursor=cursor, page_tokens=35, reason="read all evidence",
+        ))
+        assert page.tokens_delivered <= 35
+        if isinstance(expected, str):
+            rebuilt += page.data["content"]
+        else:
+            rebuilt.update(page.data["content"])
+        if next_cursor is None:
+            break
+        assert next_cursor != cursor
+        cursor = next_cursor
+    assert rebuilt == expected
+
+
+@pytest.mark.parametrize("value,detail", [
+    (["oversized evidence" * 100], "single array item exceeds page budget"),
+    ({"large": "oversized evidence" * 100}, "single mapping entry exceeds page budget"),
+])
+def test_oversized_page_items_are_not_skipped_or_charged(value, detail) -> None:
+    broker, reference = _paging_broker({"content": value})
+    before = broker.usage_snapshot()
+    with pytest.raises(EntropyBudgetExceededError, match=detail):
+        asyncio.run(broker.read_reference_page(
+            run_id="run-pages", consumer_step_id="consume", output_ref=reference,
+            requested_fields=["content"], cursor=None, page_tokens=25, reason="small page",
+        ))
+    assert broker.usage_snapshot() == before
+    assert broker.drain_events() == []
+    # The rejected page leaves the original reference complete and readable.
+    whole = asyncio.run(broker.read_reference(
+        run_id="run-pages", consumer_step_id="consume", output_ref=reference,
+        requested_fields=["content"], max_tokens=None, reason="read complete source",
+    ))
+    assert whole.data == {"content": value}
+
+
+def test_page_preserves_missing_fields_instead_of_manufacturing_null() -> None:
+    broker, reference = _paging_broker({"explicit_null": None})
+    missing, cursor = asyncio.run(broker.read_reference_page(
+        run_id="run-pages", consumer_step_id="consume", output_ref=reference,
+        requested_fields=["missing", "explicit_null"], cursor=None, page_tokens=25, reason="inspect fields",
+    ))
+    assert missing.data == {}
+    assert cursor == "1:0"
+    present, cursor = asyncio.run(broker.read_reference_page(
+        run_id="run-pages", consumer_step_id="consume", output_ref=reference,
+        requested_fields=["missing", "explicit_null"], cursor=cursor, page_tokens=25, reason="inspect fields",
+    ))
+    assert present.data == {"explicit_null": None}
+    assert cursor is None
+
+
+def test_page_rejects_scalar_offsets_without_returning_fabricated_content() -> None:
+    broker, reference = _paging_broker({"count": 42})
+    with pytest.raises(CommunicationAccessError) as captured:
+        asyncio.run(broker.read_reference_page(
+            run_id="run-pages", consumer_step_id="consume", output_ref=reference,
+            requested_fields=["count"], cursor="0:1", page_tokens=25, reason="invalid scalar offset",
+        ))
+    assert captured.value.code == "CURSOR_INVALID"
+    assert broker.drain_events() == []

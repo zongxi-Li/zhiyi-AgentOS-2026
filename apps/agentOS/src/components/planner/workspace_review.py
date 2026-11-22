@@ -11,7 +11,8 @@ import json
 from contracts import stable_checksum
 from contracts.artifacts import is_final_synthesis_role
 from contracts.execution_evidence import workspace_coverage_fingerprint, workspace_relative_path
-from contracts.planning import PlannedTask, TaskPlan, TaskPlanPatch, TaskPlanRelation
+from contracts.planning import (PlannedTask, TaskPlan, TaskPlanPatch, TaskPlanRelation,
+                                inherit_task_plan_constraints)
 from contracts.runtime_planning import RuntimePlanningDecision, RuntimePlanningObservation
 
 
@@ -34,19 +35,30 @@ def _batch_scope(node):
 
 
 def _targets(progress, batch_size):
-    seen, result = set(), []
-    # Discover the outstanding tree before assuming the visible file page is
-    # the complete repository. Subsequent observations expose the next page.
-    for field, operation in (("missingListings", "list"), ("missingReads", "read")):
+    seen, queues = set(), []
+    # Alternate useful source reads with discovery. A large directory frontier
+    # must not postpone every known source file until enumeration is exhausted.
+    for field, operation in (("missingReads", "read"), ("missingListings", "list")):
+        queue = []
         for item in progress:
             for raw in item.get(field, ()):
                 path = workspace_relative_path(raw)
                 key = (operation, path)
                 if key not in seen:
                     seen.add(key)
-                    result.append({"operation": operation, "path": path})
-                if len(result) >= batch_size:
-                    return result
+                    queue.append({"operation": operation, "path": path})
+        queues.append(iter(queue))
+    result = []
+    while queues and len(result) < batch_size:
+        next_queues = []
+        for queue in queues:
+            target = next(queue, None)
+            if target is not None:
+                result.append(target)
+                next_queues.append(queue)
+            if len(result) >= batch_size:
+                break
+        queues = next_queues
     return result
 
 
@@ -83,9 +95,15 @@ def workspace_review_decision(*, observation: RuntimePlanningObservation, task_p
     if readers:
         latest = readers[-1]
         if (latest.key in committed and _batch_scope(latest).get("coverageFingerprint") == fingerprint):
+            guidance = ""
+            if any(item.get("coverageInvalidation") for item in progress):
+                guidance = (" Inspect the host coverageInvalidation facts: determine whether the workspace "
+                    "actually changed, reconcile any unknown tool effects, and collect the required fs.list/"
+                    "fs.read observations after the latest invalidating operation. Reuse unaffected evidence "
+                    "and findings; do not declare complete while host coverage remains unmet.")
             return _decision(observation, "wait", "WORKSPACE_REVIEW_NO_PROGRESS: the submitted acquisition "
                 "did not add receipt-verified coverage. Preserve the remaining scope and resolve the tool, "
-                "authorization or unreadable-source blocker before repeating the same work.")
+                "authorization or unreadable-source blocker before repeating the same work." + guidance)
     if any(node.key in pending and node.capability_requirements
            and node.capability_requirements[0] == "information_extraction" for node in task_plan.nodes):
         return _decision(observation, "continue", "The current plan already has pending workspace acquisition; "
@@ -119,7 +137,11 @@ def workspace_review_decision(*, observation: RuntimePlanningObservation, task_p
             "after useful progress so ACG can review and schedule the remaining pages. While reading, inspect "
             "actual source for correctness, security and integration issues relevant to the mission. Cite "
             "relative files and precise line/symbol evidence for actionable findings; distinguish suspected "
-            "risks from confirmed defects. No findings in this page is not a repository-wide clean bill.",
+            "risks from confirmed defects. No findings in this page is not a repository-wide clean bill. "
+            "This is a read-only evidence acquisition stage. Use fs.list for enumeration, including directory "
+            "counts, and fs.read/context tools for inspection. Submit findings through the node output. "
+            "If tests, commands or file changes are needed, report that separate work to ACG instead of "
+            "performing it during acquisition.",
         capabilityRequirements=("information_extraction",),
         acceptanceCriteria=("Every claimed observation is supported by a successful complete tool receipt.",
             "Report failed, unreadable, partial or still-pending paths explicitly; do not claim global completion."),
@@ -134,7 +156,11 @@ def workspace_review_decision(*, observation: RuntimePlanningObservation, task_p
             "do not contain enough source evidence. Receipt metadata proves an observation occurred, not "
             "that an arbitrary code claim is correct. A supported review may pass even when it reports code "
             "defects or other source pages remain; partial/failed means this page's checks remain unresolved. "
-            "Runtime receipt coverage determines the remaining global scope and subsequent acquisition pages.",
+            "Runtime receipt coverage determines the remaining global scope and subsequent acquisition pages. "
+            "This is a read-only evidence review stage. Reuse the supplied observations; use fs.list/fs.read "
+            "and context tools only for missing checks. Do not run commands or write notes into the workspace. "
+            "Report needed tests or modifications as separate follow-up work; preserve existing findings "
+            "and identify only the evidence that must be acquired after that work.",
         capabilityRequirements=("verification",),
         acceptanceCriteria=("Validate the acquired page against its receipt-backed observations.",
             "Preserve explicit unresolved global scope for the next ACG observation."),
@@ -147,6 +173,7 @@ def workspace_review_decision(*, observation: RuntimePlanningObservation, task_p
     links.extend((reviewer_key, key) for key in sorted(roots))
     # Adding predecessors only to untouched work keeps immutable node commits
     # and their existing incoming obligations outside the patch.
+    reader, reviewer = inherit_task_plan_constraints(task_plan, (reader, reviewer))
     patch = TaskPlanPatch(missionId=task_plan.mission_id, basePlanVersion=task_plan.plan_version,
         planVersion=task_plan.plan_version + 1, addNodes=(reader, reviewer),
         relations=tuple(TaskPlanRelation(sourceKey=source, targetKey=target, relationType="depends_on")

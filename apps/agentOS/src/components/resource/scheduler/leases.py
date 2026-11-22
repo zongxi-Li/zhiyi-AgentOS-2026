@@ -111,6 +111,8 @@ return lease['version']
 class LeaseRenewalFailedError(RuntimeError):
     """A lease could not be renewed by its current owner/version."""
 
+    code = "EXECUTION_LEASE_LOST"
+
 
 @dataclass(frozen=True)
 class CapacityView:

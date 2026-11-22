@@ -40,6 +40,47 @@ describe('ConversationWorkFeed（对话信息栏的命令与执行）', () => {
     expect(wrapper.findAll('.approval-work__button')).toHaveLength(2)
     resolve.mockRestore(); error.mockRestore(); wrapper.unmount()
   })
+  it('merges saved pending and approved events into one terminal approval card', () => {
+    const pending = approvalItem()
+    pending.stage = 'tool:unknown:undefined'
+    const approved = { ...pending, status: 'running', approval: { ...pending.approval, status: 'approved' } }
+    const wrapper = mountFeed([pending, approved])
+    expect(wrapper.findAll('.approval-work__card')).toHaveLength(1)
+    expect(wrapper.get('.approval-work__resolved').text()).toBe('已允许')
+    expect(wrapper.findAll('.approval-work__button')).toHaveLength(0)
+    expect((wrapper.vm as any).pendingApprovalCount).toBe(0)
+    wrapper.unmount()
+  })
+  it.each(['allow_once', 'deny'] as const)('settles %s from the HTTP receipt without waiting for an SSE event', async decision => {
+    const item = approvalItem()
+    const resolve = vi.spyOn(chatApi, 'resolveApproval').mockResolvedValue({ approvalId: item.approval.approvalId,
+      status: 'resolved', decision })
+    const wrapper = mountFeed([item])
+    await wrapper.get(decision === 'deny' ? '.is-danger' : '.is-primary').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.approval-work__resolved').text()).toBe(decision === 'deny' ? '已拒绝' : '已允许')
+    expect(wrapper.findAll('.approval-work__button')).toHaveLength(0)
+    expect((wrapper.vm as any).pendingApprovalCount).toBe(0)
+    resolve.mockRestore(); wrapper.unmount()
+  })
+  it('uses the original denied outcome when a repeated allow request returns a terminal receipt', async () => {
+    const resolve = vi.spyOn(chatApi, 'resolveApproval').mockResolvedValue({ approvalId: 'expired', status: 'denied' })
+    const error = vi.spyOn(ElMessage, 'error')
+    const wrapper = mountFeed([approvalItem()])
+    await wrapper.get('.is-primary').trigger('click'); await flushPromises()
+    expect(wrapper.get('.approval-work__resolved').text()).toBe('已拒绝')
+    expect(error).not.toHaveBeenCalled()
+    resolve.mockRestore(); error.mockRestore(); wrapper.unmount()
+  })
+  it('does not resurrect a locally confirmed approval when a stale pending snapshot arrives', async () => {
+    const resolve = vi.spyOn(chatApi, 'resolveApproval').mockResolvedValue({approvalId:'expired',status:'resolved',decision:'allow_once'})
+    const wrapper = mountFeed([approvalItem()])
+    await wrapper.get('.is-primary').trigger('click'); await flushPromises()
+    await wrapper.setProps({items: [approvalItem()]})
+    expect(wrapper.get('.approval-work__resolved').text()).toBe('已允许')
+    expect(wrapper.findAll('.approval-work__button')).toHaveLength(0)
+    resolve.mockRestore(); wrapper.unmount()
+  })
   it('shows the empty hint when the conversation has no work items', () => {
     const wrapper = mountFeed([])
     expect(wrapper.find('.work-feed__empty').exists()).toBe(true)
@@ -131,11 +172,11 @@ describe('ConversationWorkFeed（对话信息栏的命令与执行）', () => {
     expect(wrapper.text()).not.toContain('credential')
   })
 
-  it('sends the original approval correlation when allowing once', async () => {
+  it.each(['allow_once', 'allow_session', 'deny'] as const)('sends the original approval correlation for %s', async decision => {
     const resolve = vi.spyOn(chatApi, 'resolveApproval').mockResolvedValue({
       approvalId: 'approval_test',
       status: 'resolved',
-      decision: 'allow_once'
+      decision
     })
     const wrapper = mountFeed([{
       stage: 'tool:write_file:call_approval',
@@ -155,22 +196,19 @@ describe('ConversationWorkFeed（对话信息栏的命令与执行）', () => {
       }
     }])
 
-    await wrapper.find('.approval-work__button.is-primary').trigger('click')
+    const index = decision === 'allow_once' ? 0 : decision === 'allow_session' ? 1 : 2
+    await wrapper.findAll('.approval-work__button')[index].trigger('click')
     expect(resolve).toHaveBeenCalledWith('approval_test', {
-      decision: 'allow_once',
+      decision,
       sessionId: 'chat_session',
       invocationId: 'call_approval',
       capabilityId: 'fs.write',
       relativePath: 'hello.txt'
     })
-    await wrapper.findAll('.approval-work__button')[1].trigger('click')
-    await wrapper.findAll('.approval-work__button')[2].trigger('click')
-    expect(resolve.mock.calls.map(call => call[1].decision)).toEqual([
-      'allow_once',
-      'allow_session',
-      'deny'
-    ])
-    resolve.mockRestore()
+    await flushPromises()
+    expect(resolve).toHaveBeenCalledTimes(1)
+    expect(wrapper.findAll('.approval-work__button')).toHaveLength(0)
+    resolve.mockRestore(); wrapper.unmount()
   })
 
   it('does not render approval for read/list activity', () => {

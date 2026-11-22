@@ -6,7 +6,7 @@ import { CompactionError, SUMMARY_FIELDS } from './contracts.ts'
 import type { Budget, Message, Summarize, Summary } from './contracts.ts'
 import { TokenMeter, wire } from './token-meter.ts'
 
-const SUMMARY_SCHEMA = {
+export const SUMMARY_SCHEMA = {
   type: 'object', additionalProperties: false, required: [...SUMMARY_FIELDS],
   properties: Object.fromEntries(SUMMARY_FIELDS.map(key => [key, { type: 'array', items: { type: 'string' } }])),
 }
@@ -46,8 +46,8 @@ export class LLMSummarizer {
   private invoke: Summarize
   private meter: TokenMeter
   private budget: Budget
-  private maxCalls: number
-  constructor(invoke: Summarize, meter: TokenMeter, budget: Budget, maxCalls = 16) {
+  private maxCalls: number | null
+  constructor(invoke: Summarize, meter: TokenMeter, budget: Budget, maxCalls: number | null = 16) {
     this.invoke = invoke; this.meter = meter; this.budget = budget; this.maxCalls = maxCalls
   }
   async summarize(messages: Message[], maxTokens: number): Promise<Summary> {
@@ -62,7 +62,7 @@ export class LLMSummarizer {
       'Use at most one very short string per category, omit repetition, and prioritize facts needed to continue the task.'
     const available = this.budget.contextWindow - this.budget.safetyMargin - maxTokens - this.meter.fixed(instruction, []) - 256
     if (available < 128) throw new CompactionError('No summarizer input budget')
-    for (let level = 0; level < 8; level++) {
+    while (true) {
       const chunks: string[] = []
       while (text.length) {
         if (this.meter.text(text) <= available) { chunks.push(text); break }
@@ -86,7 +86,7 @@ export class LLMSummarizer {
         // meter may use UTF-8 bytes. Allow at most one rewrite for structure or
         // size, inside the same call budget; never truncate or drop fields.
         for (let attempt = 0; attempt < 2; attempt++) {
-          if (this.calls - initialCalls >= this.maxCalls) throw new CompactionError('Summary call budget exceeded')
+          if (this.maxCalls !== null && this.calls - initialCalls >= this.maxCalls) throw new CompactionError('Summary call budget exceeded')
           this.calls++
           const result = await this.invoke(chunk, outputCap, instruction + feedback)
           this.usageTokens += result.totalTokens || 0
@@ -116,10 +116,10 @@ export class LLMSummarizer {
       }
       if (partials.length === 1) return partials[0]
       const next = wire({ partial_checkpoints: partials })
-      // No unbounded map/reduce loops; full original history is still authoritative.
+      // Each reduction must actually shrink; the host deadline governs elapsed
+      // time without an arbitrary number of map/reduce levels.
       if (this.meter.text(next) >= this.meter.text(wire(chunks))) throw new CompactionError('Summary reduction did not shrink')
       text = next
     }
-    throw new CompactionError('Summary reduction depth exceeded')
   }
 }

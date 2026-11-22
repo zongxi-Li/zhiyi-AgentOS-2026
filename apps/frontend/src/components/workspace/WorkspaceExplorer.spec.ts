@@ -1,7 +1,16 @@
-import { mount } from '@vue/test-utils'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import WorkspaceExplorer from './WorkspaceExplorer.vue'
 import type { MissionWorkspaceProjection, WorkspaceEntry } from '@/services/api/agentos'
+import { agentosApi } from '@/services/api/agentos'
+
+vi.mock('@/services/api/agentos', () => ({
+  agentosApi: { listWorkspaceFiles: vi.fn(async () => ({ workspaceRoot: 'C:/chosen-project', path: '.', entries: [] })) }
+}))
+
+vi.mock('@/platform/electron/bridge', () => ({
+  getElectronBridge: () => ({ workspace: { current: async () => ({ root: 'C:/Users/LZX/Desktop' }) } })
+}))
 
 const projection = (): MissionWorkspaceProjection => ({
   mission: { missionId: 'mission_1', userId: 'user_1', goal: '设备人员规划', description: '', metadata: {}, createdAt: '2026-08-28T00:00:00Z', updatedAt: '2026-08-28T00:00:00Z', status: 'created' },
@@ -26,6 +35,49 @@ const projection = (): MissionWorkspaceProjection => ({
 const mountExplorer = (overrides: Partial<MissionWorkspaceProjection> = {}) => mount(WorkspaceExplorer, {
   props: { projection: { ...projection(), ...overrides }, activeEditorId: null, selectedRunId: 'run_2' },
   global: { stubs: { 'el-icon': true } }
+})
+
+describe('WorkspaceExplorer Mission workspace', () => {
+  afterEach(() => vi.clearAllMocks())
+
+  it('shows the Mission workspace instead of the desktop file browser directory', async () => {
+    const wrapper = mountExplorer()
+    await flushPromises()
+    expect(wrapper.find('.workspace-explorer__workspace-root').text()).toBe('C:/chosen-project')
+    expect(wrapper.text()).not.toContain('C:/Users/LZX/Desktop')
+    expect(agentosApi.listWorkspaceFiles).toHaveBeenCalledWith('mission_1', '.', { signal: expect.any(AbortSignal) })
+    wrapper.unmount()
+  })
+
+  it('discards an old Mission response when switching projects', async () => {
+    let completeOld!: (value: any) => void
+    vi.mocked(agentosApi.listWorkspaceFiles).mockImplementationOnce(() => new Promise(resolve => { completeOld = resolve }))
+    const wrapper = mountExplorer()
+    const oldSignal = vi.mocked(agentosApi.listWorkspaceFiles).mock.calls.at(-1)![2]!.signal!
+    await wrapper.setProps({ projection: { ...projection(), mission: { ...projection().mission, missionId: 'mission_2' } } })
+    await flushPromises()
+    expect(oldSignal.aborted).toBe(true)
+    completeOld({ workspaceRoot: 'C:/old-project', path: '.', entries: [] })
+    await flushPromises()
+    expect(wrapper.find('.workspace-explorer__workspace-root').text()).toBe('C:/chosen-project')
+    wrapper.unmount()
+  })
+
+  it('clears the previous path and offers retry when the new workspace request fails', async () => {
+    const wrapper = mountExplorer()
+    await flushPromises()
+    vi.mocked(agentosApi.listWorkspaceFiles).mockRejectedValueOnce(new Error('unavailable'))
+    await wrapper.setProps({ projection: { ...projection(), mission: { ...projection().mission, missionId: 'mission_2' } } })
+    expect(wrapper.find('.workspace-explorer__workspace-root').exists()).toBe(false)
+    await flushPromises()
+    expect(wrapper.text()).toContain('工作区读取失败，重试')
+    expect(wrapper.text()).not.toContain('C:/Users/LZX/Desktop')
+    await wrapper.findAll('button').find(button => button.text() === '工作区读取失败，重试')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.workspace-explorer__workspace-root').text()).toBe('C:/chosen-project')
+    expect(wrapper.text()).not.toContain('工作区读取失败，重试')
+    wrapper.unmount()
+  })
 })
 
 describe('WorkspaceExplorer', () => {

@@ -12,6 +12,7 @@ const sectionLabels: Record<string, string> = {
   objective: '任务目标', primaryGoal: '任务目标', overview: '概述', summary: '摘要', task_summary: '步骤摘要',
   acceptanceCriteria: '验收条件', success_criteria: '验收条件', keyConstraints: '约束', constraints: '约束',
   findings: '分析发现', evidence: '依据', recommendations: '建议', risks: '风险', assumptions: '假设',
+  facts: '提取事实', metrics: '提取指标',
   open_questions: '待确认问题', unresolvedGaps: '待补充内容', unresolved_gaps: '待补充内容',
   expectedArtifacts: '预期交付物', producedArtifacts: '交付物', sources: '参考材料', sourceRefs: '参考材料',
   rationale: '处理依据', decompositionRationale: '规划依据', conclusion: '结论', notes: '补充说明',
@@ -43,14 +44,14 @@ export function streamingContent(value: string, structured = false): string {
     }
     return { text: text.replace(/[\uD800-\uDBFF]$/, ''), closed: false }
   }
-  function read(visible: boolean, narrative = false, depth = 0, listItem = false): void {
+  function read(visible: boolean, narrative = false, depth = 0): void {
     if (depth > 24 || at >= source.length) return
     whitespace()
     if (source[at] === '"') {
       const item = string()
       if (visible && narrative && item.text.trim()) {
         const text = structured && item.text === 'User-provided task materials' ? '用户提供的任务材料' : item.text
-        parts.push(structured && listItem ? `- ${text}` : text)
+        parts.push(text)
       }
     } else if (source[at] === '{') {
       at++; whitespace()
@@ -73,10 +74,31 @@ export function streamingContent(value: string, structured = false): string {
       if (source[at] === '}') at++
     } else if (source[at] === '[') {
       at++; whitespace()
+      let previousWasListItem = false
       while (at < source.length && source[at] !== ']') {
         const start = at
-        read(visible, narrative, depth + 1, true)
+        const firstPart = parts.length
+        read(visible, narrative, depth + 1)
         if (at === start) return
+        if (structured && parts.length > firstPart) {
+          const fields = parts.slice(firstPart).map(part => part.trim())
+          const isShortField = (text: string) => !/[\r\n]/.test(text)
+            && !/^(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|>|[`~]{3}|[-*_]{3,}$)/.test(text)
+          const text = fields.join('：')
+          // Keep Markdown blocks intact. Only single-line labels become compact list rows.
+          if (fields.every(isShortField)) {
+            parts.splice(firstPart, fields.length, text)
+            if (previousWasListItem) {
+              parts[firstPart - 1] += `\n- ${text}`
+              parts.pop()
+            } else {
+              parts[firstPart] = `- ${text}`
+            }
+            previousWasListItem = true
+          } else {
+            previousWasListItem = false
+          }
+        }
         whitespace()
         if (source[at] !== ',') break
         at++; whitespace()

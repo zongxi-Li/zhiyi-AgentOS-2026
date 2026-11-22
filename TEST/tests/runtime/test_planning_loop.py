@@ -107,6 +107,192 @@ def test_normal_execution_calls_planner_once_at_exhaustion(tmp_path):
     assert "executor says done" not in json.dumps(result.execution_state["planningLoop"])
 
 
+def test_workspace_scope_is_observed_after_pure_understanding_before_analysis(tmp_path):
+    agent = Agent()
+    agent.profile.capabilities.append("analysis")
+    workflow = WorkflowDefinition(workflowId="seq", name="Repository review", domain="general", runtimeEngine="acg",
+        planningNodes=(PlannedTask(key="step:A", title="Understand", objective="Understand the repository",
+                                   capabilityRequirements=("task_understanding",)),
+                       PlannedTask(key="step:B", title="Analyze", objective="Analyze the source",
+                                   capabilityRequirements=("analysis",))),
+        planningRelations=(TaskPlanRelation(sourceKey="step:A", targetKey="step:B", relationType="depends_on"),),
+        steps=(WorkflowStepDefinition(stepId="A", name="Understand", agentName="runner", capability="task_understanding"),
+               WorkflowStepDefinition(stepId="B", name="Analyze", agentName="runner", capability="analysis")))
+    runtime, agent, run = prepared(tmp_path, agent, workflow,
+        input={"workspaceObservations": [{"path": ".", "kind": "directory", "operation": "read", "recursive": True}]})
+    planner = Planner(lambda observation, _: RuntimePlanningDecision(observationId=observation.fingerprint(),
+        action="wait", reason="Acquire missing repository evidence before analysis"))
+    attach(runtime, planner)
+    result = asyncio.run(runtime.execute_prepared_run(run.run_id))
+    assert result.status == WorkflowStatus.WAITING_REVIEW and agent.calls == ["A"]
+    assert len(planner.observations) == 1
+    observation = planner.observations[0]
+    assert observation.wake_reason == "resume" and observation.remaining_step_ids == ("B",)
+    assert observation.steps[0].output_ref and observation.steps[0].commit_id
+    assert not observation.steps[0].tool_outcomes
+    assert observation.workspace_observations[0]["complete"] is False
+
+
+def test_workspace_scope_does_not_reobserve_unchanged_committed_boundary(tmp_path):
+    runtime, agent, run = prepared(tmp_path,
+        input={"workspaceObservations": [{"path": ".", "kind": "directory", "operation": "list"}]})
+    planner = Planner(lambda observation, _: RuntimePlanningDecision(observationId=observation.fingerprint(),
+        action="continue" if observation.remaining_step_ids else "wait", reason="Observe each committed boundary"))
+    attach(runtime, planner)
+    boundary = runtime.runtime_planning_coordinator.boundary
+
+    async def replay_progress(current_run, state, reason):
+        outcome = await boundary(current_run, state, reason)
+        if reason == "progress" and outcome == "continue":
+            assert await boundary(current_run, state, reason) == "continue"
+        return outcome
+
+    runtime.runtime_planning_coordinator.boundary = replay_progress
+    result = asyncio.run(runtime.execute_prepared_run(run.run_id))
+    assert agent.calls == ["A", "B"] and result.status == WorkflowStatus.WAITING_REVIEW
+    assert [observation.wake_reason for observation in planner.observations] == ["resume", "exhausted"]
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_structured_planner_failure_keeps_safe_error_diagnostic_after_restart(tmp_path, wrapped):
+    from adapters.model.protocols import StructuredGenerationError
+
+    runtime, agent, run = prepared(tmp_path)
+    error = StructuredGenerationError("MODEL_OUTPUT_INVALID_JSON", "PRIVATE MODEL RESPONSE", retryable=True,
+        audit={"provider": "fake", "model": "mock", "usage": {"total_tokens": 25},
+            "finishReason": "stop", "rawResponse": "PRIVATE MODEL RESPONSE", "prompt": "PRIVATE PROMPT"})
+    error.metadata = {"stage": "runtime_decision", "callKey": "runtime_decision", "retryCount": 0,
+        "rawResponse": "PRIVATE MODEL RESPONSE", "prompt": "PRIVATE PROMPT"}
+
+    def unavailable(observation, task_plan):
+        if wrapped:
+            raise ValueError("PRIVATE WRAPPER MESSAGE") from error
+        raise error
+
+    attach(runtime, Planner(unavailable))
+    result = asyncio.run(runtime.execute_prepared_run(run.run_id))
+    assert result.status == WorkflowStatus.WAITING_REVIEW and agent.calls == ["A", "B"]
+    reopened, _ = runtime_at(tmp_path)
+    durable = reopened.workflow_store.get_run(run.run_id)
+    diagnostics = [event.payload for event in durable.trace
+        if event.payload.get("runtimeEvent") == "planner.runtime.failed"]
+    assert len(diagnostics) == 1
+    diagnostic = diagnostics[0]
+    assert diagnostic["errorCode"] == "MODEL_OUTPUT_INVALID_JSON" and diagnostic["retryable"] is True
+    assert diagnostic["modelAudit"]["usage"] == {"total_tokens": 25}
+    assert diagnostic["metadata"] == {"stage": "runtime_decision", "callKey": "runtime_decision", "retryCount": 0}
+    assert durable.execution_state["reviewPayload"]["reason"].endswith("(MODEL_OUTPUT_INVALID_JSON)")
+    assert durable.execution_state["reviewPayload"]["reasonCode"] == "PLANNER_UNAVAILABLE"
+    assert durable.execution_state["planningLoop"]["current"]["failure"]["errorCode"] == "MODEL_OUTPUT_INVALID_JSON"
+    assert "PRIVATE" not in json.dumps(durable.model_dump(mode="json"))
+
+
+@pytest.mark.parametrize("source", ["typed_rule", "metadata", "topology", "formal_intent", "formal_decomposition"])
+def test_wrapped_planner_validation_keeps_safe_cause_after_restart(tmp_path, source):
+    from components.planner.task_decomposer import TaskDecompositionError
+    from components.planner.topology.errors import TopologyCompileError, TopologyConflict, TopologyConflictCode
+    from components.planner.workspace_discovery import formal_workspace_planning_error
+
+    runtime, agent, run = prepared(tmp_path)
+    expected = {"stage": "decompose", "callKey": "detail:2.repair",
+        "code": "acceptance_criteria_required", "fieldPath": ["tasks", 2, "acceptanceCriteria"]}
+    cause = TaskDecompositionError("PRIVATE VALIDATION INPUT",
+        validation_code=expected["code"], field_path=tuple(expected["fieldPath"]))
+    code = "PLANNER_DECISION_INVALID"
+    if source == "metadata":
+        cause = TaskDecompositionError("PRIVATE MODEL RESPONSE", cause_code="MODEL_OUTPUT_SCHEMA_INVALID")
+        code = "MODEL_OUTPUT_SCHEMA_INVALID"
+    elif source == "topology":
+        cause = TopologyCompileError(TopologyConflict(code=TopologyConflictCode.DEPENDENCY_CYCLE,
+            phase="PRIVATE PHASE", cycle_nodes=("PRIVATE NODE",)), "PRIVATE TOPOLOGY INPUT")
+        expected.update(code="dependency_cycle", fieldPath=["relations"])
+    cause.metadata = {"stage": "decompose", "callKey": "detail:2.repair", "rawResponse": "PRIVATE MODEL RESPONSE"}
+    if source == "metadata":
+        cause.metadata["validationFailures"] = [{**expected, "message": "PRIVATE ERROR MESSAGE",
+            "input": "PRIVATE MODEL INPUT", "context": {"prompt": "PRIVATE PROMPT"}}]
+    if source in {"formal_intent", "formal_decomposition"}:
+        expected.update(stage=source, callKey="intent_profile" if source == "formal_intent" else "decompose")
+        code = "PLANNER_FORMAL_INTENT_FAILED" if source == "formal_intent" else "PLANNER_FORMAL_DECOMPOSITION_FAILED"
+
+    def invalid(observation, task_plan):
+        if source in {"formal_intent", "formal_decomposition"}:
+            raise formal_workspace_planning_error(cause, stage=source) from cause
+        raise ValueError("PRIVATE WRAPPER MESSAGE") from cause
+
+    attach(runtime, Planner(invalid))
+    result = asyncio.run(runtime.execute_prepared_run(run.run_id))
+    assert result.status == WorkflowStatus.WAITING_REVIEW and agent.calls == ["A", "B"]
+    reopened, _ = runtime_at(tmp_path)
+    durable = reopened.workflow_store.get_run(run.run_id)
+    failure = durable.execution_state["planningLoop"]["current"]["failure"]
+    assert failure["errorCode"] == code and failure["stage"] == expected["stage"]
+    assert failure["validationFailures"] == [expected]
+    diagnostic = next(event.payload for event in durable.trace
+        if event.payload.get("runtimeEvent") == "planner.runtime.failed")
+    assert diagnostic["metadata"] == {"stage": expected["stage"], "callKey": expected["callKey"]}
+    assert "PRIVATE" not in json.dumps(durable.model_dump(mode="json"))
+
+
+@pytest.mark.parametrize("hostile_metadata", [False, True])
+def test_generic_planner_failure_does_not_invent_validation_or_publish_metadata(tmp_path, hostile_metadata):
+    runtime, _, run = prepared(tmp_path)
+    error = ValueError("PRIVATE MODEL RESPONSE: acceptance_criteria_required")
+    if hostile_metadata:
+        error.metadata = {"stage": "PRIVATE STAGE", "callKey": "PRIVATE CALL", "retryCount": "PRIVATE COUNT",
+            "prompt": "PRIVATE PROMPT", "validationFailures": "PRIVATE RESPONSE"}
+        error.code = "PRIVATE INVALID CODE"
+
+    def unavailable(observation, task_plan):
+        raise error
+
+    attach(runtime, Planner(unavailable))
+    asyncio.run(runtime.execute_prepared_run(run.run_id))
+    reopened, _ = runtime_at(tmp_path)
+    durable = reopened.workflow_store.get_run(run.run_id)
+    failure = durable.execution_state["planningLoop"]["current"]["failure"]
+    assert failure["errorCode"] == "PLANNER_UNAVAILABLE"
+    assert failure["stage"] == "runtime_decision" and failure["validationFailures"] == []
+    assert "PRIVATE" not in json.dumps(durable.model_dump(mode="json"))
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_failed_planning_can_be_retried_after_restart_without_reexecuting_completed_nodes(tmp_path, legacy):
+    runtime, agent, run = prepared(tmp_path)
+    def invalid(observation, task_plan):
+        RuntimePlanningDecision.model_validate({"observationId": observation.fingerprint(),
+            "action": "PRIVATE_INVALID_ACTION", "reason": "PRIVATE MODEL RESPONSE"})
+    attach(runtime, Planner(invalid))
+    paused = asyncio.run(runtime.execute_prepared_run(run.run_id))
+    assert paused.status == WorkflowStatus.WAITING_REVIEW and agent.calls == ["A", "B"]
+    prefix = dict(paused.execution_state["outputRefs"])
+    loop = RuntimePlanningState.model_validate(paused.execution_state["planningLoop"])
+    failure = loop.current.failure
+    assert failure.error_code == "PLANNER_DECISION_INVALID"
+    assert any(item["fieldPath"] == ["action"] for item in failure.validation_failures)
+    assert "PRIVATE" not in json.dumps(paused.model_dump(mode="json"))
+    if legacy:
+        loop = loop.model_copy(update={"current": loop.current.model_copy(update={"failure": None})})
+        paused.execution_state["planningLoop"] = loop.model_dump(mode="json", by_alias=True)
+        paused.execution_state["reviewPayload"].update(reasonCode="PLANNER_WAIT",
+            reason="Runtime Planner unavailable: ValidationError")
+        from runtime.orchestration.state_persistence import acg_execution_state_from_run
+        state = acg_execution_state_from_run(paused)
+        runtime.acg_state_persistence.save_checkpoint(paused, state)
+        paused.execution_state.update(state.model_dump(mode="json", by_alias=True))
+        runtime.workflow_store.save_run(paused)
+
+    recovered, resumed_agent = runtime_at(tmp_path)
+    planner = Planner()
+    attach(recovered, planner)
+    current = recovered.workflow_store.get_run(run.run_id)
+    result = asyncio.run(recovered.apply_review(ReviewDecision(runId=run.run_id,
+        stepId=current.current_step_id, decision="approved", operationId="retry-failed-planning")))
+    assert result.status == WorkflowStatus.COMPLETED
+    assert resumed_agent.calls == [] and len(planner.observations) == 1
+    assert result.execution_state["outputRefs"] == prefix
+    assert result.execution_state["planningLoop"]["current"]["failure"] is None
+
+
 def test_two_user_clarifications_survive_restart_before_next_fragment(tmp_path):
     from runtime.orchestration.planning_interaction import RuntimePlanningInteraction, PlannerAnswerRequest
     runtime, agent, run = prepared(tmp_path, Agent(verify="passed"))
@@ -450,7 +636,7 @@ def test_transient_failure_recovers_without_replaying_completed_work(tmp_path):
     result = asyncio.run(runtime.execute_prepared_run(run.run_id))
     assert result.status == WorkflowStatus.COMPLETED
     assert agent.calls == ["A", "B", "B"]
-    assert [o.wake_reason for o in planner.observations] == ["failure", "resume", "exhausted"]
+    assert [o.wake_reason for o in planner.observations] == ["failure", "exhausted"]
     assert planner.observations[0].failure_message == "temporary failure"
 
 
@@ -508,7 +694,7 @@ def test_registered_planner_path_uses_fresh_observation_contract(tmp_path):
     assert result.status == WorkflowStatus.COMPLETED
     assert len(model.requests) == 1
     assert len(model.requests[0]["observation"]["steps"]) == 2
-    assert "Other waits without waitFor or question preserve the existing external-resolution barrier" in model.requests[0]["instructions"]
+    assert "waits without waitFor or question preserve" in model.requests[0]["instructions"]
     assert "conditionWake records an independently checked readiness condition" in model.requests[0]["instructions"]
 
 
@@ -1094,7 +1280,7 @@ def test_failed_fragment_waits_then_wakes_through_recovery_authority(tmp_path):
     assert asyncio.run(runtime.prepare_planning_wakeups(now=deadline)) == [run.run_id]
     result = asyncio.run(runtime.execute_prepared_run(run.run_id))
     assert result.status == WorkflowStatus.COMPLETED and agent.calls == ["A", "B", "B"]
-    assert [o.wake_reason for o in planner.observations] == ["failure", "condition", "resume", "exhausted"]
+    assert [o.wake_reason for o in planner.observations] == ["failure", "condition", "exhausted"]
     assert len(result.execution_state["inPlaceRetryRequests"]) == 1
 
 

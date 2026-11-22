@@ -132,3 +132,47 @@ def test_copilot_reads_the_same_review_facts_and_keeps_existing_tool_activity():
     public = RuntimePlanningInteraction(runtime).view("run", run=run)
     assert public["workspaceReview"] == review_fact()
     assert public["toolActivity"] == tools
+
+
+@pytest.mark.parametrize("pending,expected", [
+    ({"observationId": "observation:old", "sourceGraphVersion": 3, "blocked": True}, "blocked"),
+    ({"observationId": "observation:current", "sourceGraphVersion": 2}, "blocked"),
+    ({"observationId": "observation:current", "sourceGraphVersion": 3, "blocked": True}, "blocked"),
+    ({"observationId": "observation:current", "sourceGraphVersion": 3}, "reviewing"),
+])
+def test_wait_after_recovery_reports_only_its_own_revision_as_in_progress(pending, expected):
+    from runtime.orchestration.workspace_review import record_workspace_review
+
+    run = SimpleNamespace(execution_state={"workspaceReviewContinuation": deepcopy(pending)})
+    observation = SimpleNamespace(workspace_observations=[{}], graph_version=3, steps=[],
+        fingerprint=lambda: "observation:current")
+    record_workspace_review(run, observation, SimpleNamespace(action="wait", reason="Current review wait"),
+        SimpleNamespace(rounds_used=26))
+    assert workspace_review_projection(run)["status"] == expected
+    assert run.execution_state["workspaceReviewContinuation"] == pending
+
+
+@pytest.mark.parametrize("change,expected", [
+    ({}, "blocked"),
+    ({"pendingObservation": "observation:current"}, "reviewing"),
+    ({"roundObservation": "observation:other"}, "reviewing"),
+    ({"reviewObservation": "observation:other"}, "reviewing"),
+    ({"status": "running"}, "reviewing"),
+])
+def test_legacy_reviewing_projection_uses_current_wait_without_reusing_old_failure(change, expected):
+    fact = review_fact()
+    fact.update(round=26, status="reviewing", rounds=[{"round": 26, "graphVersion": 3,
+        "action": "wait", "reason": "Current review wait", "observationRef": change.get("roundObservation", "observation:current")}])
+    run = SimpleNamespace(status=change.get("status", "waiting_review"), execution_state={
+        "graphId": "graph", "graphVersion": 3, "workspaceReview": fact,
+        "workspaceReviewContinuation": {"observationId": change.get("pendingObservation", "observation:old"),
+            "sourceGraphVersion": 3, "reason": "historical host exception"},
+        "planningLoop": {"current": {"status": "applied", "observationId": "observation:current",
+            "decision": {"action": "wait"}}},
+        "reviewPayload": {"subjectType": "planner", "subjectId": "graph",
+            "observationId": change.get("reviewObservation", "observation:current")}})
+    before = deepcopy(run.execution_state)
+    public = workspace_review_projection(run)
+    assert public["status"] == expected
+    assert "historical host exception" not in str(public)
+    assert run.execution_state == before

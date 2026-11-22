@@ -20,6 +20,35 @@ const respond = (chunks: string[], status = 200) => {
   }), {status}))))
 }
 describe('Chat stream termination', () => {
+  const approvalSummary = (status: string) => ({ stage: 'tool:unknown:undefined',
+    status: status === 'pending' ? 'approval_required' : 'running', description: 'approval',
+    approval: { approvalId: 'approval', sessionId: 'session', toolCallId: 'call', invocationId: 'call',
+      toolName: 'run_command', capabilityId: 'shell.exec', operationSummary: 'command',
+      createdAt: '2026-11-19T12:00:00Z', status } })
+
+  it('repairs old duplicate approval metadata when loading history', async () => {
+    vi.spyOn(conversationApi, 'getConversation').mockResolvedValue({ contextId: 'ctx-approvals' } as any)
+    vi.spyOn(chatApi, 'getHistory').mockResolvedValue([{ id: 'reply', role: 'ASSISTANT', content: 'result',
+      metadata: { executionSummary: [approvalSummary('pending'), approvalSummary('approved')] } }])
+    const store = useChatStore()
+    await store.loadHistory('ctx-approvals')
+    expect(store.messages.at(-1)?.executionSummary).toHaveLength(1)
+    expect(store.messages.at(-1)?.executionSummary?.[0]).toMatchObject({
+      stage: 'tool:run_command:call', approval: { status: 'approved' } })
+  })
+
+  it('keeps resolved approval state when a stale pending event and snapshot arrive later', async () => {
+    respond([frame('approval_required', { approval: approvalSummary('pending').approval }),
+      frame('approval_resolved', { approval: approvalSummary('approved').approval, decision: 'allow_once' }),
+      frame('approval_required', { approval: approvalSummary('pending').approval }),
+      frame('snapshot', { message: { content: '', metadata: { executionSummary: [approvalSummary('pending')] } } }),
+      frame('done', { status: 'completed' })])
+    const store = useChatStore()
+    await store.sendMessageStream('task', 'default', settings)
+    expect(store.messages.at(-1)?.executionSummary).toHaveLength(1)
+    expect(store.messages.at(-1)?.executionSummary?.[0].approval?.status).toBe('approved')
+  })
+
   it('keeps the server watermark after a later failed call and ignores old cumulative usage', async () => {
     respond([frame('model_context',{contextUsage:{usedTokens:205000,maxTokens:1000000,measurement:'provider',source:'model'}}),
       frame('usage',{input_tokens:3000000,output_tokens:100000}),

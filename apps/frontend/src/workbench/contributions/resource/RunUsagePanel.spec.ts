@@ -28,6 +28,35 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.useRealTimers() })
 
 describe('RunUsagePanel', () => {
+  it('shows token totals and cache ratio before a slow final ledger page completes', async () => {
+    let finish!: (value: { runId: string; items: ModelCallUsage[]; total: number }) => void
+    vi.mocked(workflowApi.listRunResourceCalls)
+      .mockResolvedValueOnce({ runId: 'run_1', items: [call('a', 'alpha', 100)], nextCursor: 'next', total: 2 })
+      .mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const wrapper = panel()
+    await flushPromises()
+    expect(wrapper.get('.usage-total strong').text()).toBe('140')
+    expect(wrapper.text()).toContain('25.0%')
+    expect(wrapper.text()).toContain('正在读取模型调用记录')
+    finish({ runId: 'run_1', items: [call('b', 'beta', 40)], total: 2 })
+    await flushPromises()
+    expect(wrapper.findAll('.model-usage')).toHaveLength(2)
+    expect(wrapper.text()).not.toContain('正在读取模型调用记录')
+  })
+
+  it('shows completed model details while summary is still loading', async () => {
+    let finish!: (value: RunResourceUsage) => void
+    vi.mocked(workflowApi.getRunResourceUsage).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    vi.mocked(workflowApi.listRunResourceCalls).mockResolvedValue({ runId: 'run_1', items: [call('a', 'alpha', 100)], total: 1 })
+    const wrapper = panel()
+    await flushPromises()
+    expect(wrapper.get('.model-usage').text()).toContain('alpha')
+    expect(wrapper.get('.usage-total strong').text()).toBe('—')
+    finish(usage())
+    await flushPromises()
+    expect(wrapper.get('.usage-total strong').text()).toBe('140')
+  })
+
   it('separates the latest input occupancy from cumulative usage and labels estimates', async () => {
     const data = usage(99999)
     data.usage.usageMissingCalls = 1

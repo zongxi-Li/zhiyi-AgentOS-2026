@@ -21,7 +21,8 @@ export interface Config {
   recentToolGroups: number
   recentTailTokens: number
   summaryMaxTokens: number
-  maxSummaryCalls: number
+  /** null leaves auxiliary calls governed by host deadline and actual shrinkage. */
+  maxSummaryCalls: number | null
   thresholdChars: number
   headChars: number
   tailChars: number
@@ -39,7 +40,7 @@ export interface ProjectionRequest {
   force?: boolean
   /** Local preparation can run independently of auxiliary model calls. */
   localOnly?: boolean
-  summaryCallsRemaining?: number
+  summaryCallsRemaining?: number | null
   /** Host-validated same-route provider baseline plus newly appended input. */
   sourceUsage?: { inputTokens: number; sourceHash: string; tokenMethod: string }
   contextId: string
@@ -89,9 +90,10 @@ export function resolveConfig(overrides: Partial<Config> = {}): Config {
   const config = { ...DEFAULTS, ...overrides }
   if (!(config.targetRatio > 0 && config.targetRatio < config.triggerRatio && config.triggerRatio < 1)
     || !(config.retainRatio >= 0 && config.retainRatio < config.targetRatio)) throw new CompactionError('Invalid hysteresis/retention ratios')
-  for (const key of ['retainTurns', 'summaryMaxTokens', 'maxSummaryCalls', 'thresholdChars'] as const) {
+  for (const key of ['retainTurns', 'summaryMaxTokens', 'thresholdChars'] as const) {
     if (!Number.isSafeInteger(config[key]) || config[key] < 1) throw new CompactionError(`Invalid ${key}`)
   }
+  if (config.maxSummaryCalls !== null && (!Number.isSafeInteger(config.maxSummaryCalls) || config.maxSummaryCalls < 1)) throw new CompactionError('Invalid maxSummaryCalls')
   for (const key of ['headChars', 'tailChars', 'recentToolGroups', 'recentTailTokens'] as const) if (!Number.isSafeInteger(config[key]) || config[key] < 0) throw new CompactionError(`Invalid ${key}`)
   if (config.headChars + config.tailChars + 50 > config.thresholdChars) throw new CompactionError('Pruning replacement exceeds threshold')
   return config

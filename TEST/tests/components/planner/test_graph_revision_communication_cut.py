@@ -53,6 +53,46 @@ def test_new_strict_consumer_can_pull_immutable_result_without_changing_producer
     assert check(provider, old, plan, bindings, candidate).protected_node_ids == ("A",)
 
 
+@pytest.mark.parametrize("retire_reader", [False, True])
+def test_pending_strict_reader_can_release_its_completed_producer(retire_reader):
+    provider, old, plan, bindings = boundary(channels=(channel(allowedFields=("finding",)),))
+    candidate = old.model_copy(deep=True)
+    candidate.edges = []
+    candidate.resource_plan.communication = ()
+    if retire_reader:
+        candidate.nodes = [candidate.get_node("A")]
+        plan = plan.model_copy(update={"nodes": tuple(task for task in plan.nodes if task.key == "A")})
+        bindings = tuple(binding for binding in bindings if binding.plan_node_key == "A")
+    assert check(provider, old, plan, bindings, candidate).protected_node_ids == ("A",)
+
+
+def test_live_dependency_cannot_discard_its_frozen_channel_to_restore_defaults():
+    provider, old, plan, bindings = boundary(channels=(channel(allowedFields=("finding",), maxTokens=17),))
+    candidate = old.model_copy(deep=True)
+    candidate.resource_plan.communication = ()
+    with pytest.raises(GraphRevisionError, match="protected logical implementation"):
+        check(provider, old, plan, bindings, candidate)
+
+
+@pytest.mark.parametrize("mode", ["EVENT", "BLACKBOARD", "DEBATE"])
+def test_detaching_pending_reader_cannot_undo_advanced_publication_obligations(mode):
+    provider, old, plan, bindings = boundary(channels=(channel(mode=mode),))
+    candidate = old.model_copy(deep=True)
+    candidate.edges = []
+    candidate.resource_plan.communication = ()
+    with pytest.raises(GraphRevisionError, match="protected logical implementation"):
+        check(provider, old, plan, bindings, candidate)
+
+
+def test_settled_reader_cannot_release_its_historical_context_contract():
+    provider, old, plan, bindings = boundary(channels=(channel(),), completed=("A", "B"))
+    candidate = old.model_copy(deep=True)
+    candidate.edges = []
+    candidate.resource_plan.communication = ()
+    with pytest.raises(GraphRevisionError, match="protected logical implementation"):
+        check(provider, old, plan, bindings, candidate)
+
+
 @pytest.mark.parametrize("mode", ["EVENT", "BLACKBOARD", "DEBATE"])
 def test_completed_producer_cannot_acquire_new_advanced_publication(mode):
     provider, old, plan, bindings = boundary()

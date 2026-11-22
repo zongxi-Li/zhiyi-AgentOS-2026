@@ -149,23 +149,35 @@ async def test_private_wal_replays_malformed_candidate_and_repair_without_new_ca
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("streamed", [False, True])
-async def test_normal_stop_missing_root_close_commits_without_rewriting_completed_evidence(stack, streamed):
+@pytest.mark.parametrize(("wire", "recovery"), [
+    ('{"answer":"file evidence"', "root_close_added"),
+    ('{"answer":"file evidence"}}', "duplicate_root_close_removed"),
+])
+async def test_normal_stop_root_normalization_commits_without_rewriting_completed_evidence(stack, streamed, wire, recovery):
     runner, state, step, _ = node(stack, GeneralAgent())
-    http = bind_raw_model(runner, [read_reply(), reply('{"answer":"file evidence"')], streamed=streamed)
+    http = bind_raw_model(runner, [read_reply(), reply(wire)], streamed=streamed)
     result = await runner(step.step_id, state)
     assert runner.value_store.get_output(run_id=runner.run.run_id, output_ref=result["outputRef"]) == {
         "answer": "file evidence"}
     assert len(http.requests) == 2 and stack.service.execution_count == 1
+    final = runner.value_store.get_tool_value(run_id=runner.run.run_id,
+        key=f"{result['commitId']}:tools:1:model-turn")
+    assert final["response"]["metadata"]["jsonRecovery"] == {
+        "type": recovery, "rootCompleted": recovery == "root_close_added"}
 
 
 @pytest.mark.asyncio
-async def test_cached_old_invalid_json_can_be_reinterpreted_without_mutating_wal_or_repeating_tools(stack, monkeypatch):
+@pytest.mark.parametrize(("incomplete", "normalizer"), [
+    ('{"answer":"file evidence"', "_complete_root"),
+    ('{"answer":"file evidence"}}', "_remove_duplicate_root_close"),
+])
+async def test_cached_old_invalid_json_can_be_reinterpreted_without_mutating_wal_or_repeating_tools(
+        stack, monkeypatch, incomplete, normalizer):
     runner, _, step, _ = node(stack, GeneralAgent())
-    incomplete = '{"answer":"file evidence"'
     http = bind_raw_model(runner, [read_reply(), reply(incomplete), reply(incomplete)])
     context = context_for(runner, step)
     with monkeypatch.context() as legacy:
-        legacy.setattr("adapters.model.json_output._complete_root", lambda _: None)
+        legacy.setattr("adapters.model.json_output." + normalizer, lambda _: None)
         with pytest.raises(StructuredGenerationError) as caught:
             await AgentToolSession(context).generate_json(prompt="read once and answer", schema=ANSWER)
         assert caught.value.code == "AGENT_NO_PROGRESS"
@@ -179,9 +191,10 @@ async def test_cached_old_invalid_json_can_be_reinterpreted_without_mutating_wal
 
 
 @pytest.mark.asyncio
-async def test_root_completion_still_requires_original_output_contract(stack):
+@pytest.mark.parametrize("wire", ['{"answer":[]', '{"answer":[]}}'])
+async def test_root_normalization_still_requires_original_output_contract(stack, wire):
     runner, state, step, _ = node(stack, GeneralAgent())
-    http = bind_raw_model(runner, [read_reply(), reply('{"answer":[]'), reply('{"answer":"file evidence"}')])
+    http = bind_raw_model(runner, [read_reply(), reply(wire), reply('{"answer":"file evidence"}')])
     result = await runner(step.step_id, state)
     assert runner.value_store.get_output(run_id=runner.run.run_id, output_ref=result["outputRef"]) == {
         "answer": "file evidence"}
@@ -190,12 +203,16 @@ async def test_root_completion_still_requires_original_output_contract(stack):
 
 
 @pytest.mark.asyncio
-async def test_cached_root_recovery_preserves_historical_feedback_when_contract_still_rejects(stack, monkeypatch):
+@pytest.mark.parametrize(("wire", "normalizer"), [
+    ('{"answer":[]', "_complete_root"), ('{"answer":[]}}', "_remove_duplicate_root_close"),
+])
+async def test_cached_root_recovery_preserves_historical_feedback_when_contract_still_rejects(
+        stack, monkeypatch, wire, normalizer):
     runner, _, step, _ = node(stack, GeneralAgent())
-    http = bind_raw_model(runner, [read_reply(), reply('{"answer":[]'), reply('{"answer":"file evidence"}')])
+    http = bind_raw_model(runner, [read_reply(), reply(wire), reply('{"answer":"file evidence"}')])
     context = context_for(runner, step)
     with monkeypatch.context() as legacy:
-        legacy.setattr("adapters.model.json_output._complete_root", lambda _: None)
+        legacy.setattr("adapters.model.json_output." + normalizer, lambda _: None)
         first = await AgentToolSession(context).generate_json(prompt="read once and answer", schema=ANSWER)
     second = await AgentToolSession(context).generate_json(prompt="read once and answer", schema=ANSWER)
     assert first.data == second.data == {"answer": "file evidence"}
@@ -241,3 +258,98 @@ async def test_non_json_failures_do_not_enter_format_repair_or_repeat_tools(stac
     assert len(http.requests) == 2
     assert len(stack.service.requests) == stack.service.execution_count == 1
     assert stack.runtime.resource_binder.coordinator.active_slots("hands") == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("tool", "path", "requirement"), [
+    ("fs.read", "note.txt", {"kind": "file", "path": "note.txt"}),
+    ("fs.list", ".", {"kind": "directory", "path": ".", "operation": "list", "recursive": False}),
+])
+async def test_new_session_submits_confirmed_historical_reads_without_reexecuting_tools(
+        stack, monkeypatch, tool, path, requirement):
+    from contracts.planning import PlannedTask, TaskPlan
+
+    runner, _, step, _ = node(stack, GeneralAgent(), mission_id="mission_aabbccddeeff")
+    runner.run.input["workspaceBinding"] = {"workspaceId": "one", "grantId": "grant-one"}
+    runner.run.execution_state["workspaceObservations"] = [requirement,
+        {"kind": "file", "path": "remaining.txt"}]
+    task = PlannedTask(key="source-page", title="Inspect page", objective="Report this page's evidence",
+        logicalRole="workspace_acquisition", constraints=[{"workspaceReview": {"targets": [{
+            "operation": tool.removeprefix("fs."), "path": path}]}}])
+    runner.run.execution_state.update(taskPlan=TaskPlan(missionId=runner.run.mission_id,
+        nodes=(task,)).model_dump(by_alias=True, mode="json"),
+        taskBindings=[{"planNodeKey": task.key, "acgNodeId": step.step_id}])
+    old_context = context_for(runner, step)
+    operation = old_context.commit_id + ":tools:0:call:0"
+    observed = await old_context.tool_runtime.execute(tool, {"path": path}, operation_key=operation)
+    historical = [{"kind": "previous_attempt_tool_observation", "operationKey": operation,
+        "record": dict(observed.record), "result": dict(observed.data)}]
+
+    http = bind_raw_model(runner, [reply('{"answer":"verified page; remaining.txt remains unread"}')])
+    context = context_for(runner, step)
+    context.commit_id = "new-commit"
+    context.attempt_id = "new-attempt"
+    context.tool_runtime = runner.tool_runtime.bind_context(context, lambda: None)
+    collected = []
+
+    async def bound_collector(current):
+        assert current is context
+        collected.append(current.attempt_id)
+        return copy.deepcopy(historical)
+
+    monkeypatch.setattr(context.tool_runtime, "previous_attempt_observations", bound_collector)
+    session = AgentToolSession(context)
+    result = await session.generate_json(prompt="Submit the supplied historical page and remaining gaps",
+        schema=ANSWER, historical_observations=historical)
+
+    assert result.data["answer"] == "verified page; remaining.txt remains unread"
+    assert collected == ["new-attempt"]
+    assert len(http.requests) == len(stack.service.requests) == stack.service.execution_count == 1
+    assert session.actions == 0 and session.records == [] and session.observations == []
+    assert session.historical_records == [historical[0]["record"]]
+    assert session.historical_records[0]["attemptId"] == old_context.attempt_id
+    assert session.historical_records[0]["commitId"] == old_context.commit_id
+    workspace_message = next(json.loads(message["content"]) for message in http.requests[0]["messages"]
+        if message.get("role") == "user" and '"WorkspaceExecutionContext"' in message["content"])
+    assignment = workspace_message["workspace"]["content"]["assignedAcquisition"]
+    assert assignment["batchComplete"] is True and assignment["remainingTargets"] == []
+    # Reusing an observation neither commits the old node nor settles global gaps.
+    assert runner.run.completed_step_ids == []
+    assert runner.value_store.list_node_commits(run_id=runner.run.run_id) == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("defect", ["collector_missing", "collector_disagrees"])
+async def test_session_rejects_historical_observations_without_bound_collector_confirmation(stack, monkeypatch, defect):
+    runner, _, step, _ = node(stack, GeneralAgent())
+    http = bind_raw_model(runner, [])
+    context = context_for(runner, step)
+    supplied = [{"kind": "previous_attempt_tool_observation", "record": {"tool": "fs.read"},
+        "result": {"content": "unconfirmed"}}]
+
+    async def collect(_):
+        return None if defect == "collector_missing" else []
+
+    monkeypatch.setattr(context.tool_runtime, "previous_attempt_observations", collect)
+    with pytest.raises(StructuredGenerationError) as caught:
+        await AgentToolSession(context).generate_json(prompt="inspect", schema=ANSWER,
+            historical_observations=supplied)
+    assert caught.value.code == "RETRY_EVIDENCE_UNAVAILABLE"
+    assert http.requests == [] and stack.service.requests == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("historical", [None, []])
+async def test_absent_historical_observations_do_not_touch_the_retry_collector(stack, monkeypatch, historical):
+    runner, _, step, _ = node(stack, GeneralAgent())
+    http = bind_raw_model(runner, [reply('{"answer":"same session protocol"}')])
+    context = context_for(runner, step)
+
+    async def forbidden(_):
+        pytest.fail("ordinary sessions must not load historical retry evidence")
+
+    monkeypatch.setattr(context.tool_runtime, "previous_attempt_observations", forbidden)
+    result = await AgentToolSession(context).generate_json(prompt="inspect", schema=ANSWER,
+        historical_observations=historical)
+    assert result.data == {"answer": "same session protocol"}
+    assert len(http.requests) == 1 and stack.service.requests == []

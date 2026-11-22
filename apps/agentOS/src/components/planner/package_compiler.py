@@ -280,7 +280,7 @@ class ACGPackageCompiler:
                 raise ValueError(f"communication fields for {source_id}->{target_id} must be a list")
             if not declared:
                 properties = source.output_spec.get("properties", {}) if isinstance(source.output_spec, dict) else {}
-                declared = list(properties) if isinstance(properties, dict) else []
+                declared = sorted(properties) if isinstance(properties, dict) else []
             target_metadata = target.metadata if isinstance(target.metadata, dict) else {}
             explicit_step_budget = self._budget(
                 target_metadata.get("communicationBudget"),

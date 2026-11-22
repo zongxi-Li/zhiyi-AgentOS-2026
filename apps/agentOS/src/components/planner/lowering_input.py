@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from contracts.communication import schema_top_level_fields
 from contracts.planning import (
     SemanticTaskRelationType,
     TaskImplementationBinding,
@@ -580,6 +581,7 @@ def lowering_step_from_task(
         # Stored inside inputSpec because the compiled package freezes it.
         input_spec["contextPolicy"] = {
             "version": descriptor.context_policy.version,
+            "nestedReadVersion": 1,
             "selectionReasons": consumption_reasons,
             "memoryTokenBudget": descriptor.context_policy.memory_token_budget,
             **({"supplementalReadBudget": descriptor.context_policy.supplemental_read_budget.model_dump(by_alias=True, mode="json")}
@@ -587,6 +589,9 @@ def lowering_step_from_task(
             **({"requestBudget": descriptor.context_policy.request_budget.model_dump(by_alias=True, mode="json")}
                if descriptor.context_policy.request_budget is not None else {}),
         }
+    # Input delivery is a separate frozen protocol from supplemental reader
+    # capabilities. Existing steps without this version keep their wire input.
+    input_spec.setdefault("contextPolicy", {})["executionContextVersion"] = 1
     return ACGLoweringStep(
         task_key=task.key,
         node_id=node_id,
@@ -652,8 +657,8 @@ def _step_id(agent_name: str, capability_id: str, used_ids: set[str]) -> str:
 
 
 def output_fields(contract: dict) -> list[str]:
-    required = contract.get("required") if isinstance(contract, dict) else None
-    return [str(item) for item in required] if isinstance(required, list) else []
+    """Authorize declared output fields; required only controls their presence."""
+    return schema_top_level_fields(contract)
 
 
 def _add_dependency(blueprint: ACGBlueprint, source_id: str, target_id: str) -> None:

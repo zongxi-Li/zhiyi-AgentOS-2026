@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from components.executor.orphan_cleaner import ExecutionOrphanCleaner
-from components.executor.value_store import ExecutionValueAccessError, InMemoryExecutionValueStore
+from components.executor.value_store import ExecutionValueAccessError, InMemoryExecutionValueStore, SQLiteExecutionValueStore
 
 
 def test_cleaner_removes_only_expired_unprotected_values() -> None:
@@ -80,3 +80,30 @@ def test_cleaner_preserves_referenced_graph_patch_and_removes_orphan() -> None:
     }
     with pytest.raises(ExecutionValueAccessError, match="does not exist"):
         store.get_graph_patch(run_id="run-a", patch_ref=orphan_ref)
+
+
+@pytest.mark.parametrize("persistent", [False, True])
+def test_cleanup_retains_operation_wal_after_owner_session_has_ended(tmp_path, persistent):
+    """Operation ownership outlives the current graph and model session."""
+    store = (SQLiteExecutionValueStore(db_path=tmp_path / "values.sqlite3") if persistent
+             else InMemoryExecutionValueStore())
+    payloads = {
+        "tool:receipt": {"status": "succeeded", "output": {"text": "confirmed evidence"}},
+        "planning-context:source": {"data": "frozen historical context"},
+        "planning-history:source": {"projection": "derived compacted history"},
+    }
+    for key, payload in payloads.items():
+        store.put_tool_value(run_id="run-a", step_id="ended-session", key=key, payload=payload)
+    store.put_output(run_id="run-a", step_id="unpublished", payload={"data": "orphan"})
+    if persistent:
+        store.close()
+        store = SQLiteExecutionValueStore(db_path=tmp_path / "values.sqlite3")
+    try:
+        stats = ExecutionOrphanCleaner(value_store=store).clean(run_id="run-a", protected_refs=set(),
+            older_than=datetime.now(timezone.utc) + timedelta(seconds=1))
+        assert stats.deleted == 1 and stats.protected == len(payloads)
+        for key, payload in payloads.items():
+            assert store.get_tool_value(run_id="run-a", key=key) == payload
+    finally:
+        if persistent:
+            store.close()

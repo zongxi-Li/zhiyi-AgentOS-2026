@@ -30,6 +30,7 @@ class TopologyConflict:
     repair_attempts: int = 0
     binding_rejections: tuple[CapabilityBindingRejection, ...] = ()
     search_states_explored: int = 0
+    field_paths: tuple[tuple[str | int, ...], ...] = ()
 
 
 class TopologyCompileError(ValueError):
@@ -44,6 +45,7 @@ def is_model_repair_eligible(conflict: TopologyConflict) -> bool:
         conflict.code in {
             TopologyConflictCode.DEPENDENCY_CYCLE,
             TopologyConflictCode.CAPABILITY_BINDING_CONFLICT,
+            TopologyConflictCode.UNKNOWN_TASK_REFERENCE,
         }
         and bool(conflict.repairable_edges)
     )

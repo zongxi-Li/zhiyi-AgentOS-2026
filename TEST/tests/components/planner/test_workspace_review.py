@@ -6,7 +6,7 @@ import pytest
 
 from components.planner.runtime_decision import decide_runtime
 from components.planner.service import apply_task_plan_patch
-from components.planner.workspace_review import workspace_review_decision
+from components.planner.workspace_review import _targets, workspace_review_decision
 from contracts.execution_evidence import WorkspaceObservationRequirement, _progress
 from contracts.planning import PlannedTask, TaskPlan, TaskPlanRelation
 from contracts.runtime_planning import RuntimePlanningObservation, StepObservation
@@ -52,6 +52,40 @@ def scope(node):
     return node.constraints[0]["workspaceReview"]
 
 
+def test_read_pages_alternate_with_directory_discovery_without_starvation():
+    progress = ({"missingReads": ["README.md", "src/main.py", "src/test.py"],
+        "missingListings": [f".git/objects/{index:02}" for index in range(16)]},)
+    assert _targets(progress, 4) == [
+        {"operation": "read", "path": "README.md"},
+        {"operation": "list", "path": ".git/objects/00"},
+        {"operation": "read", "path": "src/main.py"},
+        {"operation": "list", "path": ".git/objects/01"},
+    ]
+    assert _targets(progress, 1) == [{"operation": "read", "path": "README.md"}]
+
+
+def test_target_queues_deduplicate_and_continue_when_one_queue_is_exhausted():
+    progress = ({"missingReads": ["a.py", "a.py"], "missingListings": ["src", "docs"]},
+        {"missingReads": ["a.py", "b.py"], "missingListings": ["src", "tests"]})
+    assert _targets(progress, 16) == [
+        {"operation": "read", "path": "a.py"}, {"operation": "list", "path": "src"},
+        {"operation": "read", "path": "b.py"}, {"operation": "list", "path": "docs"},
+        {"operation": "list", "path": "tests"},
+    ]
+
+
+def test_excluded_scope_is_preserved_in_new_work_page_without_excluded_targets():
+    requirement = WorkspaceObservationRequirement(kind="directory", recursive=True, excludePaths=[".git"])
+    progress = _progress((requirement,), (("fs.list", ".", {"entries": [
+        {"name": ".git", "type": "directory"}, {"name": "src", "type": "directory"},
+        {"name": "README.md", "type": "file"}]}),))
+    decision = workspace_review_decision(observation=observe(plan_at(), progress), task_plan=plan_at())
+    reader = decision.task_plan_patch.add_nodes[0]
+    assert scope(reader)["targets"] == [
+        {"operation": "read", "path": "README.md"}, {"operation": "list", "path": "src"},
+    ]
+
+
 def test_remaining_read_page_and_review_are_deterministic_semantic_patch():
     plan = plan_at()
     observation = observe(plan, coverage(count=3, read=1))
@@ -77,6 +111,44 @@ def test_remaining_read_page_and_review_are_deterministic_semantic_patch():
     assert all(by_key[node.key] == node for node in plan.nodes)
     old_incoming = {r for r in plan.relations if r.target_key in {"understand", "scan"}}
     assert {r for r in applied.relations if r.target_key in {"understand", "scan"}} == old_incoming
+
+
+def test_supplemental_reader_and_reviewer_inherit_accepted_constraints_without_mutating_prefix():
+    plan = plan_at()
+    mission_constraint = {"type": "mission_constraint", "requirement": "Review the selected source",
+        "scope": {"paths": ["src", "tests"]}}
+    human_review = {"type": "user_human_review", "required": True,
+        "review": {"reasons": ["Caller requested review before delivery"]}}
+    local_constraint = {"type": "analysis_format", "sections": ["Findings", "Evidence"]}
+    plan = plan.model_copy(update={"nodes": tuple(node.model_copy(update={"constraints":
+        [mission_constraint] if node.key == "understand" else
+        [human_review] if node.key == "scan" else
+        [local_constraint] if node.key == "analysis" else []}) for node in plan.nodes)})
+    before = deepcopy(plan)
+
+    decision = workspace_review_decision(observation=observe(plan), task_plan=plan)
+
+    assert decision.action == "revise" and plan == before
+    reader, reviewer = decision.task_plan_patch.add_nodes
+    inherited = []
+    for node in (reader, reviewer):
+        reserved = {item["type"]: item for item in node.constraints if "type" in item}
+        assert reserved == {"mission_constraint": mission_constraint, "user_human_review": human_review}
+        assert scope(node)["targets"]
+        assert reserved["mission_constraint"] is not mission_constraint
+        assert reserved["mission_constraint"]["scope"]["paths"] is not mission_constraint["scope"]["paths"]
+        assert reserved["user_human_review"]["review"]["reasons"] is not human_review["review"]["reasons"]
+        inherited.append(reserved)
+    applied = apply_task_plan_patch(plan, decision.task_plan_patch)
+    by_key = {node.key: node for node in applied.nodes}
+    assert all(by_key[node.key] == node for node in before.nodes)
+    assert plan == before
+
+    inherited[0]["mission_constraint"]["scope"]["paths"].append("reader-only mutation")
+    inherited[1]["user_human_review"]["review"]["reasons"].append("reviewer-only mutation")
+    assert inherited[1]["mission_constraint"] == mission_constraint
+    assert inherited[0]["user_human_review"] == human_review
+    assert plan == before
 
 
 def test_production_llm_path_schedules_verified_gaps_before_requesting_model_decision():
@@ -200,6 +272,31 @@ def test_completed_page_without_new_receipt_coverage_waits_with_explicit_reason(
     result = workspace_review_decision(observation=observe(next_plan,
         completed=("understand", "scan", *(node.key for node in patch.add_nodes))), task_plan=next_plan)
     assert result.action == "wait" and "WORKSPACE_REVIEW_NO_PROGRESS" in result.reason
+
+
+def test_no_progress_from_invalidated_receipts_reaches_planner_with_causal_recovery_guidance():
+    plan, observation = _fallback_case("no_progress")
+    progress = deepcopy(observation.workspace_observations)
+    progress[0]["coverageInvalidation"] = {"tool": "shell.exec", "receiptRef": "receipt:host",
+        "completedAt": "2026-11-17T11:16:20+00:00", "invalidatedReadCount": 2,
+        "invalidatedListingCount": 1, "reasonCode": "WORKSPACE_OBSERVATIONS_INVALIDATED"}
+    observation = observe(plan, progress,
+        completed={step.task_key for step in observation.steps if step.output_ref is not None})
+    prompts = []
+
+    class Model:
+        def generate_json(self, prompt, schema, **kwargs):
+            prompts.append(json.loads(prompt))
+            return {"observationId": observation.fingerprint(), "action": "wait",
+                "reason": "Resolve the receipt freshness gap"}
+
+    result = decide_runtime(observation=observation, task_plan=plan, llm=Model())
+    assert result.action == "wait"
+    assert len(prompts) == 1
+    reason = prompts[0]["workspaceReviewFallback"]["reason"]
+    assert "coverageInvalidation" in reason and "after the latest invalidating operation" in reason
+    assert prompts[0]["observation"]["workspaceObservations"] == list(progress)
+    assert "do not declare complete" in reason
 
 
 def test_reader_without_coverage_still_runs_declared_reviewer_before_stopping():

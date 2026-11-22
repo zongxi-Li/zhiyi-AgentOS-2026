@@ -1,7 +1,5 @@
-"""受控低熵通信部件的公共入口。"""
+"""ACG 引用读取、上下文投递与通信血缘的公共入口。"""
 
-from .algorithms import low_entropy_choice, select_fields
-from .assembler import ContextAssembler
 from .broker import CommunicationAccessError, CommunicationBroker, EntropyBudgetExceededError
 from .contracts import ContextPack
 from .manifest import CommunicationManifest, CommunicationRule
@@ -13,9 +11,10 @@ from .reliable import (
     DebateSpec, ReliableMessage, SQLiteReliableCommunicationStore,
 )
 
-__all__ = ["CommunicationAccessError", "CommunicationBroker", "CommunicationManifest", "CommunicationReader", "CommunicationRule", "CommunicatorService", "ContextAssembler", "ContextPack", "EntropyBudgetExceededError", "ProvenanceLedger", "BlackboardConflictError", "CommunicationBackpressureError", "DebateCoordinator", "DebateSpec", "ReliableMessage", "SQLiteReliableCommunicationStore", "low_entropy_choice", "select_fields"]
-"""通信部件的公共入口。"""
-
-from .service import CommunicatorService
-
-__all__ = ["CommunicatorService"]
+__all__ = [
+    "CommunicationAccessError", "CommunicationBroker", "CommunicationManifest",
+    "CommunicationReader", "CommunicationRule", "CommunicatorService", "ContextPack",
+    "EntropyBudgetExceededError", "ProvenanceLedger", "BlackboardConflictError",
+    "CommunicationBackpressureError", "DebateCoordinator", "DebateSpec",
+    "ReliableMessage", "SQLiteReliableCommunicationStore",
+]

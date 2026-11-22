@@ -32,7 +32,7 @@
       <component
         v-if="activeView"
         :is="activeViewComponent"
-        :key="`${activeView.id}:${contextKey}`"
+        :key="`${activeView.id}:${activeView.id === 'resource.view' ? resourceContextKey : contextKey}`"
         v-bind="activeViewProps"
         @locate-graph="emit('locateGraph')"
         @open-artifact="emit('openArtifact', $event)"
@@ -94,6 +94,9 @@ const contextKey = computed(() => [
   props.context.selectedAcgNodeId,
   props.context.selectedArtifactId
 ].map(value => value || '').join('|'))
+// Node selection updates resource bindings through props. Run-wide usage must
+// survive those selections rather than aborting and restarting every request.
+const resourceContextKey = computed(() => [props.context.missionId, props.context.runId].join('|'))
 const activeViewProps = computed(() => ({
   ...props.componentProps,
   context: props.context,

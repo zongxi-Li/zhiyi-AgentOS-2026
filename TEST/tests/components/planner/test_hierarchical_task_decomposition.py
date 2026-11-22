@@ -231,6 +231,15 @@ def test_workset_diagnostics_preserve_location_without_invalid_values(workset, c
     assert "PRIVATE" not in repr(failures)
 
 
+def test_empty_workset_is_omitted_when_task_has_no_registered_materials() -> None:
+    """An optional workset may be emitted empty for workspace/upstream tasks."""
+    assert TaskDecomposer._normalize_workset_spec({"sourceManifestRefs": []}) is None
+    TaskDecomposer._validate_workset_sources(
+        [{"key": "inspect", "workset": {"sourceManifestRefs": []}}],
+        {},
+    )
+
+
 def test_validation_diagnostics_exclude_pydantic_messages_context_and_unknown_fields() -> None:
     from pydantic import ValidationError
     error = ValidationError.from_exception_data("PRIVATE_MODEL", [{
@@ -350,7 +359,7 @@ def test_full_profile_uses_outline_detail_and_relation_units() -> None:
         reasoning_effort="max",
     )
 
-    assert len(plan.nodes) >= len(_profile().required_capabilities)
+    assert {node.key for node in plan.nodes} == {"understand", "analyze"}
     assert [call["prompt_version"] for call in llm.calls] == [
         f"{TASK_DECOMPOSITION_PROMPT_VERSION}.outline",
         f"{TASK_DECOMPOSITION_PROMPT_VERSION}.detail",
@@ -934,7 +943,7 @@ def test_catalog_dependency_completion_does_not_depend_on_model_task_order() -> 
     )
 
 
-def test_model_shorthand_constraints_and_missing_capability_are_normalized() -> None:
+def test_model_shorthand_constraints_preserve_selected_work_without_expanding_intent_hints() -> None:
     payload = {
         "tasks": [
             {
@@ -963,14 +972,6 @@ def test_model_shorthand_constraints_and_missing_capability_are_normalized() -> 
     )
 
     verification = next(node for node in plan.nodes if node.key == "verify")
-    evidence = next(
-        node for node in plan.nodes
-        if node.capability_requirements == ("evidence_analysis",)
-    )
-    retrieval = next(
-        node for node in plan.nodes
-        if node.capability_requirements == ("information_retrieval",)
-    )
     understanding = next(
         node for node in plan.nodes
         if node.capability_requirements == ("task_understanding",)
@@ -979,19 +980,57 @@ def test_model_shorthand_constraints_and_missing_capability_are_normalized() -> 
         "type": "task_constraint",
         "value": "必须覆盖所有约束",
     }
-    assert evidence.logical_role == "prerequisite"
-    assert any(
-        relation.source_key == understanding.key and relation.target_key == retrieval.key
-        for relation in plan.relations
-    )
-    assert any(
-        relation.source_key == retrieval.key and relation.target_key == evidence.key
-        for relation in plan.relations
-    )
+    assert {node.capability_requirements[0] for node in plan.nodes} == {
+        "task_understanding", "verification",
+    }
     assert any(
         relation.source_key == understanding.key and relation.target_key == verification.key
         for relation in plan.relations
     )
+
+
+def test_selected_work_still_gets_transitive_mandatory_input_producers() -> None:
+    profile = TaskSemanticProfile(primaryGoal="Assess supplied evidence", requiredCapabilities=["analysis"])
+    payload = {"tasks": [{
+        "key": "evidence", "title": "Assess evidence", "objective": "Assess the claims against retrieved source evidence",
+        "capabilityId": "evidence_analysis", "acceptanceCriteria": ["Claims retain evidence and uncertainty"],
+    }], "relations": []}
+    plan = TaskDecomposer(build_default_capability_catalog(), _PlanLLM(payload)).decompose(
+        mission_id="mission_0123456789ab", profile=profile,
+        strategy="dynamic_generation", task_input={}, use_llm=True,
+    )
+    by_capability = {node.capability_requirements[0]: node for node in plan.nodes}
+    assert set(by_capability) == {"task_understanding", "information_retrieval", "evidence_analysis"}
+    pairs = {(relation.source_key, relation.target_key) for relation in plan.relations}
+    assert (by_capability["task_understanding"].key, by_capability["information_retrieval"].key) in pairs
+    assert (by_capability["information_retrieval"].key, "evidence") in pairs
+
+
+def test_workspace_formal_plan_does_not_materialize_suggested_architecture_or_repeat_discovery() -> None:
+    profile = TaskSemanticProfile(
+        primaryGoal="Read repository dependency manifests and report the observed relationships",
+        requiredCapabilities=["information_extraction", "architecture_design", "analysis", "artifact_generation"],
+        expectedArtifacts=["dependency report"],
+    )
+    payload = {"tasks": [
+        {"key": "understand", "title": "Understand", "objective": "Preserve the committed mission requirements",
+         "capabilityId": "task_understanding", "acceptanceCriteria": ["Scope and deliverable preserved"]},
+        {"key": "dependencies", "title": "Analyze dependencies", "objective": "Analyze actual dependency declarations from discovery evidence",
+         "capabilityId": "analysis", "acceptanceCriteria": ["Relationships distinguish observations and unknowns"]},
+        {"key": "report", "title": "Report", "objective": "Deliver the repository dependency report",
+         "capabilityId": "artifact_generation", "acceptanceCriteria": ["Report cites evidence"], "sourceRefs": ["artifact:1"]},
+    ], "relations": [{"sourceKey": "dependencies", "targetKey": "report", "relationType": "depends_on"}]}
+    plan = TaskDecomposer(build_default_capability_catalog(), _PlanLLM(payload)).decompose(
+        mission_id="mission_0123456789ab", profile=profile, strategy="workspace_evidence_planning",
+        task_input={}, use_llm=True, existing_semantic_tasks=(
+            {"key": "workspace_discovery:understand", "capabilityId": "task_understanding", "logicalRole": "task"},
+            {"key": "workspace_discovery:inspect", "capabilityId": "information_extraction", "logicalRole": "workspace_discovery"},
+        ),
+    )
+    assert {node.capability_requirements[0] for node in plan.nodes} == {
+        "task_understanding", "analysis", "artifact_generation",
+    }
+    assert next(node for node in plan.nodes if node.capability_requirements == ("task_understanding",)).key == "workspace_discovery:understand"
 
 
 def test_terminal_semantic_results_are_connected_to_final_artifact() -> None:
@@ -1163,3 +1202,60 @@ def test_automatic_final_report_waits_for_recheck_and_consumes_revised_report() 
     assert bindings["recheck"] in graph.ready_steps(state)
     state.completed_step_ids.append(bindings["recheck"])
     assert graph.ready_steps(state) == (terminal.node_id,)
+
+
+def test_declared_revision_gets_independent_review_of_current_artifact_before_final() -> None:
+    from components.executor.compiler import ACGGraphCompiler
+    from components.executor.graph import ACGExecutionState
+
+    catalog = build_default_capability_catalog()
+    work = [("draft", "artifact_generation"), ("check", "verification"),
+            ("revision", "artifact_generation"), ("final", "artifact_generation")]
+    payload = {"tasks": [{
+        "key": key, "title": key, "objective": f"Produce the {key} result for the dependency report",
+        "capabilityId": capability, "acceptanceCriteria": ["Each finding has evidence or an explicit uncertainty"],
+        "sourceRefs": ["artifact:1"], "logicalRole": "final_synthesis" if key == "final" else "task",
+    } for key, capability in work], "relations": [
+        {"sourceKey": source, "targetKey": target, "relationType": "depends_on"}
+        for source, target in (("draft", "check"), ("check", "revision"), ("revision", "final"))
+    ]}
+    profile = TaskSemanticProfile(primaryGoal="Deliver an independently reviewed dependency report",
+        expectedArtifacts=["dependency report"], requiredCapabilities=["artifact_generation", "verification"])
+    plan = TaskDecomposer(catalog, _PlanLLM(payload)).decompose(
+        mission_id="mission_0123456789ab", profile=profile,
+        strategy="workspace_evidence_planning", task_input={}, use_llm=True)
+    reviewers = [node for node in plan.nodes if node.capability_requirements == ("verification",)]
+    assert len(reviewers) == 2
+    recheck = next(node for node in reviewers if node.key != "check")
+    assert recheck.source_refs == ("revision", "check")
+    assert recheck.acceptance_criteria == next(node for node in reviewers if node.key == "check").acceptance_criteria
+    pairs = {(relation.source_key, relation.target_key) for relation in plan.relations}
+    assert {("revision", recheck.key), (recheck.key, "final")} <= pairs
+
+    network = CollaborationNetwork(bindings=[
+        CapabilityBinding(capability=capability, agent_name="native_general_agent", score=1.0)
+        for capability in dict.fromkeys(node.capability_requirements[0] for node in plan.nodes)])
+    lowering = build_acg_lowering_input(mission_id=plan.mission_id, profile=profile, network=network,
+        task_plan=plan, capability_catalog=catalog)
+    bindings = {binding.plan_node_key: binding.acg_node_id for binding in lowering.implementation_bindings}
+    blueprint = ACGLowerer().lower(lowering)
+    review_step = blueprint.get_node(bindings[recheck.key])
+    assert "deliverable" in review_step.input_spec["from"][bindings["revision"]]
+    assert "verification" in review_step.input_spec["from"][bindings["check"]]
+    graph = ACGGraphCompiler().compile(blueprint, run_id="run_0123456789ab")
+    state = ACGExecutionState(runId="run_0123456789ab", graphId=blueprint.graph_id,
+        completedStepIds=[bindings[node.key] for node in plan.nodes if node.key not in {recheck.key, "final"}])
+    assert graph.ready_steps(state) == (review_step.node_id,)
+    state.completed_step_ids.append(review_step.node_id)
+    assert graph.ready_steps(state) == (bindings["final"],)
+
+
+def test_single_artifact_plan_does_not_gain_an_unrequested_review_cycle() -> None:
+    profile = TaskSemanticProfile(primaryGoal="Deliver the supplied facts as a report",
+        expectedArtifacts=["report"], requiredCapabilities=["artifact_generation", "verification"])
+    payload = {"tasks": [{"key": "report", "title": "Report", "objective": "Present the supplied facts in the report",
+        "capabilityId": "artifact_generation", "acceptanceCriteria": ["Supplied facts retained"], "sourceRefs": ["artifact:1"]}],
+        "relations": []}
+    plan = TaskDecomposer(build_default_capability_catalog(), _PlanLLM(payload)).decompose(
+        mission_id="mission_0123456789ab", profile=profile, strategy="dynamic_generation", task_input={}, use_llm=True)
+    assert {node.capability_requirements[0] for node in plan.nodes} == {"task_understanding", "artifact_generation"}

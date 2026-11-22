@@ -73,9 +73,9 @@ class RuntimeTaskOperations:
 
     def assert_current_run_recovery(self, run, step_id=None):
         """Read-only validation shared by previews, offers and recovery commands."""
-        failed = [step.step_id for step in run.steps if step.status.value == "failed"]
-        selected = step_id or (failed[0] if len(failed) == 1 else None)
-        from runtime.orchestration.permit_recovery import operator_recovery_authorization
+        from runtime.orchestration.permit_recovery import interrupted_step_ids, operator_recovery_authorization
+        interrupted = interrupted_step_ids(run)
+        selected = step_id or (interrupted[0] if interrupted else None)
         authorization = operator_recovery_authorization(self.runtime, run, selected,
             "recovery-preview", str(run.runtime_revision)) if selected else None
         self._assert_current_run_admission(run).assert_recoverable(run, operator_recovery=authorization)
@@ -115,6 +115,10 @@ class RuntimeTaskOperations:
                     reuse_source_run=True, operator_recovery=authorization,
                 )
 
+    def _rerun_replans(self) -> bool:
+        return (self.runtime.mission_semantic_service is not None
+                or self.runtime.planning_commit_authority is not None)
+
     def rerun_scope(self, run):
         """A full replay reuses no results and freezes today's authorized environment."""
         from contracts.acg.schema import RuntimeBlueprintSpec
@@ -125,6 +129,11 @@ class RuntimeTaskOperations:
             workflow_id=run.workflow_id, domain=run.domain, intent="")
         scope = resolver.build_scope(enabled)
         workflow = runtime.workflow_registry.get(run.workflow_id, allowed_workflow_ids=scope.workflow_ids)
+        if self._rerun_replans():
+            authority = getattr(runtime, "workspace_authority", None)
+            if authority is not None and "workspaceBinding" in run.input:
+                authority.resolve(run)
+            return scope
         blueprint = RuntimeBlueprintSpec.model_validate(run.acg_blueprint)
         missing = {s.capability for s in blueprint.step_nodes() if s.capability} - set(scope.capability_ids)
         if missing:
@@ -137,7 +146,8 @@ class RuntimeTaskOperations:
             raise ValueError("operator request must not be blank")
         runtime = self.runtime
         self.check_permission(run)
-        if run.runtime_engine != "acg" or not run.execution_state.get("taskPlan"):
+        fresh_rerun = intent.kind == "rerun" and self._rerun_replans()
+        if run.runtime_engine != "acg" or (not fresh_rerun and not run.execution_state.get("taskPlan")):
             raise ValueError("task operations require a persisted ACG TaskPlan")
         step_id = intent.step_id
         current_recovery = intent.kind == "recover" and bool(run.execution_state.get("executionPermitId"))
@@ -155,8 +165,8 @@ class RuntimeTaskOperations:
             execute, reuse = [], []
         elif intent.kind == "rerun":
             if run.status not in {WorkflowStatus.COMPLETED, WorkflowStatus.FAILED, WorkflowStatus.CANCELLED}:
-                raise ValueError("原样重跑需要一个已结束且未被替换的任务")
-            execute, reuse = [s.step_id for s in run.steps], []
+                raise ValueError("再次运行需要一个已结束且未被替换的任务")
+            execute, reuse = ([] if fresh_rerun else [s.step_id for s in run.steps]), []
             scope = self.rerun_scope(run)
         else:
             runtime._workflow_for_run(run)
@@ -164,10 +174,12 @@ class RuntimeTaskOperations:
             if intent.kind == "recover" and run.status != WorkflowStatus.FAILED and not (current_recovery and is_failed_planner_recovery(run)):
                 raise ValueError("失败恢复需要已结束的失败任务；暂停中的任务请回答问题或提交补充要求")
             if intent.kind == "recover" and not step_id:
-                failed = [s.step_id for s in run.steps if s.status.value == "failed"]
-                if len(failed) != 1:
-                    raise ValueError("请明确选择一个失败节点")
-                step_id = failed[0]
+                from runtime.orchestration.permit_recovery import interrupted_step_ids
+                candidates = (interrupted_step_ids(run) if current_recovery else
+                              [s.step_id for s in run.steps if s.status.value == "failed"])
+                if not candidates or not current_recovery and len(candidates) != 1:
+                    raise ValueError("请明确选择一个失败或中断节点")
+                step_id = candidates[0]
             recovery_authorization = self.assert_current_run_recovery(run, step_id) if current_recovery else None
             runtime.runtime_recovery_coordinator.prepare_single_step_retry(
                 run.run_id, step_id, validate_only=True,
@@ -196,6 +208,7 @@ class RuntimeTaskOperations:
                 raise ValueError("不能复用尚未批准的节点结果")
         return {"kind": intent.kind, "stepId": step_id, "expectedRevision": run.runtime_revision,
                 **({"retryMode": "current_run"} if current_recovery else {}),
+                **({"planningMode": "fresh"} if fresh_rerun else {}),
                 **({"capabilityCatalogRevision": scope.capability_catalog_revision,
                     "executionScopeRevision": stable_revision(scope.model_dump(by_alias=True, mode="json")),
                     "executionEnvironmentChanged": scope != run.execution_scope} if intent.kind == "rerun" else {}),
@@ -251,13 +264,21 @@ class RuntimeTaskOperations:
                     if stable_revision(scope.model_dump(by_alias=True, mode="json")) != action.get("executionScopeRevision"):
                         raise ReviewConflictError("执行环境已变化，请重新准备重跑方案")
                     task_input = deepcopy(run.input)
-                    task_input.update(acgBlueprint=deepcopy(run.acg_blueprint), taskPlan=deepcopy(run.execution_state["taskPlan"]),
-                        taskBindings=deepcopy(run.execution_state["taskBindings"]))
+                    fresh = action.get("planningMode") == "fresh"
+                    if fresh:
+                        for field in ("acgBlueprint", "taskPlan", "taskBindings"):
+                            task_input.pop(field, None)
+                    else:
+                        task_input.update(acgBlueprint=deepcopy(run.acg_blueprint),
+                            taskPlan=deepcopy(run.execution_state["taskPlan"]),
+                            taskBindings=deepcopy(run.execution_state["taskBindings"]))
                     _, target = runtime.prepare_run(run.mission_id, workflow_id=run.workflow_id, review_mode=run.review_mode,
                         idempotency_key=key, idempotency_fingerprint=digest, parent_run_id=run_id, rerun_reason="copilot_rerun",
                         enabled_plugin_ids=list(run.enabled_plugin_ids), input_override=task_input,
-                        execution_scope_override=scope, persist_run=False)
-                    target.execution_state["planningLoop"] = successor_planning_state(run.execution_state.get("planningLoop") or {}, store.list_planning_inputs(run_id))
+                        execution_scope_override=scope, defer_acg_planning=fresh, persist_run=False)
+                    if not fresh:
+                        target.execution_state["planningLoop"] = successor_planning_state(
+                            run.execution_state.get("planningLoop") or {}, store.list_planning_inputs(run_id))
                     store.save_run(target)
                     runtime._flush_identity_outbox(raise_on_failure=False)
                 else:

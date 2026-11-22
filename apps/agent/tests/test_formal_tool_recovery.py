@@ -13,8 +13,10 @@ from components.executor.value_store import SQLiteExecutionValueStore
 from runtime.orchestration.permit_recovery import assert_native_readonly_retry_safe, assert_replay_safe_operations
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "agentOS" / "tests" / "runtime"))
-from TEST.tests.runtime.test_permit_readonly_recovery import _native_attempt, _replace_payload
-from TEST.tests.runtime.test_settled_session_retry_audit import _settled_shell, _register_authorization
+from TEST.tests.runtime.test_permit_readonly_recovery import (  # noqa: E402
+    _native_attempt, _replace_payload, _seed_memory_input,
+)
+from TEST.tests.runtime.test_settled_session_retry_audit import _settled_shell, _register_authorization  # noqa: E402
 
 
 @pytest.fixture
@@ -208,3 +210,107 @@ def test_empty_native_session_proof_requires_no_admitted_model_or_tool_work(sess
             proof = tools.prove_not_dispatched(**kwargs)
             assert proof["capabilityId"] == "native.tool-session" and proof["dispatched"] is False
             assert proof["identity"]["attemptId"] == node.attempt_id and "declarationHash" not in proof
+
+
+def test_formal_empty_session_with_frozen_memory_can_retry_without_replaying_work(session):
+    services, run, node, _, runtime, _ = session
+    store = runtime.execution_value_store
+    with store._connection:
+        store._connection.execute("DELETE FROM execution_values WHERE run_id=?", (run.run_id,))
+    _seed_memory_input(store, run, node, with_record=True)
+    before = list(store._connection.execute("SELECT * FROM execution_values ORDER BY reference"))
+    proof = assert_native_readonly_retry_safe(services, run, node)
+    assert proof["kind"] == "native_session_not_dispatched"
+    assert proof["nonInvocationProofs"][0]["source"] == "formal-workspace-write-ahead.v1"
+    assert proof["readRequestCount"] == proof["modelTurnCount"] == 0
+    assert list(store._connection.execute("SELECT * FROM execution_values ORDER BY reference")) == before
+    assert not run.completed_step_ids and not run.execution_state.get("outputRefs")
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_native_retrieval_recovery_uses_the_real_adapter_write_ahead(session, monkeypatch, cancelled):
+    from adapters.agent.native import NativeGeneralAgent
+    from app.tools.catalog import ReadOnlyToolCatalog
+    from app.tools.contracts import ToolPayload
+    from app.tools.runtime import AgentsToolRuntime
+    from contracts.native_retrieval import retrieval_operation_key
+    from contracts.workflow import RuntimeMissionRecord, WorkflowDefinition
+    from adapters.agent import AgentRunContext
+
+    services, run, node, _, runtime, tools = session
+    store = runtime.execution_value_store
+    with store._connection:
+        store._connection.execute("DELETE FROM execution_values WHERE run_id=?", (run.run_id,))
+    step = run.get_step(node.step_id)
+    step.capability = "information_retrieval"
+    catalog = ReadOnlyToolCatalog()
+    tools.fallback = AgentsToolRuntime(catalog)
+    tools.allowed_tools |= tools.fallback.allowed_tools
+    monkeypatch.setattr("app.tools.runtime.settings.TOOL_RUNTIME_ENABLED", True)
+    key = retrieval_operation_key(node.operation_id, "knowledge_search")
+    calls = []
+
+    async def scenario():
+        entered = asyncio.Event()
+
+        async def search(arguments, **_):
+            calls.append(arguments)
+            assert store.get_tool_value(run_id=run.run_id, key=key + ":request")["identity"]["attemptId"] == node.attempt_id
+            entered.set()
+            if cancelled:
+                await asyncio.Future()
+            return ToolPayload(summary="No indexed materials", data={"results": []})
+
+        monkeypatch.setattr(catalog, "_knowledge_search", search)
+        context = AgentRunContext(task=RuntimeMissionRecord(missionId=run.mission_id, title="Workspace review",
+                input={"webSearchEnabled": False}), run=run,
+            workflow=WorkflowDefinition(workflowId="flow", name="Review", domain="general", runtimeEngine="acg"),
+            step=step, memory=[], attemptId=node.attempt_id, commitId=node.operation_id)
+        context.tool_runtime = tools.scoped({"knowledge_search"}).bind_context(context, lambda: None)
+        agent = NativeGeneralAgent()
+        task = asyncio.create_task(agent.run(context))
+        await asyncio.wait_for(entered.wait(), 2)
+        if cancelled:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            assert (await task).evidence_refs
+            assert (await agent.run(context)).evidence_refs
+
+    asyncio.run(scenario())
+    assert len(calls) == 1
+    before = list(store._connection.execute("SELECT * FROM execution_values ORDER BY reference"))
+    proof = assert_native_readonly_retry_safe(services, run, node)
+    assert proof["retrievalRequestCount"] == 1
+    assert proof["retrievalResultCount"] == (0 if cancelled else 1)
+    assert proof["modelTurnCount"] == 0
+    assert list(store._connection.execute("SELECT * FROM execution_values ORDER BY reference")) == before
+    assert not run.completed_step_ids
+
+
+@pytest.mark.parametrize("damage", ["owner", "policy", "fake_memory", "extra_slot", "write_request"])
+def test_formal_no_dispatch_only_exempts_validated_internal_memory(session, damage):
+    _, run, node, _, runtime, tools = session
+    store = runtime.execution_value_store
+    with store._connection:
+        store._connection.execute("DELETE FROM execution_values WHERE run_id=?", (run.run_id,))
+    reference, snapshot = _seed_memory_input(store, run, node, with_record=True)
+    if damage == "owner":
+        with store._connection:
+            store._connection.execute("UPDATE execution_values SET step_id='other' WHERE reference=?", (reference,))
+    elif damage in {"policy", "fake_memory"}:
+        if damage == "policy": snapshot["policy"]["read"] = False
+        else: snapshot["request"] = {"invocationId": node.operation_id + ":tools:0:call:0"}
+        _replace_payload(store, run.run_id, node.operation_id + ":memory-retrieval", snapshot)
+    else:
+        key = node.operation_id + ":hidden-activity"
+        payload = (snapshot if damage == "extra_slot" else
+            {"request": {"invocationId": node.operation_id + ":tools:0:call:0", "capabilityId": "fs.write"}})
+        store.put_tool_value(run_id=run.run_id, step_id=node.step_id, key=key, payload=payload)
+    with sqlite3.connect(store.db_path.resolve().as_uri() + "?mode=ro", uri=True) as connection:
+        connection.execute("PRAGMA query_only=ON")
+        with pytest.raises(ValueError):
+            tools.prove_not_dispatched(run=run, node=node, operation=node.operation_id,
+                tool="native.tool-session", raw_arguments=None, workspace=run.input["workspaceBinding"],
+                connection=connection, execution_value_store=store)

@@ -1,20 +1,24 @@
 """Workspace observation requirements and receipt-backed completion checks.
 
-Requirements describe evidence, never permission. They are frozen with the
-initial graph; graph revisions may add work but cannot erase the obligation.
+Requirements describe evidence, never permission. Explicit scope is frozen;
+inferred scope can follow the formally accepted workspace planning revision.
 Only current node commits and correlated Hands receipts count as observations.
 Model assertions and arbitrary model-turn/tool WAL scans do not count.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 import json
 from typing import Literal
 from uuid import NAMESPACE_URL, uuid5
 
-from pydantic import BaseModel, ConfigDict, TypeAdapter, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 from contracts import stable_checksum
+
+
+WORKSPACE_MUTATION_TOOLS = frozenset({"fs.write", "fs.patch", "shell.exec"})
 
 
 def workspace_relative_path(value: str) -> str:
@@ -36,14 +40,44 @@ class WorkspaceObservationRequirement(BaseModel):
     kind: Literal["file", "directory"]
     operation: Literal["read", "list"] = "read"
     recursive: bool = False
+    exclude_paths: tuple[str, ...] = Field(default=(), alias="excludePaths", exclude_if=lambda value: not value)
 
     _relative_path = field_validator("path")(workspace_relative_path)
+
+    @field_validator("exclude_paths", mode="before")
+    @classmethod
+    def normalized_exclusions(cls, value):
+        if not isinstance(value, (list, tuple)):
+            raise ValueError("workspace exclusions must be literal relative paths")
+        paths = sorted({workspace_relative_path(path) for path in value})
+        # An excluded directory already excludes its descendants. Keep one
+        # canonical prefix set instead of hashing redundant representations.
+        prefixes = []
+        for path in paths:
+            if not any(_path_within(path, prefix) for prefix in prefixes):
+                prefixes.append(path)
+        return tuple(prefixes)
 
     @model_validator(mode="after")
     def valid_operation(self):
         if self.kind == "file" and (self.operation != "read" or self.recursive or self.path == "."):
             raise ValueError("file observations require one literal file read")
+        if self.exclude_paths and (self.kind != "directory" or any(
+                path == self.path or not _path_within(path, self.path) for path in self.exclude_paths)):
+            raise ValueError("workspace exclusions must be strict descendants of the required directory")
         return self
+
+
+def _path_within(path, root):
+    return root == "." or path == root or path.startswith(root + "/")
+
+
+def workspace_requirement_contains_path(requirement, path):
+    """Match one workspace-relative literal path against an explicit scope."""
+    path = workspace_relative_path(path)
+    return _path_within(path, requirement.path) and not any(
+        _path_within(path, excluded) for excluded in requirement.exclude_paths
+    )
 
 
 class WorkspaceAcquisitionTarget(BaseModel):
@@ -74,14 +108,16 @@ def freeze_workspace_observations(run, raw) -> None:
 
 
 def workspace_execution_context(run) -> dict | None:
-    """Project frozen addressing and evidence obligations, never host authority.
+    """Project addressing and accepted evidence obligations, never host authority.
 
     Only the runtime-owned Run binding is considered. Tool execution still
     revalidates the live grant; this view neither grants access nor proves a read.
     Host paths, grant identifiers and credentials never enter the model context.
     """
+    from contracts.workspace_planning import effective_workspace_requirements
+
     binding = run.input.get("workspaceBinding")
-    requirements = workspace_observation_requirements(run.execution_state.get("workspaceObservations"))
+    requirements = effective_workspace_requirements(run)
     if binding is None and not requirements:
         return None
     bound = (isinstance(binding, dict) and bool(binding.get("workspaceId"))
@@ -126,27 +162,93 @@ def _current_records(run, store):
             if (isinstance(record, dict) and record.get("commitId") == commit.get("commitId")
                     and record.get("stepId") == step_id and record.get("runId") == owner_id):
                 records.append({**record, "_evidenceOwnerRunId": owner_id})
+        # Recovery revalidates these original receipts before the new node
+        # commits. They are evidence inputs, never actions of the new Attempt.
+        # The same request/receipt verifier below still checks their identities,
+        # workspace authority, completeness and subsequent mutation effects.
+        for record in commit.get("historicalToolEvidence") or ():
+            if (isinstance(record, dict) and record.get("tool") in {"fs.read", "fs.list"}
+                    and record.get("status") == "completed" and record.get("commitId")
+                    and record.get("commitId") != commit.get("commitId")
+                    and record.get("stepId") == step_id and record.get("runId") == owner_id):
+                records.append({**record, "_evidenceOwnerRunId": owner_id})
 
     for step in run.steps:
         ref = refs.get(step.step_id)
         if step.step_id in completed and ref:
             collect(run.run_id, step.step_id, ref, frozenset())
-    return records
+    list_mutations = getattr(store, "list_workspace_mutations", None)
+    if list_mutations is None:
+        return records
+    # The tool ledger is authoritative about effects, even if the node's
+    # projection disagrees or no node output was published.
+    mutations = [{**record, "_evidenceOwnerRunId": owner_id}
+                 for owner_id in dict.fromkeys((run.run_id, *commits_by_owner))
+                 for record in list_mutations(run_id=owner_id)]
+    mutation_refs = {record["receiptRef"] for record in mutations}
+    return mutations + [record for record in records if record.get("receiptRef") not in mutation_refs]
 
 
-def _verified_receipts(run, store, records):
+@dataclass(frozen=True)
+class _WorkspaceMutation:
+    tool: str
+    receipt_ref: str
+    completed_at: datetime
+    completed_at_text: str
+    path: str | None = None
+    listing_paths: frozenset[str] = frozenset()
+
+    def diagnostic(self):
+        return {"tool": self.tool, "receiptRef": self.receipt_ref,
+            "completedAt": self.completed_at_text, "reasonCode": "WORKSPACE_OBSERVATIONS_INVALIDATED"}
+
+
+def _latest_mutation(*mutations):
+    return max((item for item in mutations if item is not None),
+        key=lambda item: (item.completed_at, item.receipt_ref), default=None)
+
+
+def _mutation_listing_paths(path, *, include_ancestors):
+    directory = path.rpartition("/")[0] or "."
+    paths = {directory}
+    while include_ancestors and directory != ".":
+        directory = directory.rpartition("/")[0] or "."
+        paths.add(directory)
+    return frozenset(paths)
+
+
+def _invalidation_path_key(path):
+    # Hands currently writes through atomic replacement, so the affected file
+    # is this directory entry rather than other hard links to its old inode.
+    # Fold only invalidation lookup keys to catch Windows case aliases. Receipt
+    # paths and positive coverage checks keep their original literal identity;
+    # case-distinct files on other hosts may conservatively need another read.
+    return path.casefold()
+
+
+@dataclass(frozen=True)
+class _WorkspaceReceiptEvidence:
+    receipts: tuple = ()
+    invalidated_receipts: tuple = ()
+    invalidation: dict | None = None
+
+
+def _workspace_receipt_evidence(run, store, records):
     binding = run.input.get("workspaceBinding") or {}
     if not store or not binding.get("workspaceId") or not binding.get("grantId"):
-        return ()
+        return _WorkspaceReceiptEvidence()
     receipts, mutations = [], {}
     mutation_refs = {record.get("receiptRef") for record in records
-                     if record.get("tool") in {"fs.write", "fs.patch", "shell.exec"}}
+                     if record.get("tool") in WORKSPACE_MUTATION_TOOLS
+                     and record.get("workspaceId") in (None, binding["workspaceId"])}
     seen = set()
     for record in records:
         if record.get("tool") not in {"fs.read", "fs.list", "fs.write", "fs.patch", "shell.exec"} or record.get("status") != "completed":
             continue
         ref = record.get("receiptRef")
         if not ref or ref in seen:
+            continue
+        if record["tool"] in WORKSPACE_MUTATION_TOOLS and ref not in mutation_refs:
             continue
         seen.add(ref)
         try:
@@ -185,10 +287,22 @@ def _verified_receipts(run, store, records):
             ended = datetime.fromisoformat(receipt["completedAt"])
             if started.tzinfo is None or ended.tzinfo is None or ended < started:
                 continue
-            if record["tool"] in {"fs.write", "fs.patch", "shell.exec"}:
-                # Shell commands may modify unreported paths. A subsequent full
-                # observation is needed after any committed workspace mutation.
-                mutations[ref] = ended
+            if record["tool"] in WORKSPACE_MUTATION_TOOLS:
+                path, listing_paths = None, frozenset()
+                if record["tool"] != "shell.exec":
+                    output = receipt.get("output") or {}
+                    path = workspace_relative_path(output["path"])
+                    if path == "." or workspace_relative_path(request["input"]["path"]) != path:
+                        continue
+                    # A write can create missing parent directories. A patch,
+                    # or an explicitly reported update, only changes this file
+                    # and its immediate directory entry (which may carry size).
+                    if record["tool"] == "fs.write" and "operation" in output and output["operation"] not in {"create", "update"}:
+                        continue
+                    listing_paths = _mutation_listing_paths(path,
+                        include_ancestors=record["tool"] == "fs.write" and output.get("operation") != "update")
+                mutations[ref] = _WorkspaceMutation(record["tool"], ref, ended,
+                    receipt["completedAt"], path, listing_paths)
                 continue
             output = receipt.get("output") or {}
             path = workspace_relative_path(output["path"])
@@ -220,9 +334,28 @@ def _verified_receipts(run, store, records):
     if mutation_refs != set(mutations):
         # A failed/uncorrelated mutation may have partial effects. It cannot
         # leave earlier read coverage looking current.
-        return ()
-    last_mutation = max(mutations.values()) if mutations else None
-    current = [item for item in receipts if last_mutation is None or item[3] > last_mutation]
+        return _WorkspaceReceiptEvidence(invalidation={"status": "unknown",
+            "reasonCode": "WORKSPACE_OBSERVATION_EFFECTS_UNKNOWN"})
+    global_mutation, file_mutations, listing_mutations = None, {}, {}
+    for mutation in mutations.values():
+        if mutation.path is None:
+            # Arbitrary shell execution has no proven path-local effect.
+            global_mutation = _latest_mutation(global_mutation, mutation)
+            continue
+        path_key = _invalidation_path_key(mutation.path)
+        file_mutations[path_key] = _latest_mutation(file_mutations.get(path_key), mutation)
+        for path in mutation.listing_paths:
+            path_key = _invalidation_path_key(path)
+            listing_mutations[path_key] = _latest_mutation(listing_mutations.get(path_key), mutation)
+    current, invalidated = [], []
+    for item in receipts:
+        tool, path, output, started, _ = item
+        scoped = file_mutations if tool == "fs.read" else listing_mutations
+        mutation = _latest_mutation(global_mutation, scoped.get(_invalidation_path_key(path)))
+        if mutation is not None and started <= mutation.completed_at:
+            invalidated.append((tool, path, output, mutation))
+        else:
+            current.append(item)
     # Commit enumeration is not chronological (parallel nodes, retries and
     # reused prefixes). Prefer the most recent complete listing of each path.
     latest_listings = {}
@@ -235,8 +368,13 @@ def _verified_receipts(run, store, records):
         elif ended == previous[0] and output != previous[1]:
             # Equally timed conflicting snapshots cannot prove either scope.
             latest_listings[path] = (ended, {"entries": [{"name": ".", "type": "conflict"}]})
-    return (tuple((tool, path, output) for tool, path, output, *_ in current if tool == "fs.read")
-            + tuple(("fs.list", path, output) for path, (_, output) in sorted(latest_listings.items())))
+    verified = (tuple((tool, path, output) for tool, path, output, *_ in current if tool == "fs.read")
+                + tuple(("fs.list", path, output) for path, (_, output) in sorted(latest_listings.items())))
+    return _WorkspaceReceiptEvidence(receipts=verified, invalidated_receipts=tuple(invalidated))
+
+
+def _verified_receipts(run, store, records):
+    return _workspace_receipt_evidence(run, store, records).receipts
 
 
 def verified_node_workspace_receipts(run, store):
@@ -274,10 +412,12 @@ def _progress(requirements, receipts):
                         name = entry["name"]
                         if not isinstance(name, str) or name in {".", "..", ""} or "/" in name or "\\" in name:
                             raise ValueError("invalid directory entry")
+                        path = workspace_relative_path(name if directory == "." else directory + "/" + name)
+                        if not workspace_requirement_contains_path(requirement, path):
+                            continue
                         if name in names:
                             raise ValueError("duplicate directory entry")
                         names.add(name)
-                        path = workspace_relative_path(name if directory == "." else directory + "/" + name)
                         kind = entry["type"]
                     except (KeyError, TypeError, ValueError):
                         unsupported.add(directory)
@@ -318,15 +458,50 @@ def workspace_coverage_fingerprint(progress) -> str:
 
 
 def workspace_observation_progress(run, execution_value_store) -> tuple[dict, ...]:
-    requirements = workspace_observation_requirements(run.execution_state.get("workspaceObservations"))
+    from contracts.workspace_planning import effective_workspace_requirements
+
+    requirements = effective_workspace_requirements(run)
     if not requirements:
         return ()
-    return _progress(requirements, verified_node_workspace_receipts(run, execution_value_store))
+    evidence = (_workspace_receipt_evidence(run, execution_value_store,
+        _current_records(run, execution_value_store)) if execution_value_store else _WorkspaceReceiptEvidence())
+    progress = _progress(requirements, evidence.receipts)
+    for requirement, item in zip(requirements, progress):
+        if evidence.invalidation:
+            item["coverageInvalidation"] = dict(evidence.invalidation)
+            continue
+        scoped = [(tool, path, mutation) for tool, path, _, mutation in evidence.invalidated_receipts
+                  if _is_scoped_observation(requirement, tool, path)]
+        if scoped:
+            invalidated = {(tool, path) for tool, path, _ in scoped}
+            mutation = _latest_mutation(*(mutation for _, _, mutation in scoped))
+            # These are unique earlier observations, not a claim that shell
+            # wrote a file. Fresh receipts and coverage identities stay separate.
+            item["coverageInvalidation"] = {**mutation.diagnostic(),
+                "invalidatedReadCount": sum(tool == "fs.read" for tool, _ in invalidated),
+                "invalidatedListingCount": sum(tool == "fs.list" for tool, _ in invalidated)}
+    return progress
 
 
 def evaluate_run_workspace_observations(run, execution_value_store) -> tuple[str, ...]:
     return tuple(f"workspace_observation_incomplete:{i}" for i, item in enumerate(
         workspace_observation_progress(run, execution_value_store)) if not item["complete"])
+
+
+def _is_scoped_observation(requirement, tool, path):
+    if not workspace_requirement_contains_path(requirement, path):
+        return False
+    if requirement.kind == "file":
+        return tool == "fs.read" and path == requirement.path
+    if path == requirement.path:
+        return tool == "fs.list"
+    prefix = "" if requirement.path == "." else requirement.path + "/"
+    if path == "." or not path.startswith(prefix):
+        return False
+    relative = path[len(prefix):]
+    return (tool == "fs.list" and requirement.recursive
+            or tool == "fs.read" and requirement.operation == "read"
+            and (requirement.recursive or "/" not in relative))
 
 
 def _has_new_scoped_observation(requirements, previous, current):
@@ -340,24 +515,8 @@ def _has_new_scoped_observation(requirements, previous, current):
     for tool, path, _ in current:
         if (tool, path) in observed:
             continue
-        for requirement in requirements:
-            if requirement.kind == "file":
-                if tool == "fs.read" and path == requirement.path:
-                    return True
-                continue
-            if path == requirement.path:
-                if tool == "fs.list":
-                    return True
-                continue
-            prefix = "" if requirement.path == "." else requirement.path + "/"
-            if path == "." or not path.startswith(prefix):
-                continue
-            relative = path[len(prefix):]
-            if tool == "fs.list" and requirement.recursive:
-                return True
-            if (tool == "fs.read" and requirement.operation == "read"
-                    and (requirement.recursive or "/" not in relative)):
-                return True
+        if any(_is_scoped_observation(requirement, tool, path) for requirement in requirements):
+            return True
     return False
 
 
@@ -365,18 +524,24 @@ def node_workspace_observation_feedback(context, store, records) -> str | None:
     """Acquisition nodes must make scoped progress before claiming completion.
 
     This local check does not demand a whole repository in one Agent call. ACG
-    owns decomposition/review; its final gate checks all frozen requirements.
+    owns decomposition/review; its final gate checks all accepted requirements.
     """
     if getattr(context.step, "capability", None) != "information_extraction":
         return None
-    requirements = workspace_observation_requirements(context.run.execution_state.get("workspaceObservations"))
+    from contracts.workspace_planning import effective_workspace_requirements
+
+    requirements = effective_workspace_requirements(context.run)
     if not requirements:
         return None
-    previous = verified_node_workspace_receipts(context.run, store)
+    prior_records = _current_records(context.run, store)
+    previous = _verified_receipts(context.run, store, prior_records)
     before = _progress(requirements, previous)
     if all(item["complete"] for item in before):
         return None
-    current = _verified_receipts(context.run, store, records)
+    current = _verified_receipts(context.run, store, [
+        *(record for record in prior_records if record.get("tool") in WORKSPACE_MUTATION_TOOLS),
+        *records,
+    ])
     after = _progress(requirements, (*previous, *current))
     if before != after or _has_new_scoped_observation(requirements, previous, current):
         return None
@@ -387,15 +552,17 @@ def node_workspace_observation_feedback(context, store, records) -> str | None:
             + json.dumps(before, ensure_ascii=False, separators=(",", ":")))
 
 
-def node_workspace_acquisition_progress(context, store, records) -> dict | None:
-    """Describe the frozen acquisition page from correlated receipts, not claims.
+def node_workspace_page_progress(context, store, records, *, role="workspace_acquisition") -> dict | None:
+    """Describe a frozen evidence page from correlated receipts, not claims.
 
     This is advisory feedback for the current conversation. Only the existing
     node settlement and ACG coverage checks can accept the resulting evidence.
     """
     from contracts.planning import TaskImplementationBinding, TaskPlan
+    from contracts.workspace_planning import effective_workspace_requirements
 
-    if getattr(context.step, "capability", None) != "information_extraction" or not store:
+    capability = {"workspace_acquisition": "information_extraction", "workspace_review": "verification"}.get(role)
+    if capability is None or getattr(context.step, "capability", None) != capability or not store:
         return None
     state = context.run.execution_state
     try:
@@ -404,9 +571,10 @@ def node_workspace_acquisition_progress(context, store, records) -> dict | None:
                 if (binding := TaskImplementationBinding.model_validate(raw)).acg_node_id == context.step.step_id}
         if len(keys) != 1:
             return None
-        nodes = [node for node in plan.nodes if node.key in keys
-                 and node.metadata.get("source") == "workspace_review"
-                 and node.metadata.get("taskType") == "workspace_acquisition"]
+        nodes = [node for node in plan.nodes if node.key in keys and (
+            node.logical_role == role or (
+                node.metadata.get("source") == "workspace_review"
+                and node.metadata.get("taskType") == role))]
         if len(nodes) != 1:
             return None
         scopes = [constraint["workspaceReview"] for constraint in nodes[0].constraints
@@ -415,7 +583,7 @@ def node_workspace_acquisition_progress(context, store, records) -> dict | None:
             return None
         targets = tuple(dict.fromkeys(TypeAdapter(tuple[WorkspaceAcquisitionTarget, ...]).validate_python(
             scopes[0].get("targets"))))
-        requirements = workspace_observation_requirements(state.get("workspaceObservations"))
+        requirements = effective_workspace_requirements(context.run)
         if not targets or not requirements:
             return None
     except (AttributeError, KeyError, TypeError, ValueError):
@@ -431,3 +599,8 @@ def node_workspace_acquisition_progress(context, store, records) -> dict | None:
         "verifiedListingCount": len({path for tool, path in observed if tool == "fs.list"}),
         "remainingScope": list(_progress(requirements, receipts)),
         "evidenceStatus": "receipt_verified_not_committed"}
+
+
+def node_workspace_acquisition_progress(context, store, records) -> dict | None:
+    """Keep acquisition-turn feedback separate from the review of that page."""
+    return node_workspace_page_progress(context, store, records)

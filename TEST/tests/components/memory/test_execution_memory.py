@@ -82,12 +82,12 @@ def test_remember_step_output_writes_controlled_episodic_memory() -> None:
     record = memory.remember_step_output(
         run_id="run-a",
         step_id="analysis",
-        output={"answer": "safe"},
+        output={"answer": "components.safe"},
         policy=MemoryPolicy(policyId="episodic", allowedTypes=[MemoryType.EPISODIC]),
     )
 
     assert record is not None
-    assert record.content == {"answer": "safe"}
+    assert record.content == {"answer": "components.safe"}
     assert record.scope == "run-a"
     assert record.tags == ["execution", "analysis"]
 
@@ -99,12 +99,12 @@ def test_remember_step_output_returns_none_when_policy_rejects_write() -> None:
     record = memory.remember_step_output(
         run_id="run-a",
         step_id="analysis",
-        output={"answer": "safe"},
+        output={"answer": "components.safe"},
         policy=MemoryPolicy(policyId="semantic-only", allowedTypes=[MemoryType.SEMANTIC]),
     )
 
     assert record is None
-    assert memory.recall_for_step(run_id="run-a", step_id="analysis", query="safe") == []
+    assert memory.recall_for_step(run_id="run-a", step_id="analysis", query="components.safe") == []
 
 
 def test_remember_step_output_uses_declared_write_type() -> None:
@@ -114,7 +114,7 @@ def test_remember_step_output_uses_declared_write_type() -> None:
     record = memory.remember_step_output(
         run_id="run-a",
         step_id="analysis",
-        output={"answer": "safe"},
+        output={"answer": "components.safe"},
         memory_type=MemoryType.SEMANTIC,
         policy=MemoryPolicy(policyId="semantic", allowedTypes=[MemoryType.SEMANTIC]),
     )
@@ -129,7 +129,7 @@ def test_assert_step_ref_rejects_missing_or_misattributed_execution_memory() -> 
     record = memory.remember_step_output(
         run_id="run-a",
         step_id="extract",
-        output={"title": "safe"},
+        output={"title": "components.safe"},
     )
 
     assert record is not None
@@ -149,12 +149,12 @@ def test_remember_step_output_reuses_same_commit_memory_and_rejects_changed_outp
     first = memory.remember_step_output(
         run_id="run-a",
         step_id="extract",
-        output={"title": "safe"},
+        output={"title": "components.safe"},
     )
     repeated = memory.remember_step_output(
         run_id="run-a",
         step_id="extract",
-        output={"title": "safe"},
+        output={"title": "components.safe"},
     )
 
     assert first is not None
@@ -184,3 +184,83 @@ def test_sqlite_memory_store_survives_reopen_for_same_run(tmp_path) -> None:
     records = reopened.recall_for_step(run_id="run-a", step_id="deliver", query="persisted")
     assert [record.memory_id for record in records] == ["memory:run-a:extract"]
     reopened_store.close()
+
+
+def test_sqlite_recall_reads_scoped_candidates_without_loading_other_runs(tmp_path, monkeypatch) -> None:
+    store = SQLiteMemoryStore(db_path=tmp_path / "memory.sqlite3")
+    try:
+        service = MemoryService(store=store)
+        service.remember_step_output(run_id="run-a", step_id="extract", output={"summary": "lease capacity",
+            "evidenceRefs": ["evidence:original"]})
+        service.remember_step_output(run_id="run-b", step_id="extract", output={"summary": "lease capacity"})
+        monkeypatch.setattr(store, "values", lambda: pytest.fail("scoped recall must not load every run"))
+
+        recalled = service.recall_for_step(run_id="run-a", step_id="review", query="lease")
+
+        assert [record.memory_id for record in recalled] == ["memory:run-a:extract"]
+        service.assert_step_ref(run_id="run-a", step_id="extract", memory_ref=recalled[0].memory_id)
+        assert recalled[0].content["evidenceRefs"] == ["evidence:original"]
+    finally:
+        store.close()
+
+
+def test_legacy_store_without_scoped_reads_still_has_scope_filtered_before_ranking() -> None:
+    class LegacyStore:
+        def values(self):
+            return [_record(run_id="run-a", memory_id="fact-a"), _record(run_id="run-b", memory_id="fact-b")]
+
+    service = MemoryService(store=LegacyStore())
+
+    records = service.recall_for_step(run_id="run-a", step_id="review", query="fact")
+
+    assert [record.memory_id for record in records] == ["fact-a"]
+
+
+def test_same_named_work_items_recall_their_own_goal_and_source_without_querying_source_bodies() -> None:
+    from components.executor.node_runner import ACGNodeRunner
+    from contracts.workflow import WorkflowStep
+
+    service = MemoryService()
+    service.remember_step_output(run_id="run-a", step_id="lease-finding",
+        output={"summary": "atomic lease capacity invariant confirmed"})
+    service.remember_step_output(run_id="run-a", step_id="parser-finding",
+        output={"summary": "syntax tokenizer invariant confirmed"})
+    service.remember_step_output(run_id="run-a", step_id="unrelated-finding",
+        output={"summary": "old weather forecast"})
+    private_body = "PRIVATE-BODY unrelated-finding weather forecast"
+    lease = WorkflowStep(stepId="lease-review", name="Review page", agentName="reviewer", goal="Verify atomic lease capacity",
+        acceptanceCriteria=["Check capacity invariant"], sourceRefs=["src/lease_guard.py"],
+        input={"sourceBody": private_body})
+    parser = WorkflowStep(stepId="parser-review", name="Review page", agentName="reviewer", goal="Verify syntax tokenizer",
+        acceptanceCriteria=["Check tokenizer invariant"], sourceRefs=["src/syntax_parser.py"],
+        input={"sourceBody": private_body})
+
+    lease_query = ACGNodeRunner._memory_retrieval_query(lease)
+    parser_query = ACGNodeRunner._memory_retrieval_query(parser)
+    lease_records = service.recall_for_step(run_id="run-a", step_id=lease.step_id, query=lease_query, limit=10)
+    parser_records = service.recall_for_step(run_id="run-a", step_id=parser.step_id, query=parser_query, limit=10)
+
+    assert lease_records[0].memory_id == "memory:run-a:lease-finding"
+    assert parser_records[0].memory_id == "memory:run-a:parser-finding"
+    assert "memory:run-a:unrelated-finding" not in {r.memory_id for r in [*lease_records, *parser_records]}
+    assert private_body not in lease_query and private_body not in parser_query
+
+
+def test_source_reference_can_recall_a_matching_memory_when_the_goal_is_generic() -> None:
+    from components.executor.node_runner import ACGNodeRunner
+    from contracts.workflow import WorkflowStep
+
+    service = MemoryService()
+    service.remember_step_output(run_id="run-a", step_id="lease-finding",
+        output={"summary": "lease_guard.py capacity mismatch"})
+    service.remember_step_output(run_id="run-a", step_id="unrelated-finding",
+        output={"summary": "syntax_parser.py invalid token"})
+    step = WorkflowStep(stepId="review", name="Review page", agentName="reviewer", goal="Inspect remaining source",
+        sourceRefs=["src/lease_guard.py"])
+
+    records = service.recall_for_step(run_id="run-a", step_id=step.step_id,
+        query=ACGNodeRunner._memory_retrieval_query(step), limit=10)
+
+    assert records[0].memory_id == "memory:run-a:lease-finding"
+    assert records[0].content["summary"] == "lease_guard.py capacity mismatch"
+    assert records[0].tags == ["execution", "lease-finding"]

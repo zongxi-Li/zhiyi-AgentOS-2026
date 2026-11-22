@@ -119,9 +119,14 @@ class WorkspaceAuthority:
             run_input['workspaceBinding'] = selected
 
     def resolve(self, run):
+        from contracts.tools import ToolExecutionAuthorizationLost
+
         binding = run.input.get('workspaceBinding')
-        return self._resolve(binding, str(run.input.get('authenticatedUserId')),
-                             run.input.get('authenticatedTenantId') or '__unscoped__')
+        try:
+            return self._resolve(binding, str(run.input.get('authenticatedUserId')),
+                                 run.input.get('authenticatedTenantId') or '__unscoped__')
+        except OSError as exc:
+            raise ToolExecutionAuthorizationLost('The frozen workspace execution authority is no longer valid') from exc
 
     def resolve_current(self, actor):
         owner, tenant = self.owner(actor)

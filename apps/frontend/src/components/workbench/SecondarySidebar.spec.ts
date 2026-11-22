@@ -1,4 +1,5 @@
 import { mount } from '@vue/test-utils'
+import { defineComponent } from 'vue'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
 import { createWorkbenchRegistry } from '@/workbench/registry'
@@ -187,6 +188,22 @@ const mountSidebar = (overrides: Partial<{
 }
 
 describe('SecondarySidebar', () => {
+  it('retains the resource view across node selections but replaces it for another run', async () => {
+    const resourceView = defineComponent({ props: ['context'], template: '<div>{{ context.selectedAcgNodeId }}</div>' })
+    const registry = createWorkbenchRegistry().register({ id: 'resource-test', secondarySidebarViews: [
+      { id: 'resource.view', title: '资源', order: 1, component: resourceView, when: () => true }
+    ] })
+    const context = inspectorContext()
+    const wrapper = mount(SecondarySidebar, { props: { registry, context, title: '资源' } })
+    const original = wrapper.findComponent(resourceView).vm
+    await wrapper.setProps({ context: { ...context, selectedAcgNodeId: 'node_other',
+      selectedSemanticTaskKey: 'other', activeEditorId: 'other-editor' } })
+    expect(wrapper.findComponent(resourceView).vm).toBe(original)
+    expect(wrapper.text()).toContain('node_other')
+    await wrapper.setProps({ context: { ...context, runId: 'run_2' } })
+    expect(wrapper.findComponent(resourceView).vm).not.toBe(original)
+    wrapper.unmount()
+  })
   afterEach(() => {
     localStorage.clear()
   })

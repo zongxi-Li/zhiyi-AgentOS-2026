@@ -92,7 +92,9 @@ runtime / scheduler / adapters -> application -> ports
 3. **租约确认**：`bind_ready()` 按排序结果逐个申请容量租约。RuntimeSnapshot 的 available slots 是遥测，不是并发容量的权威账本；并发占用由 LeaseCoordinator 决定。冲突时继续尝试下一候选。
 4. **复核并冻结**：取得租约后重新读取 Runtime 快照，版本未变化才建立 `ExecutionBinding`，绑定中固定资源、Node、快照版本和租约版本；快照已变化则释放租约并尝试其他候选。
 
-没有合格 Runtime 或没有满足需求的模型端点属于永久配置缺口，`bind_ready()` 返回 `rejected`，执行流程立即报错；只有暂时没有租约容量才返回 `queued` 并进入有界等待。
+没有合格 Runtime 或没有满足需求的模型端点属于配置缺口，`bind_ready()` 返回 `rejected`，执行流程立即报错；暂时没有租约容量返回 `queued`，由同一调度器的 `wait_ready()` 等待。Step 分配和 Hands 工具分配复用该入口：本地释放主动唤醒，跨进程释放和租约到期通过退避复查发现；每次重试前检查取消、Permit 或工作区授权。正式 Step 调度持续等待，不设置固定排队截止时间或次数上限，也不消耗 Agent 的工作时间预算。图就绪的步骤在获得租约前保持 `pending`，排队事实通过 `node.queued` 发布并保留供断线重放；获得 Agent 后才记录 `running` 和执行开始时间。
+
+`assess()` 同时检查宿主和匹配 Agent 实例的租约容量，提供当前是否可分配的事实；无关 Agent 的空位不能充当目标能力的容量。就绪检查不预留资源，实际分配仍由 `bind_ready()` 的原子租约申请确认。
 
 默认 placement 软偏好定义于 `scheduler/placement_policy.py`：Device `1.0`、Edge `0.5`、Cloud `0.0`，评分权重 `0.15`。因此默认是“端优先、边缘次选、云端兜底”，但这不是硬路由：硬约束只剩 Cloud 时仍可选 Cloud；端资源无租约容量时可继续尝试 Edge/Cloud。
 

@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Any
 
 AGENTOS_KERNEL_PROMPT_VERSION = "agentos-kernel.v2"
-PLANNER_PRESET_PROMPT_VERSION = "planner-preset.v1"
+PLANNER_PRESET_PROMPT_VERSION = "planner-preset.v2"
 EXECUTOR_PRESET_PROMPT_VERSION = "executor-preset.v1"
 VERIFIER_PRESET_PROMPT_VERSION = "verifier-preset.v1"
 SYNTHESIZER_PRESET_PROMPT_VERSION = "synthesizer-preset.v1"
@@ -81,10 +81,15 @@ expected deliverables, and acceptance requirements.
 Task:
 A meaningful unit of work with an independent objective,
 capability requirement, expected result, and acceptance criteria.
+Choose work from the mission and evidence. An intent capability prediction
+is an execution option, not a requirement to create a separate task.
 
 Step:
 A schedulable computation unit in the compiled execution graph.
 Semantic tasks are mapped to executable structures by the compiler.
+Its core is the declared goal, authorized inputs, and expected output.
+The scheduler assigns execution agents and leases resources; the task does
+not choose an Agent, LLM, tool instance, quota, or execution environment.
 
 ACG:
 A computation graph describing task dependencies, execution,
@@ -101,6 +106,8 @@ available materials, and capability catalog.
 Identify meaningful tasks and the results each must produce.
 Separate work only where distinct responsibility, capability,
 verification, parallelism, or data dependencies justify it.
+Reuse committed work and its outputs; a capability label alone does not
+justify repeating discovery, analysis, or design.
 
 3. CONNECT
 Establish prerequisite relationships between tasks.
@@ -116,6 +123,13 @@ Examine the candidate plan for:
 - Missing capability prerequisites.
 - Cyclic dependencies.
 - Missing verification where required.
+Review evidence and the impact of suspected issues without assuming the
+suspicions are true. A supported finding may be normal, defective, or
+unresolved. Check a revised candidate again before final synthesis;
+the draft's review does not approve a later revision.
+Carry the original acceptance criteria into the new review and connect the
+current candidate as an input. Citing an old review cannot replace covering
+its obligations; distinct reviewers may cover different criteria in parallel.
 
 5. REVISE
 Correct identified problems before returning the candidate plan.
@@ -186,6 +200,8 @@ Return only the JSON required by the current output schema.
 
 Use capability identifiers exclusively from the supplied capabilityCatalog.
 Respect mandatory capability dependencies.
+These supply required inputs of selected tasks. Do not turn every capability
+suggested by the semantic profile or every optional dependency into new work.
 Do not invent capabilities or source references.
 
 For task decomposition, provide clear objectives, a primary capability,
@@ -197,7 +213,7 @@ For depends_on relations:
 - The dependency graph must be acyclic.
 
 Declare control policies only when the current contract permits them.
-Otherwise, represent necessary checks and corrections with bounded
+Otherwise, represent necessary checks and corrections with
 forward-dependent tasks.
 
 Write human-readable content in the user's language.

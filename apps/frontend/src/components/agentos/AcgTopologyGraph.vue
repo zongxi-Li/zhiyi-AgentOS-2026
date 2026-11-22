@@ -432,12 +432,26 @@ const contextAnchorId = computed(() => {
 const contextAnchorName = computed(() =>
   executionBlueprint.value?.nodes.find(node => node.nodeId === contextAnchorId.value)?.name || contextAnchorId.value)
 // Use positions from the whole execution graph so stepping through adjacent tasks does not shuffle columns.
+let executionLayoutKey = ''
+let cachedExecutionPositions = new Map<string, { x: number; y: number }>()
 const executionPositions = computed(() => {
+  const nodes = executionBlueprint.value?.nodes || []
+  const edges = executionBlueprint.value?.edges || []
   const parents = new Map<string, string>()
   for (const state of props.historical ? [] : props.stepStates || []) {
     if (state.task?.parentTaskId) parents.set(state.stepId, state.task.parentTaskId)
   }
-  return executionLayout(executionBlueprint.value?.nodes || [], executionBlueprint.value?.edges || [], parents)
+  // Polls replace status snapshots and graph objects. Only layout inputs should
+  // rerun crossing minimization; labels, receipts and progress use these positions.
+  const key = JSON.stringify([
+    nodes.map((node, index) => [node.nodeId, node.display?.displayOrder ?? index, parents.get(node.nodeId) || null]),
+    [...new Set(edges.map(edge => JSON.stringify([edge.sourceId, edge.targetId])))].sort(),
+  ])
+  if (key !== executionLayoutKey) {
+    cachedExecutionPositions = executionLayout(nodes, edges, parents)
+    executionLayoutKey = key
+  }
+  return cachedExecutionPositions
 })
 
 const visibleBlueprint = computed<GraphProjection | null>(() => {
