@@ -65,6 +65,28 @@ class AgentPool:
                 enabled=registration.implementation.profile.enabled,
             )
 
+    def prune_previous_registries(self, coordinator) -> tuple[str, ...]:
+        """Delete idle local instance facts from earlier process epochs only."""
+        current = self.registry.registrations()
+        if not current:
+            return ()  # No verified current epoch: never guess which facts are stale.
+        epochs = {item.ref.registry_id for item in current}
+        removed = []
+        for profile in self.resource_plane.runtimes():
+            ref = profile.agent_registration
+            if (profile.kind is not RuntimeKind.AGENT_INSTANCE or ref is None
+                    or ref.registry_id in epochs or profile.host_runtime_id != self.host_runtime_id
+                    or profile.metadata.get("managedBy") != "agent-pool"):
+                continue
+            if profile.metadata.get("outcomeUnknown") or coordinator.active_slots(profile.runtime_id) > 0:
+                continue
+            self.resource_plane.set_agent_instance_state(
+                ref, expected_version=profile.version, enabled=False, draining=True,
+            )
+            self.resource_plane.unregister_agent_instance(ref)
+            removed.append(profile.runtime_id)
+        return tuple(removed)
+
     def register_instance(self, agent: BaseAgent, *, instance_id: str, expected_generation: int | None = None,
                           host_runtime_id: str | None = None, enabled: bool | None = None) -> AgentRegistrationRef:
         if enabled is not None and type(enabled) is not bool:

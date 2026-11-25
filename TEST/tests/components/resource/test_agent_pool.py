@@ -442,3 +442,42 @@ def test_sqlite_restart_keeps_old_facts_separate_from_the_new_registry_epoch(tmp
     finally:
         reopened_store.close()
         reopened_health.close()
+
+
+def test_prunes_idle_previous_epochs_without_deleting_current_or_other_hosts(pool):
+    from unittest.mock import Mock
+    previous_registry = AgentRegistry()
+    previous_registry.register(_agent())
+    previous = AgentPool(registry=previous_registry, resource_plane=pool.resource_plane,
+                         host_runtime_id=EMBEDDED_AGENTS_RUNTIME_ID)
+    previous.synchronize()
+    old_ref = previous_registry.registrations()[0].ref
+    pool.resource_plane.ensure_node("node:remote", placement=Placement.EDGE)
+    pool.resource_plane.register_runtime(RuntimeProfile(runtimeId="host:remote", nodeId="node:remote",
+        placement=Placement.EDGE, capabilities=["exec.agents"]))
+    other_ref = previous.register_instance(_agent(), instance_id="other-host", host_runtime_id="host:remote")
+    current_ref = pool.registry.registrations()[0].ref
+    coordinator = Mock(active_slots=Mock(return_value=0))
+    assert pool.prune_previous_registries(coordinator) == (old_ref.resource_id,)
+    with pytest.raises(KeyError):
+        pool.resource_plane.runtime(old_ref.resource_id)
+    assert pool.resource_plane.runtime(current_ref.resource_id).enabled
+    assert pool.resource_plane.runtime(other_ref.resource_id).enabled
+    assert pool.resource_plane.runtime(EMBEDDED_AGENTS_RUNTIME_ID)
+    assert pool.prune_previous_registries(coordinator) == ()
+
+
+@pytest.mark.parametrize('reason', ['active', 'unknown'])
+def test_pruning_preserves_instances_with_unresolved_work(pool, reason):
+    from unittest.mock import Mock
+    registry = AgentRegistry()
+    registry.register(_agent())
+    old = AgentPool(registry=registry, resource_plane=pool.resource_plane,
+                    host_runtime_id=EMBEDDED_AGENTS_RUNTIME_ID)
+    old.synchronize()
+    ref = registry.registrations()[0].ref
+    if reason == 'unknown':
+        pool.resource_plane.quarantine_agent_instance(ref)
+    coordinator = Mock(active_slots=Mock(return_value=1 if reason == 'active' else 0))
+    assert pool.prune_previous_registries(coordinator) == ()
+    assert pool.resource_plane.runtime(ref.resource_id)

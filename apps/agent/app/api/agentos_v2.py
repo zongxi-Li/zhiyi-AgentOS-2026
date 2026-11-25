@@ -43,6 +43,7 @@ from contracts.resource import (
     NodeProfile,
     NodeSnapshot,
     RuntimeProfile,
+    RuntimeKind,
     RuntimeSnapshot,
 )
 from components.mission.state_machine import InvalidStateTransition
@@ -467,6 +468,7 @@ def _project_runtime_profile(profile: RuntimeProfile, node: NodeProfile | None =
         "resourceId": profile.runtime_id,
         "resourceType": _RUNTIME_KIND_TO_LEGACY_TYPE.get(profile.kind.value, "worker"),
         "runtimeKind": profile.kind.value,
+        "hostRuntimeId": profile.host_runtime_id,
         "displayName": profile.display_name,
         "deploymentTier": profile.placement.value,
         "capabilities": list(profile.capabilities),
@@ -1211,6 +1213,7 @@ def create_router(
             raise HTTPException(status_code=503, detail="resource query source unavailable")
 
         items: list[dict[str, Any]] = []
+        current_agent_refs = {item.ref for item in runtime.agent_registry.registrations()}
         for profile in plane.runtimes():
             versioned = plane.runtime_snapshot(profile.runtime_id)
             health = plane.health_monitor.health(profile.runtime_id)
@@ -1223,6 +1226,12 @@ def create_router(
                 host_node = plane.node(profile.node_id)
             except KeyError:
                 host_node = None
+            # A previous epoch may still await lease/outcome reconciliation.
+            # It cannot be presented as a current callable implementation.
+            historical = (profile.kind is RuntimeKind.AGENT_INSTANCE
+                          and profile.agent_registration not in current_agent_refs)
+            if historical:
+                continue
             items.append({
                 "profile": _project_runtime_profile(profile, host_node),
                 "snapshot": versioned.snapshot.model_dump(by_alias=True, mode="json"),
