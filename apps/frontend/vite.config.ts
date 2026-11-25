@@ -115,6 +115,9 @@ export default defineConfig(({ mode, command }) => {
     },
     optimizeDeps: {
       include: [
+        // The lazy execution graph shares Vue's render context with the shell.
+        // Prebundle it at startup so loading the workbench cannot split that runtime.
+        '@vue-flow/core',
         'vis-data',
         'vis-network',
         // CodeMirror 全家钉进启动期预构建：编辑器是懒加载路由，若靠惰性发现，
