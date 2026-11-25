@@ -8,7 +8,6 @@
       <template #main>
         <main class="rag-view__main" aria-label="知识库">
           <WorkspacePageHero
-            eyebrow="KNOWLEDGE BASE"
             title="知识库"
           >
             <template #actions>

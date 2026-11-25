@@ -4,8 +4,7 @@
       <main class="project-list" aria-label="Projects">
         <header class="project-list__header">
           <div>
-            <span class="project-list__eyebrow">PROJECTS</span>
-            <h1>工程项目</h1>
+            <h1>工程</h1>
             <!-- <p>每个项目拥有独立的 Mission、Runs 与只读交付物。</p> -->
           </div>
           <button class="project-list__create" type="button" @click="createMission">
@@ -67,10 +66,12 @@
           <span>{{ errorMessage }}</span>
           <button type="button" @click="loadMissions">重新加载</button>
         </section>
-        <section v-else-if="!filteredMissions.length" class="project-list__state" role="status">
-          <strong>{{ searchText ? '没有匹配的项目' : '还没有工程项目' }}</strong>
-          <span>{{ searchText ? '换一个名称或 Mission ID 试试。' : '创建第一个 Mission，开始一次运行。' }}</span>
-          <button v-if="!searchText" type="button" @click="createMission">新建工程</button>
+        <section v-else-if="!filteredMissions.length && searchText" class="project-list__state" role="status">
+          <strong>没有匹配的项目</strong>
+          <span>换一个名称或 Mission ID 试试。</span>
+        </section>
+        <section v-else-if="!filteredMissions.length" class="project-list__state project-list__state--first" role="status">
+          <BrandEmpty text="创建第一个工程项目" :size="140" />
         </section>
         <section v-else class="project-list__rows" :class="{ 'is-grid': viewMode === 'grid' }" aria-label="Mission Projects">
           <div
@@ -193,6 +194,7 @@ import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref } from
 import { useRouter } from 'vue-router'
 import { CopyDocument, Delete as DeleteIcon, Document, Download, FolderAdd, FolderOpened, Grid, List, Memo, MoreFilled, Plus, Search, Tickets, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import BrandEmpty from '@/components/common/BrandEmpty.vue'
 import BrandLoader from '@/components/common/BrandLoader.vue'
 import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
 import { agentosApi, type MissionListItem, type WorkflowRunSummary } from '@/services/api/agentos'
@@ -592,9 +594,9 @@ onBeforeUnmount(() => {
 .project-list__eyebrow { color: var(--primary-color); font: 10px var(--font-mono, monospace); letter-spacing: .14em; }
 .project-list h1 { margin: 8px 0 5px; font-size: 25px; line-height: 1.2; }
 .project-list__header p { margin: 0; color: var(--text-secondary); font-size: 12px; }
-/* 按钮配色取自首页花环：白花 #E2E1DA / 松果褐 #482E19 */
-.project-list__create, .project-list__state button { display: inline-flex; align-items: center; gap: 7px; border: 1px solid transparent; border-radius: 7px; padding: 10px 15px; color: #482E19; background: #E2E1DA; cursor: pointer; font-size: 12px; }
-.project-list__create:hover, .project-list__state button:hover, .project-list__create:focus-visible, .project-list__state button:focus-visible { background: #EFEEE6; }
+/* 主操作按钮：主题深蓝→亮蓝渐变，贴合暗色底（原花环奶油配色只适合浅色主题） */
+.project-list__create, .project-list__state button { display: inline-flex; align-items: center; gap: 7px; border: 1px solid color-mix(in srgb, var(--accent-color) 34%, transparent); border-radius: 7px; padding: 10px 15px; color: #F2F8FF; background: linear-gradient(135deg, color-mix(in srgb, var(--accent-color) 52%, var(--primary-color)) 0%, var(--primary-color) 100%); box-shadow: 0 2px 12px color-mix(in srgb, var(--primary-color) 32%, transparent); cursor: pointer; font-size: 12px; font-weight: 600; }
+.project-list__create:hover, .project-list__state button:hover, .project-list__create:focus-visible, .project-list__state button:focus-visible { border-color: color-mix(in srgb, var(--accent-color) 62%, transparent); background: linear-gradient(135deg, color-mix(in srgb, var(--accent-color) 70%, var(--primary-color)) 0%, color-mix(in srgb, var(--accent-color) 24%, var(--primary-color)) 100%); box-shadow: 0 3px 16px color-mix(in srgb, var(--accent-color) 30%, transparent); }
 .project-list__toolbar, .project-list__rows, .project-list__state { max-width: 1040px; width: 100%; margin: 0 auto; }
 .project-list__toolbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0; }
 .project-list__search { display: flex; align-items: center; gap: 10px; box-sizing: border-box; width: min(460px, 100%); min-height: 38px; padding: 0 12px; border: 1px solid var(--border-light); border-radius: 9px; color: var(--text-muted); background: color-mix(in srgb, var(--surface-subtle) 82%, transparent); transition: border-color 160ms var(--ease-out), background-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out); }
@@ -644,6 +646,11 @@ onBeforeUnmount(() => {
 .project-row.is-grid .project-row__actions { grid-column: 3; grid-row: 1; }
 .project-row.is-grid .project-row__arrow { grid-column: 4; grid-row: 1; }
 .project-list__state { display: grid; justify-items: center; gap: 8px; padding: 100px 20px; color: var(--text-secondary); text-align: center; }
+/* 首启空态：固定上边距居中偏上（比原 100px 低、比垂直居中高），花环还原原色不做灰化压暗 */
+.project-list__state--first { padding: 180px 20px 40px; }
+.project-list__state--first :deep(.brand-empty) { gap: 16px; padding: 0; }
+.project-list__state--first :deep(.brand-empty__mark) { opacity: 1; filter: none; }
+.project-list__state--first :deep(.brand-empty__text) { margin: 0; color: var(--text-primary); font-family: var(--font-serif); font-size: 17px; font-weight: 600; letter-spacing: .02em; }
 .project-list__state strong { color: var(--text-primary); font-size: 15px; }
 .project-list__state span { font-size: 12px; }
 .project-list__state button { margin-top: 8px; }
