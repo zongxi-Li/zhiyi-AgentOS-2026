@@ -82,14 +82,12 @@ const formatTime = (time: string) => {
 }
 
 .knowledge-documents__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 58px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border-light);
-}
+ display: flex;
+ align-items: center;
+ justify-content: space-between;
+ gap: 16px;
+ min-height: 58px;
+ padding: 10px 14px; }
 
 .knowledge-documents__eyebrow {
   color: var(--primary-color);

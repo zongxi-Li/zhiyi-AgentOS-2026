@@ -11,9 +11,9 @@ defineProps<{ active: 'overview' | 'manage' | 'store' }>()
 </script>
 
 <style scoped>
-.resource-nav { display: flex; gap: 22px; min-height: 42px; border-bottom: 1px solid var(--border-light); }
+.resource-nav { display: flex; gap: 22px; min-height: 42px; }
 .resource-nav a { display: inline-flex; align-items: center; position: relative; color: var(--text-secondary); text-decoration: none; font-size: 12px; }
 .resource-nav a:hover, .resource-nav a[aria-current="page"] { color: var(--text-primary); }
-.resource-nav a[aria-current="page"]::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; content: ''; background: var(--primary-color); }
+.resource-nav a[aria-current="page"]::after { position: absolute; right: 0; bottom: 0; left: 0; height: 2px; content: ''; background: var(--primary-color); }
 @media (max-width: 520px) { .resource-nav { gap: 18px; } }
 </style>

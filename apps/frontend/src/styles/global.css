@@ -855,10 +855,16 @@ html[data-workbench-status-bar='on'] .app-shell-body {
   box-shadow: var(--shadow-lg) !important;
 }
 
+/* 装饰性横线收敛：卡片 / 对话框 / 抽屉的标题分隔线不再画，靠留白与底色分层。 */
+.el-card__header,
+.el-dialog__header,
+.el-drawer__header {
+  border-bottom: 0 !important;
+}
+
 .el-drawer__header {
   margin-bottom: 0;
   padding: 22px 24px 16px;
-  border-bottom: 1px solid var(--border-light);
   color: var(--text-primary);
 }
 

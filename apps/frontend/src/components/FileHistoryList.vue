@@ -504,7 +504,6 @@ watch(() => props.searchKeyword, () => {
   min-height: 62px;
   padding: 9px 12px;
   border: 0;
-  border-bottom: 1px solid var(--border-light);
   border-radius: 0;
   background: transparent;
   transition: background-color 160ms ease;
@@ -529,7 +528,7 @@ watch(() => props.searchKeyword, () => {
 .item-right { gap: 2px; opacity: 1; transform: none; }
 .item-right .action-btn { width: 26px; height: 26px; border-radius: 5px; color: var(--text-disabled); }
 .loading-state { display: flex; flex-direction: column; gap: 0; }
-.skeleton-item { padding: 9px 12px; border: 0; border-bottom: 1px solid var(--border-light); border-radius: 0; }
+.skeleton-item { padding: 9px 12px; border: 0; border-radius: 0; }
 .empty-state { padding: 64px 20px; }
 .empty-state .empty-content .empty-icon { width: 40px; height: 40px; margin-bottom: 10px; border-radius: 8px; font-size: 20px; background: var(--primary-fade); }
 </style>

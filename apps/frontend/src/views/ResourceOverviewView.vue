@@ -3,7 +3,7 @@
     <WorkbenchLayout :show-left="false" :show-right="false" storage-key="zhiyi.resources.overview.v2">
       <template #main>
         <main class="resource-page__main" aria-label="资源概览">
-          <WorkspacePageHero eyebrow="RESOURCE PLANE / 01" title="资源概览">
+          <WorkspacePageHero title="资源概览">
             <template #actions>
               <RouterLink class="resource-button resource-button--primary" to="/agentos/resources/store">浏览资源商店</RouterLink>
             </template>
@@ -140,7 +140,7 @@ onBeforeUnmount(() => controller?.abort())
 .tier-readout.is-edge > i { border-color: color-mix(in srgb, var(--success) 38%, transparent); }
 .tier-readout.is-cloud > i { border-color: color-mix(in srgb, #55a8ce 35%, transparent); }
 .resource-overview-grid { margin-top: 12px; }
-.resource-overview-grid__heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border-light); }
+.resource-overview-grid__heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; padding-bottom: 12px; }
 .resource-overview-grid__heading h2 { margin: 5px 0 0; font-size: 16px; font-weight: 600; }
 .resource-overview-grid__heading > a, .resource-overview-footer a { display: inline-flex; align-items: center; gap: 6px; color: var(--primary-color); text-decoration: none; font-size: 11px; }
 .resource-loading, .resource-empty { display: grid; justify-items: center; gap: 9px; min-height: 190px; align-content: center; color: var(--text-secondary); font-size: 12px; }
@@ -148,7 +148,7 @@ onBeforeUnmount(() => controller?.abort())
 .resource-loading button, .resource-empty a { border: 0; color: var(--primary-color); background: transparent; text-decoration: underline; cursor: pointer; font: inherit; }
 .resource-empty strong { color: var(--text-primary); font-size: 14px; }
 .resource-empty__mark { display: grid; place-items: center; width: 38px; aspect-ratio: 1; border: 1px solid var(--primary-line); color: var(--primary-color); font-size: 22px; }
-.resource-recent-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) 90px 72px; align-items: center; gap: 13px; min-height: 66px; border-bottom: 1px solid var(--border-light); }
+.resource-recent-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) 90px 72px; align-items: center; gap: 13px; min-height: 66px; }
 .resource-recent-row__signal { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); }
 .resource-recent-row__signal.is-online { background: var(--success); box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 12%, transparent); }
 .resource-recent-row__signal.is-degraded, .resource-recent-row__signal.is-unknown { background: var(--warning); }
@@ -157,7 +157,7 @@ onBeforeUnmount(() => controller?.abort())
 .resource-recent-row__name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 550; }
 .resource-recent-row__name span, .resource-recent-row__tier, .resource-recent-row__health { color: var(--text-muted); font-size: 10px; }
 .resource-recent-row__health { text-align: right; }
-.resource-overview-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 28px; padding-top: 13px; border-top: 1px solid var(--border-light); color: var(--text-muted); font-size: 10px; }
-@media (max-width: 760px) { .resource-pulse { grid-template-columns: 1fr; }.resource-pulse__lead { border-right: 0; border-bottom: 1px solid var(--border-light); }.resource-pulse__tiers { min-height: 128px; }.tier-readout { gap: 7px; padding: 12px 8px; }.tier-readout strong { font-size: 25px; }.tier-readout__index { display: none; } }
+.resource-overview-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 28px; padding-top: 13px; color: var(--text-muted); font-size: 10px; }
+@media (max-width: 760px) { .resource-pulse { grid-template-columns: 1fr; }.resource-pulse__lead { border-right: 0; }.resource-pulse__tiers { min-height: 128px; }.tier-readout { gap: 7px; padding: 12px 8px; }.tier-readout strong { font-size: 25px; }.tier-readout__index { display: none; } }
 @media (max-width: 480px) { .resource-page__main { padding-right: 14px; padding-left: 14px; }.resource-pulse { margin-top: 18px; }.resource-recent-row { grid-template-columns: 8px minmax(0, 1fr) 58px; gap: 8px; }.resource-recent-row__health { display: none; }.resource-recent-row__tier { text-align: right; }.resource-overview-footer { align-items: flex-start; flex-direction: column; } }
 </style>

@@ -281,7 +281,6 @@ onMounted(() => {
   display: flex;
   gap: 4px;
   padding: 14px 0 0;
-  border-bottom: 1px solid var(--border-light);
 }
 
 .rag-tabs button {

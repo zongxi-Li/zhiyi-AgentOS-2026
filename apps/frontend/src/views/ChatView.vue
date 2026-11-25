@@ -2669,7 +2669,6 @@ const handleHeroLogoPointerUp = () => {
   justify-content: space-between;
   gap: 18px;
   padding: 0 16px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border-light) 72%, transparent);
 }
 
 .context-panel__identity,
@@ -3423,7 +3422,6 @@ const handleHeroLogoPointerUp = () => {
   justify-content: space-between;
   gap: 20px;
   padding: 18px 20px 14px;
-  border-bottom: 1px solid var(--border-light);
 }
 
 .workflow-history-eyebrow {
@@ -3667,7 +3665,7 @@ const handleHeroLogoPointerUp = () => {
 }
 
 .chat-info-card__overview, .chat-info-card__timestamps { margin: 0; display: grid; gap: 10px; }
-.chat-info-card__timestamps { padding-top: 16px; border-top: 1px solid var(--border-light); }
+.chat-info-card__timestamps { padding-top: 16px; }
 
 /* 上下文用量卡：微着色面板 + 渐变进度条（估算/容量徽标同色系） */
 .chat-info-usage__context {
@@ -3778,14 +3776,12 @@ const handleHeroLogoPointerUp = () => {
 .chat-info-usage__timings .chat-info-card__overview { gap: 0; }
 .chat-info-usage__timings .chat-info-card__row {
   padding: 7px 0;
-  border-bottom: 1px dashed color-mix(in srgb, var(--border-light) 45%, transparent);
 }
 .chat-info-usage__timings .chat-info-card__row:last-child { border-bottom: 0; }
 .chat-info-usage__timings dd { font-variant-numeric: tabular-nums; }
 .chat-info-usage__timings > .chat-info-usage__note {
   margin: 8px 0 0;
   padding-top: 8px;
-  border-top: 1px dashed color-mix(in srgb, var(--border-light) 45%, transparent);
 }
 
 .chat-info-card__row {
@@ -4822,5 +4818,5 @@ const handleHeroLogoPointerUp = () => {
 .composer-tools-menu__item:disabled { opacity: .45; cursor: not-allowed; }
 .chat-info-dock__body { flex: 1; min-height: 0; overflow-y: auto; }
 .chat-info-dock__body .chat-info-card { overflow: visible; }
-.chat-info-run { flex-shrink: 0; border-bottom: 1px solid var(--wb-border-soft); }
+.chat-info-run { flex-shrink: 0; }
 </style>

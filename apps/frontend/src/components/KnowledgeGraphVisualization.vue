@@ -433,7 +433,6 @@ const searchEntity = async () => {
 
 .graph-header {
   padding: 20px 24px;
-  border-bottom: 1px solid var(--border-light);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -543,7 +542,6 @@ const searchEntity = async () => {
 
 .graph-controls {
   padding: 16px 24px;
-  border-top: 1px solid var(--border-light);
   display: flex;
   gap: 24px;
   align-items: center;

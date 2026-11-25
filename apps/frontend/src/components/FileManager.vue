@@ -266,7 +266,6 @@ watch(() => props.modelValue, (val) => {
   align-items: center;
   margin-bottom: 20px;
   padding-bottom: 16px;
-  border-bottom: 1px solid var(--border-light);
 }
 
 .file-list {
@@ -292,7 +291,6 @@ watch(() => props.modelValue, (val) => {
 
 :deep(.el-dialog__header) {
   background: var(--bg-card);
-  border-bottom: 1px solid var(--border-light);
   padding: 20px 24px;
   
   .el-dialog__title {

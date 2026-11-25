@@ -210,7 +210,6 @@ onMounted(() => {
   gap: 16px;
   min-height: 58px;
   padding: 10px 14px;
-  border-bottom: 1px solid var(--border-light);
 }
 
 .header-left,
@@ -351,10 +350,8 @@ onMounted(() => {
 }
 
 .result-area {
-  margin-top: 2px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border-light);
-}
+ margin-top: 2px;
+ padding-top: 14px; }
 
 .result-header {
   justify-content: space-between;

@@ -235,7 +235,6 @@ watch(() => props.modelValue, (val) => {
 
 .dialog-header {
   padding: 20px 24px;
-  border-bottom: 1px solid var(--border-light);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -298,7 +297,6 @@ watch(() => props.modelValue, (val) => {
 .dialog-footer {
   padding: 18px 24px;
   background: var(--surface-subtle);
-  border-top: 1px solid var(--border-light);
   display: flex;
   justify-content: flex-end;
   gap: 12px;

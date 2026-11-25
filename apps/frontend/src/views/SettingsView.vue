@@ -33,11 +33,7 @@
 
     <main class="settings-content" :class="{ 'settings-content--flush': activeTab === 'profile' }">
       <header v-if="activeTab !== 'profile'" class="settings-header">
-        <div>
-          <span class="settings-eyebrow">PERSONAL SETTINGS</span>
-          <h1>{{ currentTab.label }}</h1>
-          <p>{{ currentTab.description }}</p>
-        </div>
+        <h1>{{ currentTab.label }}</h1>
         <div class="settings-header-actions">
           <span class="save-state" :class="{ saved: lastSaved }">
             <i aria-hidden="true"></i>
@@ -490,13 +486,13 @@ const userStore = useUserStore()
 const UserProfileView = defineAsyncComponent(() => import('@/views/UserView.vue'))
 
 const tabs = [
-  { id: 'general' as TabId, label: '常规', description: '管理工作区权限、默认目录与基础偏好。', icon: Setting },
-  { id: 'appearance' as TabId, label: '外观', description: '调整主题、密度与界面显示方式。', icon: Brush },
-  { id: 'privacy' as TabId, label: '隐私', description: '控制数据存储、历史记录与敏感设置。', icon: Lock },
-  { id: 'chat' as TabId, label: '对话', description: '管理消息发送与历史对话体验。', icon: ChatDotRound },
-  { id: 'model' as TabId, label: '模型', description: '管理模型服务商、连接信息与可用模型。', icon: Cpu },
-  { id: 'voice' as TabId, label: '语音', description: '管理语音讲解的声音与播放参数。', icon: Microphone },
-  { id: 'profile' as TabId, label: '个人资料', description: '管理账户资料、头像与工作活动。', icon: User }
+  { id: 'general' as TabId, label: '常规', icon: Setting },
+  { id: 'appearance' as TabId, label: '外观', icon: Brush },
+  { id: 'privacy' as TabId, label: '隐私', icon: Lock },
+  { id: 'chat' as TabId, label: '对话', icon: ChatDotRound },
+  { id: 'model' as TabId, label: '模型', icon: Cpu },
+  { id: 'voice' as TabId, label: '语音', icon: Microphone },
+  { id: 'profile' as TabId, label: '个人资料', icon: User }
 ]
 
 const settingsSections: Array<{ label: string; items: NavigationItem[] }> = [
@@ -1064,22 +1060,13 @@ function ensureSelectedModel(models: string[]): void {
   min-height: 0;
 }
 
+/* 页头只留页名：去眉题与副标题后，标题与右侧保存操作同一行垂直居中。 */
 .settings-header {
-  min-height: 84px;
-  padding-bottom: 24px;
+  padding-bottom: 22px;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 24px;
-  border-bottom: 1px solid var(--border-light);
-}
-
-.settings-eyebrow {
-  display: block;
-  margin-bottom: 8px;
-  color: var(--primary-color);
-  font: 10px/1 var(--font-mono);
-  letter-spacing: .12em;
 }
 
 .settings-header h1 {
@@ -1087,12 +1074,6 @@ function ensureSelectedModel(models: string[]): void {
   color: var(--text-primary);
   font-size: clamp(23px, 2.2vw, 30px);
   line-height: 1.15;
-}
-
-.settings-header p {
-  margin: 8px 0 0;
-  color: var(--text-secondary);
-  font-size: 12px;
 }
 
 .settings-header-actions {
@@ -1156,7 +1137,6 @@ function ensureSelectedModel(models: string[]): void {
   align-items: center;
   justify-content: space-between;
   gap: 24px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border-light) 82%, transparent);
 }
 
 .setting-row:last-child { border-bottom: 0; }
@@ -1605,7 +1585,7 @@ function ensureSelectedModel(models: string[]): void {
 
 @media (max-width: 700px) {
   .settings-view { display: block; overflow: auto; }
-  .settings-rail { min-height: auto; padding: 12px; border-right: 0; border-bottom: 1px solid var(--border-light); }
+  .settings-rail { min-height: auto; padding: 12px; border-right: 0; }
   .settings-nav { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 2px; }
   .settings-nav-section { min-width: max-content; margin: 0; }
   .settings-nav-section h2 { display: none; }
