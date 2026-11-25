@@ -13,7 +13,7 @@
       <template #controls><FormalExecutionControls :key="runId || ''" :run="controlRun" :run-id="runId"
         :action-capabilities="actionCapabilities"
         :mission-id="missionId || state?.missionId || ''" :historical="historical"
-        :can-cancel="canCancel" :cancel-pending="cancelPending" embedded conversational
+        :can-cancel="canCancel" :cancel-pending="cancelPending" embedded conversational launch-in-one-click
         :readonly="readonly || historical || busy || loading || !state"
         :execution-readonly="permission !== 'task_collaboration'" :reviewed-plan="state?.initialPlan" require-plan-review :waiting-for-approval="hasPendingToolApproval"
         :show-review="!state?.review && !state?.planningProgress" @refresh="refreshRun" @cancel="emit('cancel-run')" /></template>
@@ -147,7 +147,6 @@
       </div>
     </form>
     <slot v-if="creating" name="creation-notice" />
-    <div class="composer-caption">{{ answering && state?.question ? permission === 'read_only' ? '选择「按需确认」后，可提交回答并继续任务' : '回答由任务规划模型处理 · Enter 提交' : 'Enter 发送 · Shift + Enter 换行' }}</div>
   </section>
 </template>
 
@@ -682,7 +681,7 @@ onBeforeUnmount(() => { saveSession(); generation++; controller?.abort(); stopSc
 .review-actions button { padding: 7px 10px; border: 1px solid var(--cp-border); border-radius: 7px; background: var(--wb-accent-soft); color: var(--wb-accent); cursor: pointer; }
 .review-actions button:disabled { opacity: .45; cursor: not-allowed; }
 .acg-copilot { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; color:var(--wb-text); background:var(--wb-surface-1); font-family:var(--font-sans,sans-serif); --cp-border:var(--wb-border-soft); --cp-prose-size:14px; --cp-prose-line-height:1.75; --cp-paragraph-gap:.45em; --cp-list-item-gap:.2em; }
-.agent-pool ~ .composer, .agent-pool ~ .composer-caption, .agent-pool ~ .error-note, .agent-pool ~ .readonly-note, .agent-pool ~ .wait-note { display:none; }
+.agent-pool ~ .composer, .agent-pool ~ .error-note, .agent-pool ~ .readonly-note, .agent-pool ~ .wait-note { display:none; }
 button { font:inherit; cursor:pointer; }
 button:disabled { cursor:not-allowed; opacity:.4; }
 button:focus-visible, input:focus-visible { outline:2px solid var(--wb-accent); outline-offset:2px; }
@@ -774,7 +773,6 @@ button:focus-visible, input:focus-visible { outline:2px solid var(--wb-accent); 
 .effort-options button[aria-pressed=true] { background:var(--wb-accent-soft); color:var(--wb-accent); }
 .send-button { display:grid; place-items:center; width:30px; height:30px; flex-shrink:0; border:0; border-radius:50%; background:var(--wb-text); color:var(--wb-surface-1); font-size:17px; }
 .send-button:disabled { background:var(--wb-hover); color:var(--wb-text-muted); opacity:.7; }
-.composer-caption { text-align:center; padding:8px 12px 10px; color:var(--wb-text-muted); font-size:9px; }
 .composer-mode { display:flex; gap:5px; margin-bottom:10px; }
 .composer-mode button { border:0; background:transparent; color:var(--wb-text-muted); border-radius:5px; padding:4px 7px; font-size:10px; }
 .composer-mode .selected { color:var(--wb-accent); background:var(--wb-accent-soft); }
