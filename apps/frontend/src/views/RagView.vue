@@ -160,14 +160,8 @@ const beforeUpload = (file: File) => {
   return true
 }
 
-const handleUpload = async (options: any) => {
-  try {
-    await ragApi.uploadDocument(options.file, currentRoleId.value)
-    handleUploadSuccess()
-  } catch (error: any) {
-    handleUploadError(error)
-  }
-}
+// 返回 Promise 交给 el-upload，成功/失败由 :on-success / :on-error 统一回调，避免重复提示
+const handleUpload = (options: any) => ragApi.uploadDocument(options.file, currentRoleId.value)
 
 const handleUploadSuccess = () => {
   ElMessage.success('文档上传成功')
