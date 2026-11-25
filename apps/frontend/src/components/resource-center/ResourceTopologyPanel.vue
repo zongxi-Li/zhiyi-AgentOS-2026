@@ -2,7 +2,7 @@
   <section class="resource-topology" aria-label="端边云资源分布">
     <header class="resource-topology__head">
       <div><span>DEPLOYMENT OVERVIEW</span><h2>设备与执行能力</h2></div>
-      <p>按设备查看执行服务和 Agent 能力；模型端点单独列出。</p>
+      <p>按部署位置查看设备、执行能力和云端模型。</p>
     </header>
     <p v-if="nodesError" class="resource-topology__error" role="status">{{ nodesError }}</p>
     <div v-if="attentionItems.length" class="resource-topology__attention" role="status">
@@ -13,7 +13,11 @@
     </div>
     <div class="resource-topology__grid">
       <section v-for="group in groups" :key="group.id" class="resource-topology__column" :class="`is-${group.id}`">
-        <header><strong>{{ group.label }}</strong><span>{{ group.devices.filter(device => device.nodeId).length }} 台设备</span></header>
+        <header>
+          <strong>{{ group.label }}</strong>
+          <span v-if="group.id === 'cloud'">{{ modelGroups.length }} 个提供商 · {{ cloudModels.length + providerModels.length }} 个模型或服务</span>
+          <span v-else>{{ group.devices.filter(device => device.nodeId).length }} 台设备</span>
+        </header>
         <article v-for="device in group.devices" :key="device.key" class="resource-topology__device">
           <header class="resource-topology__device-head">
             <strong>{{ device.node?.profile.displayName || device.nodeId || '未关联设备' }}</strong>
@@ -40,34 +44,57 @@
           </div>
           <p v-if="!device.services.length && !device.unassignedAgents.length">尚未登记执行服务</p>
         </article>
-        <p v-if="!group.devices.length">暂无已连接设备</p>
+        <section v-if="group.id === 'cloud'" class="resource-topology__models" aria-label="云端模型">
+          <p v-if="modelCatalogLoading" role="status">正在读取提供商档案和模型…</p>
+          <p v-if="modelCatalogError" role="status">{{ modelCatalogError }}</p>
+          <div v-for="group in modelGroups" :key="group.provider" class="resource-topology__provider">
+            <h3>{{ providerNames[group.provider.toLowerCase()] || group.provider }}</h3>
+            <button v-for="model in group.registered" :key="model.profile.resourceId" type="button" class="resource-topology__card" @click="emit('open', model)">
+              <span class="resource-topology__status" :class="`is-${model.snapshot.healthStatus}`"></span>
+              <span class="resource-topology__identity">
+                <strong>{{ resourceDisplayName(model) }}</strong>
+                <small>{{ model.profile.enabled ? '已登记为任务资源' : '任务资源已停用' }} · {{ customerHealthLabel(model.snapshot.healthStatus) }}</small>
+              </span>
+            </button>
+            <div v-for="model in group.catalog" :key="providerModelKey(model.provider, model.model)" class="resource-topology__card resource-topology__catalog-model">
+              <span class="resource-topology__status"></span>
+              <span class="resource-topology__identity"><strong>{{ model.model }}</strong><small>{{ providerModelStatus(model) }}</small></span>
+              <RouterLink v-if="model.profile && !model.profile.usable && !model.discovered" to="/settings?tab=model">打开模型设置</RouterLink>
+            </div>
+          </div>
+          <p v-if="!modelGroups.length && !modelCatalogLoading && !modelCatalogError">暂无匹配的模型</p>
+        </section>
+        <p v-else-if="!group.devices.length">暂无已连接设备</p>
       </section>
     </div>
-    <section class="resource-topology__models" aria-label="模型端点">
-      <header><strong>模型端点</strong><span>{{ models.length }} 个模型</span></header>
-      <button v-for="model in models" :key="model.profile.resourceId" type="button" class="resource-topology__card" @click="emit('open', model)">
-        <span class="resource-topology__status" :class="`is-${model.snapshot.healthStatus}`"></span>
-        <span class="resource-topology__identity"><strong>{{ resourceDisplayName(model) }}</strong><small>{{ model.profile.provider || '提供方未登记' }} · {{ customerHealthLabel(model.snapshot.healthStatus) }}</small></span>
-      </button>
-      <p v-if="!models.length">尚未登记模型端点</p>
-    </section>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { NodeCatalogItem, RuntimeResourceItem } from '@/services/api/agentos'
-import { connectionGuidance, customerResourceType, customerHealthLabel, deploymentGroup, resourceDisplayName, resourceCapacityLabel } from './resourceCenterPresentation'
+import { connectionGuidance, customerResourceType, customerHealthLabel, deploymentGroup, resourceDisplayName, resourceCapacityLabel, providerModelKey, providerModelStatus, type ProviderModel } from './resourceCenterPresentation'
 
-const props = withDefaults(defineProps<{ items: RuntimeResourceItem[]; contextItems?: RuntimeResourceItem[]; nodes?: NodeCatalogItem[]; nodesError?: string; pendingNodes?: string[] }>(), { nodes: () => [], pendingNodes: () => [] })
+const props = withDefaults(defineProps<{ items: RuntimeResourceItem[]; contextItems?: RuntimeResourceItem[]; providerModels?: ProviderModel[]; modelCatalogError?: string; modelCatalogLoading?: boolean; nodes?: NodeCatalogItem[]; nodesError?: string; pendingNodes?: string[] }>(), { nodes: () => [], providerModels: () => [], pendingNodes: () => [] })
 const emit = defineEmits<{
   (event: 'open', item: RuntimeResourceItem): void
   (event: 'toggle-node', payload: { nodeId: string; enabled: boolean }): void
 }>()
 const models = computed(() => props.items.filter(item => ['model_endpoint', 'model_server'].includes(item.profile.runtimeKind || '') || item.profile.resourceType === 'model'))
+const cloudModels = computed(() => models.value.filter(item => deploymentGroup(item.profile.deploymentTier).id === 'cloud'))
+const providerNames: Record<string, string> = { deepseek: 'DeepSeek', glm: '智谱 GLM', qwen: '通义千问' }
+const modelGroups = computed(() => {
+  const providerOf = (item: RuntimeResourceItem) => item.profile.provider || '提供方未登记'
+  const names = [...new Set([...cloudModels.value.map(providerOf), ...props.providerModels.map(item => item.provider)].map(name => name.toLowerCase()))]
+  return names.map(provider => ({
+    provider,
+    registered: cloudModels.value.filter(item => providerOf(item).toLowerCase() === provider),
+    catalog: props.providerModels.filter(item => item.provider.toLowerCase() === provider)
+  }))
+})
 const agents = computed(() => props.items.filter(item => item.profile.runtimeKind === 'agent_instance'))
 const services = computed(() => {
-  const visible = props.items.filter(item => !models.value.includes(item) && !agents.value.includes(item))
+  const visible = props.items.filter(item => !cloudModels.value.includes(item) && !agents.value.includes(item))
   // Keep the host as context when a search/filter matches only an Agent.
   const hosts = (props.contextItems || []).filter(item => agents.value.some(agent => agent.profile.hostRuntimeId === item.profile.resourceId))
   return [...new Map([...visible, ...hosts].map(item => [item.profile.resourceId, item])).values()]
@@ -113,7 +140,10 @@ const nodeCapacity = (node: NodeCatalogItem) => {
 .resource-topology__agents { display: grid; gap: 6px; margin: 0 0 12px 15px; padding: 8px 0 0 10px; border-left: 1px solid var(--border-light); }
 .resource-topology__agent { display: grid; gap: 5px; padding: 8px; border: 0; border-radius: 4px; text-align: left; color: var(--text-primary); background: var(--bg-card); cursor: pointer; font: inherit; font-size: 11px; }
 .resource-topology__agent small { color: var(--text-muted); font-size: 10px; }
-.resource-topology__models { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border-light); }
-.resource-topology__models > header { display: flex; justify-content: space-between; font-size: 12px; }
-.resource-topology__models > header span, .resource-topology__models > p { color: var(--text-muted); font-size: 11px; }
+.resource-topology__models > p { color: var(--text-muted); font-size: 11px; }
+.resource-topology__provider { margin-top: 12px; }
+.resource-topology__provider h3 { margin: 0 0 6px; color: var(--text-secondary); font-size: 12px; overflow-wrap: anywhere; }
+.resource-topology__catalog-model { cursor: default; }
+.resource-topology__catalog-model:hover { border-color: var(--border-light); }
+.resource-topology__catalog-model a { grid-column: 2; color: var(--primary-color); font-size: 11px; }
 </style>

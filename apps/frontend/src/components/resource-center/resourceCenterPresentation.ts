@@ -57,3 +57,60 @@ export const resourceCapacityLabel = (item: RuntimeResourceItem): string => {
   const available = confirmedResourceSlots(item)
   return `登记并发 ${item.profile.capacity} · ${available === null ? '可用容量待确认' : `已确认可用 ${available}`}`
 }
+
+
+export interface ProviderModelProfile {
+  provider: string
+  model: string
+  usable: boolean
+  active: boolean
+  key_source: string
+}
+
+export interface DiscoveredModels {
+  provider: string
+  models: string[]
+  status?: 'loaded' | 'unavailable'
+}
+
+export interface ProviderModel {
+  provider: string
+  model: string
+  discovered: boolean
+  profile?: ProviderModelProfile
+}
+
+export function providerModelKey(provider: string, model: string): string {
+  const name = provider.trim().toLowerCase()
+  const id = model.trim()
+  // The DeepSeek chat and reasoning aliases resolve to the same Flash model.
+  const canonical = name === 'deepseek' && ['deepseek-chat', 'deepseek-reasoner'].includes(id)
+    ? 'deepseek-flash' : id
+  return JSON.stringify([name, canonical])
+}
+
+export function mergeProviderModels(profiles: ProviderModelProfile[], catalogs: DiscoveredModels[]): ProviderModel[] {
+  const entries = new Map<string, ProviderModel>()
+  for (const profile of profiles) {
+    if (!profile.provider || !profile.model) continue
+    const key = providerModelKey(profile.provider, profile.model)
+    const previous = entries.get(key)?.profile
+    if (previous?.active || (previous?.usable && !profile.active && !profile.usable)) continue
+    entries.set(key, { provider: profile.provider, model: profile.model, profile, discovered: false })
+  }
+  for (const catalog of catalogs) {
+    if (!catalog.provider) continue
+    for (const model of catalog.models) {
+      if (!model) continue
+      const key = providerModelKey(catalog.provider, model)
+      entries.set(key, { ...entries.get(key), provider: catalog.provider, model, discovered: true })
+    }
+  }
+  return [...entries.values()]
+}
+
+export function providerModelStatus(item: ProviderModel): string {
+  if (item.discovered) return '提供商模型 · 未登记为任务资源'
+  if (item.profile?.key_source === 'missing') return '待配置凭据'
+  return item.profile?.usable ? '已配置 · 未登记为任务资源' : '连接配置不完整'
+}

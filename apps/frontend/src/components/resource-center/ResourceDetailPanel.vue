@@ -26,6 +26,13 @@
       </dl>
     </section>
 
+    <section v-if="item.profile.capabilities.length" class="resource-detail__section" aria-label="全部能力">
+      <h3>能力 · {{ item.profile.capabilities.length }} 项</h3>
+      <div class="resource-detail__chips">
+        <span v-for="capability in item.profile.capabilities" :key="capability">{{ capability }}</span>
+      </div>
+    </section>
+
     <section v-if="healthEvents.length" class="resource-detail__section">
       <h3>健康趋势</h3>
       <div class="resource-detail__spark">
@@ -101,13 +108,6 @@
         <div><dt>接入适配器</dt><dd>{{ item.profile.adapter || '未标注' }}</dd></div>
         <!-- 执行端点与凭据引用已随 N1.2 投影迁移从资源目录移除（任务书：资源目录无 endpoint/credential）。 -->
       </dl>
-      </section>
-
-      <section v-if="item.profile.capabilities.length" class="resource-detail__section">
-      <h3>能力</h3>
-      <div class="resource-detail__chips">
-        <span v-for="capability in item.profile.capabilities" :key="capability">{{ capability }}</span>
-      </div>
       </section>
 
       <section v-if="item.profile.domains.length" class="resource-detail__section">
@@ -360,7 +360,7 @@ const latencyPoints = computed(() => {
 .resource-detail__section { display: grid; gap: 8px; }
 .resource-detail__section h3 { margin: 0; color: var(--text-secondary); font-size: 11px; font-weight: 650; letter-spacing: .02em; }
 .resource-detail__kv { display: grid; margin: 0; border: 1px solid var(--border-light); border-radius: var(--radius-card, 9px); overflow: hidden; }
-.resource-detail__kv > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 9px 14px; border-bottom: 1px solid var(--border-light); background: var(--bg-card); }
+.resource-detail__kv > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 9px 14px; background: var(--bg-card); }
 .resource-detail__kv > div:last-child { border-bottom: 0; }
 .resource-detail__kv dt { color: var(--text-muted); font-size: 11px; }
 .resource-detail__kv dd { margin: 0; color: var(--text-secondary); font: 11px var(--font-mono, monospace); text-align: right; word-break: break-all; }
