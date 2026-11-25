@@ -246,3 +246,18 @@ def test_grant_projection_waits_for_committed_authority_table(monkeypatch, tmp_p
             runtime.prepare_workspace_grants(*args)
         project.assert_not_called()
     assert all(call.kwargs['connect_timeout'] == 5 for call in connect.call_args_list)
+
+
+def test_redis_disconnect_does_not_retry_after_successful_shutdown():
+    import redis
+
+    client = runtime.redis_client({'redis': 'test-only'})
+    operation = Mock(side_effect=redis.exceptions.ConnectionError('server closed after SHUTDOWN'))
+    failure = Mock()
+    try:
+        retry = client.connection_pool.connection_kwargs['retry']
+        with pytest.raises(redis.exceptions.ConnectionError, match='server closed'):
+            retry.call_with_retry(operation, failure)
+        operation.assert_called_once()
+    finally:
+        client.close()
