@@ -5,7 +5,7 @@
   <KeepAlive :max="1">
     <CachedWorkspaceView v-if="isMission" :key="`mission:${viewRoute.params.missionId}`" :view="view" :view-route="viewRoute" />
   </KeepAlive>
-  <Transition name="shell-route">
+  <Transition name="shell-route" @leave="finishRouteLeave">
     <component v-if="!isChat && !isMission" :is="view" :key="viewRoute.path" />
   </Transition>
 </template>
@@ -20,6 +20,8 @@ const props = defineProps<{ view: VNode; viewRoute: RouteLocationNormalizedLoade
 const chat = useChatStore()
 const isChat = computed(() => props.viewRoute.path === '/chat')
 const isMission = computed(() => /^\/agentos\/missions\/[^/]+\/workspace$/.test(props.viewRoute.path))
+// Remove the old view immediately so two full-height views never share the layout.
+const finishRouteLeave = (_element: Element, done: () => void) => done()
 let blankSequence = 0
 const chatKey = ref('')
 watch(() => props.viewRoute, (route, previous) => {
@@ -35,3 +37,18 @@ watch(() => props.viewRoute, (route, previous) => {
   }
 }, { immediate: true, flush: 'sync' })
 </script>
+
+<style scoped>
+:global(.shell-route-enter-active) {
+  animation: shell-route-arrive 160ms ease-out;
+}
+
+@keyframes shell-route-arrive {
+  from { opacity: .74; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.shell-route-enter-active) { animation: none; }
+}
+</style>

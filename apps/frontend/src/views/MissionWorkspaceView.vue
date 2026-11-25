@@ -6,7 +6,7 @@
       ref="workbenchLayout"
       shared-dock-geometry
       :show-right="true"
-      :show-bottom-panel="Boolean(projection)"
+      :show-bottom-panel="Boolean(projection) || loading"
       bottom-panel-storage-key="zhiyi.mission.workspace.bottom-panel.v1"
       :bottom-panel-default-collapsed="false"
       :bottom-panel-collapsed-height="0"
@@ -37,12 +37,18 @@
             @open-file="openWorkspaceFile"
           />
         </KeepAlive>
-        <section v-if="!projection" class="workspace-loading-pane" aria-label="Workspace loading status">
-          <img class="workspace-loading-pane__watermark" src="/logo-mark.svg" alt="" aria-hidden="true" />
-          <span class="workspace-loading-pane__mark">MISSION</span>
-          <strong>{{ loading ? 'Loading workspace…' : 'Workspace unavailable' }}</strong>
-          <span>{{ loadError || '等待 Mission 投影。' }}</span>
-          <button v-if="loadError" type="button" @click="loadWorkspace()">Retry</button>
+        <section v-if="!projection" class="workspace-loading-pane" :class="{ 'is-loading': loading }" aria-label="项目导航加载状态">
+          <div v-if="loading" class="workspace-pane-placeholder" aria-hidden="true">
+            <div class="workspace-pane-placeholder__rail"></div>
+            <div class="workspace-pane-placeholder__lines"><i></i><i></i><i></i></div>
+          </div>
+          <template v-else>
+            <img class="workspace-loading-pane__watermark" src="/logo-mark.svg" alt="" aria-hidden="true" />
+            <span class="workspace-loading-pane__mark">MISSION</span>
+            <strong>项目导航不可用</strong>
+            <span>{{ loadError || '等待 Mission 投影。' }}</span>
+            <button v-if="loadError" type="button" @click="loadWorkspace()">重新加载</button>
+          </template>
         </section>
         </div>
       </template>
@@ -52,6 +58,7 @@
         <p v-if="deliveryIntentError" role="alert">{{ deliveryIntentError }}</p>
         <EditorGroup
           v-if="projection"
+          class="workspace-content-arrive"
           :projection="projection"
           :open-entries="openEntries"
           :active-editor-id="activeEditorId"
@@ -85,9 +92,13 @@
           @artifact-projection="artifactProjection = $event"
           @semantics-saved="loadWorkspace(selectedRunId || undefined)"
         />
+        <section v-else-if="loading" class="workspace-pane-placeholder workspace-pane-placeholder--editor" role="status">
+          <div class="workspace-pane-placeholder__rail" aria-hidden="true"></div>
+          <p>正在打开工作台…</p>
+        </section>
         <section v-else class="workspace-main-state" role="status">
           <img class="workspace-main-state__watermark" src="/logo-mark.svg" alt="" aria-hidden="true" />
-          <strong>{{ loading ? 'Loading Mission Workspace…' : 'Mission Workspace unavailable' }}</strong>
+          <strong>工作台不可用</strong>
           <span>{{ loadError || '请从 Mission 导航进入一个 Project Workspace。' }}</span>
           <button v-if="loadError" type="button" @click="loadWorkspace()">重新加载</button>
         </section>
@@ -138,10 +149,15 @@
           @close="rightState.toggleRightPane"
         />
         </div>
+        <div v-else-if="loading" class="workspace-pane-placeholder" aria-hidden="true">
+          <div class="workspace-pane-placeholder__rail"></div>
+          <div class="workspace-pane-placeholder__lines"><i></i><i></i><i></i></div>
+        </div>
       </template>
 
       <template #bottom="{ setCollapsed }">
         <WorkbenchBottomPanel
+          v-if="projection"
           headerless
           :tabs="panelTabs"
           :active-tab="panelActiveTab"
@@ -157,6 +173,9 @@
             />
           </template>
         </WorkbenchBottomPanel>
+        <div v-else class="workspace-pane-placeholder" aria-hidden="true">
+          <div class="workspace-pane-placeholder__rail"></div>
+        </div>
       </template>
 
       <template v-if="projection" #status-bar="{ collapsed, setCollapsed }">
@@ -1326,6 +1345,21 @@ onBeforeUnmount(() => {
 .workspace-main-state > span { max-width: 320px; line-height: 1.65; }
 .workspace-main-state button { margin-top: 3px; }
 
+.workspace-loading-pane.is-loading { flex: 1; min-height: 0; display: block; padding: 0; }
+.workspace-pane-placeholder { height: 100%; min-height: 0; overflow: hidden; background: var(--wb-surface-1); }
+.workspace-pane-placeholder--editor { flex: 1; background: var(--wb-surface-shell); }
+.workspace-pane-placeholder__rail { height: var(--editor-rail-height, 32px); border-bottom: 1px solid var(--border-light); }
+.workspace-pane-placeholder__lines { display: grid; gap: 12px; padding: 16px 12px; }
+.workspace-pane-placeholder__lines i { width: 68%; height: 8px; border-radius: 3px; background: var(--wb-hover); }
+.workspace-pane-placeholder__lines i:nth-child(2) { width: 52%; }
+.workspace-pane-placeholder__lines i:nth-child(3) { width: 60%; }
+.workspace-pane-placeholder--editor p { margin: 18px; color: var(--text-secondary); font-size: 12px; }
+.workspace-content-arrive { animation: workspace-content-arrive 160ms ease-out; }
+@keyframes workspace-content-arrive { from { opacity: .65; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .workspace-content-arrive { animation: none; }
+}
+
 @keyframes workspace-state-pulse {
   0%, 100% { opacity: .85; transform: scale(.985); }
   50% { opacity: 1; transform: scale(1); }
@@ -1499,12 +1533,12 @@ onBeforeUnmount(() => {
 }
 .artifact-choice { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 18px; background: color-mix(in srgb, var(--bg-app) 55%, transparent); }
 .artifact-choice__panel { width: min(420px, 100%); border: 1px solid var(--border-light); background: var(--bg-card); box-shadow: var(--shadow-md); }
-.artifact-choice__panel header { display: flex; justify-content: space-between; gap: 18px; padding: 14px 16px; border-bottom: 1px solid var(--border-light); }
+.artifact-choice__panel header { display: flex; justify-content: space-between; gap: 18px; padding: 14px 16px; }
 .artifact-choice__panel header span, .artifact-choice__panel header strong { display: block; }
 .artifact-choice__panel header span { color: var(--text-secondary); font-size: 12px; }
 .artifact-choice__panel header strong { margin-top: 5px; color: var(--primary-color); font: 11px var(--font-mono, monospace); }
 .artifact-choice__panel header button { width: 26px; height: 26px; border: 0; color: var(--text-muted); background: transparent; cursor: pointer; font-size: 18px; }
-.artifact-choice__item { display: flex; justify-content: space-between; width: 100%; padding: 11px 16px; border: 0; border-bottom: 1px solid var(--border-light); color: var(--text-primary); background: transparent; cursor: pointer; text-align: left; }
+.artifact-choice__item { display: flex; justify-content: space-between; width: 100%; padding: 11px 16px; border: 0; color: var(--text-primary); background: transparent; cursor: pointer; text-align: left; }
 .artifact-choice__item:hover { background: var(--primary-fade); }
 .artifact-choice__item code { color: var(--text-muted); font: 10px var(--font-mono, monospace); }
 </style>

@@ -203,6 +203,7 @@ describe('MissionWorkspaceView', () => {
     const element = copilot.element
     expect(copilot.props('runId')).toBe('run_2')
     expect(copilot.props('readonly')).toBe(true)
+    expect(wrapper.get('.workspace-pane-placeholder--editor').text()).toContain('正在打开工作台')
     resolveWorkspace(projection())
     await flushPromises()
     expect(wrapper.getComponent(AcgCopilotPanel).element).toBe(element)
@@ -916,7 +917,7 @@ describe('MissionWorkspaceView', () => {
   it('surfaces API failure with a visible retry state', async () => {
     vi.spyOn(agentosApi, 'getMissionWorkspace').mockRejectedValue(new Error('offline'))
     const { wrapper } = await mountWorkspace()
-    expect(wrapper.text()).toContain('Mission Workspace unavailable')
+    expect(wrapper.text()).toContain('工作台不可用')
     expect(wrapper.text()).toContain('重新加载')
   })
 
@@ -926,8 +927,8 @@ describe('MissionWorkspaceView', () => {
     })
     const { wrapper } = await mountWorkspace()
     expect(getWorkspace).toHaveBeenCalledTimes(1)
-    expect(wrapper.text()).toContain('Mission Workspace unavailable')
-    expect(wrapper.text()).not.toContain('Loading Mission Workspace')
+    expect(wrapper.text()).toContain('工作台不可用')
+    expect(wrapper.text()).not.toContain('正在打开工作台')
   })
 
   it('waits for a deferred Run identity projection after the Runtime Run is accepted', async () => {
