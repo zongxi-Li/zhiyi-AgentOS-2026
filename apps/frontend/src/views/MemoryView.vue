@@ -2,12 +2,9 @@
   <WorkbenchLayout :show-left="false" :show-right="false" storage-key="zhiyi.memory.layout.v1">
     <template #main>
       <main class="memory-page" aria-label="运行记忆">
-        <WorkspacePageHero
-          eyebrow="MEMORY"
-          title="运行记忆"
-        />
+        <WorkspacePageHero title="运行记忆" />
 
-        <div class="memory-page__body" :class="{ 'is-loading': runsLoading }">
+        <div class="memory-page__body">
           <aside class="memory-runs" aria-label="运行列表" :aria-busy="runsLoading">
             <div class="memory-runs__head">
               <div>
@@ -27,7 +24,7 @@
                 </button>
               </div>
             </div>
-            <div v-if="runsLoading" class="memory-runs__loading" aria-label="正在加载运行列表">
+            <div v-if="showLoadingSkeleton" class="memory-runs__loading" aria-label="正在加载运行列表">
               <div v-for="index in 6" :key="index" class="memory-run-skeleton">
                 <span class="memory-run-skeleton__dot" />
                 <span class="memory-run-skeleton__copy">
@@ -40,7 +37,7 @@
               <p>{{ runsError }}</p>
               <button type="button" class="memory-runs__retry" @click="loadRuns">重试</button>
             </div>
-            <div v-else-if="!runs.length" class="memory-runs__hint">暂无运行记录</div>
+            <div v-else-if="!runs.length && !runsLoading" class="memory-runs__hint">暂无运行记录</div>
             <ul v-else class="memory-runs__list">
               <li v-for="group in missionGroups" :key="group.missionId" class="memory-mission">
                 <button
@@ -92,7 +89,7 @@
           </aside>
 
           <section class="memory-detail" aria-label="记忆详情">
-            <section v-if="runsLoading" class="memory-loading-state" aria-live="polite" aria-label="正在加载记忆">
+            <section v-if="showLoadingSkeleton" class="memory-loading-state" aria-live="polite" aria-label="正在加载记忆">
               <div class="memory-loading-state__intro">
                 <div>
                   <span class="memory-detail__eyebrow">MEMORY / SYNC</span>
@@ -383,6 +380,11 @@ const route = useRoute()
 const runs = ref<WorkflowRunSummary[]>([])
 const missions = ref<MissionListItem[]>([])
 const runsLoading = ref(false)
+// 本机请求通常百毫秒内返回：立刻铺满整块骨架再收起，反而像一次闪屏。
+// 骨架延迟出现，快速加载直接落到最终状态；慢请求仍能看到加载反馈。
+const SKELETON_DELAY_MS = 250
+const showLoadingSkeleton = ref(false)
+let skeletonTimer: number | null = null
 const runsError = ref<string | null>(null)
 const selectedRunId = ref<string | null>(null)
 const expandedMissionIds = ref<Set<string>>(new Set())
@@ -536,9 +538,26 @@ function formatRunsError(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '运行记录暂时无法加载，请重试。'
 }
 
+function clearSkeletonTimer(): void {
+  if (skeletonTimer !== null) {
+    window.clearTimeout(skeletonTimer)
+    skeletonTimer = null
+  }
+  showLoadingSkeleton.value = false
+}
+
+function scheduleSkeletonTimer(): void {
+  clearSkeletonTimer()
+  skeletonTimer = window.setTimeout(() => {
+    skeletonTimer = null
+    showLoadingSkeleton.value = true
+  }, SKELETON_DELAY_MS)
+}
+
 async function loadRuns(): Promise<void> {
   runsLoading.value = true
   runsError.value = null
+  scheduleSkeletonTimer()
   const missionsRequest = agentosApi.listMissions({ page: 1, pageSize: 100 })
     .then(page => {
       missions.value = page.items
@@ -563,6 +582,7 @@ async function loadRuns(): Promise<void> {
     runsError.value = formatRunsError(error)
   } finally {
     runsLoading.value = false
+    clearSkeletonTimer()
   }
   await missionsRequest
 }
@@ -630,6 +650,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   pollGeneration += 1
+  clearSkeletonTimer()
   if (pollTimer != null) {
     clearInterval(pollTimer)
     pollTimer = null
@@ -664,17 +685,6 @@ onUnmounted(() => {
   align-items: stretch;
 }
 
-.memory-page__body.is-loading {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.memory-page__body.is-loading .memory-detail,
-.memory-page__body.is-loading .memory-loading-state {
-  min-height: 0;
-  height: 100%;
-}
-
 .memory-runs,
 .memory-stats,
 .memory-flow,
@@ -702,7 +712,6 @@ onUnmounted(() => {
   gap: 12px;
   min-height: 58px;
   padding: 11px 14px 10px;
-  border-bottom: 1px solid var(--wb-border-soft);
   background: color-mix(in srgb, var(--wb-surface-pane) 58%, var(--wb-surface-section));
 }
 
@@ -1090,7 +1099,6 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 20px;
   padding-bottom: 18px;
-  border-bottom: 1px solid var(--wb-border-soft);
 }
 
 .memory-loading-state__intro h2 {
@@ -1180,7 +1188,6 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   padding: 15px 16px;
-  border-bottom: 1px solid var(--wb-border-soft);
 }
 
 .memory-loading-state__trace {
@@ -1201,7 +1208,6 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   padding: 15px 16px;
-  border-bottom: 1px solid var(--wb-border-soft);
 }
 
 .memory-loading-state__trace-list {
@@ -1216,7 +1222,6 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   min-width: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--wb-border-soft) 72%, transparent);
 }
 
 .memory-loading-trace:last-child { border-bottom: 0; }
@@ -1421,7 +1426,6 @@ onUnmounted(() => {
   gap: 12px;
   min-height: 55px;
   padding: 11px 16px 10px;
-  border-bottom: 1px solid var(--wb-border-soft);
 }
 
 .memory-flow__count { min-height: 20px; }
@@ -1508,7 +1512,7 @@ onUnmounted(() => {
 @media (max-width: 640px) {
   .memory-page { padding-right: 14px; padding-left: 14px; }
   .memory-stats { grid-template-columns: 1fr; gap: 10px; }
-  .memory-stats__grid { border-top: 1px solid var(--wb-border-soft); border-left: 0; padding-top: 10px; }
+  .memory-stats__grid { border-left: 0; padding-top: 10px; }
   .memory-stat { padding: 0 10px; }
   .memory-stat:first-child { padding-left: 0; }
   .memory-stat:last-child { padding-right: 0; }
