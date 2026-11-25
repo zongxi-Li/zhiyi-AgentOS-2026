@@ -9,6 +9,17 @@ const OpenFileChild = defineComponent({
 })
 
 describe('WorkbenchAuxiliarySidebar', () => {
+  it('uses the same sidebar shell for supplied Copilot content without mounting the fallback', () => {
+    const wrapper = mount(WorkbenchAuxiliarySidebar, {
+      props: { view: { id: 'copilot', title: 'ACG Copilot', order: 100, component: markRaw(OpenFileChild), when: () => true } },
+      slots: { default: '<div class="creation-copilot">任务输入</div>' }
+    })
+    expect(wrapper.get('.auxiliary-sidebar').attributes('aria-label')).toBe('ACG Copilot')
+    expect(wrapper.get('.auxiliary-sidebar__body .creation-copilot').text()).toBe('任务输入')
+    expect(wrapper.findComponent(OpenFileChild).exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('forwards the file-open event from its active auxiliary view', async () => {
     const wrapper = mount(WorkbenchAuxiliarySidebar, {
       props: {

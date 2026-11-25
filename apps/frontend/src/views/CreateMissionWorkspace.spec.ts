@@ -28,10 +28,10 @@ const page = async () => {
   ] })
   await router.push('/new'); await router.isReady()
   wrapper = mount(CreateMissionView, { attachTo: document.body, global: { plugins: [router], stubs: {
-    WorkbenchLayout: { template: '<main><slot name="main" /></main>' }, PluginExtensionHost: true
+    WorkbenchLayout: { template: '<main><slot name="main" /><slot name="right" /></main>' }, PluginExtensionHost: true
   } } })
   await flushPromises()
-  await wrapper.get('#mission-goal').setValue('在工作区生成验收文档')
+  await wrapper.get('textarea[aria-label="任务对话输入"]').setValue('在工作区生成验收文档')
   return { wrapper, router }
 }
 
@@ -55,13 +55,13 @@ describe('Create Mission desktop workspace', () => {
   it('requires choosing and trusting a directory, then rechecks it before launch', async () => {
     const { wrapper, router } = await page()
     expect(wrapper.get('.mission-workspace').text()).toContain('尚未选择工作区')
-    expect(wrapper.get('.create-mission__submit').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.send-button').attributes('disabled')).toBeDefined()
     await wrapper.get('.workspace-trust__trigger').trigger('click')
     await clickPanel('选择工作区')
     expect(wrapper.get('[aria-label="当前工作区目录"]').text()).toBe('C:/work/demo')
-    expect(wrapper.get('.create-mission__submit').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.send-button').attributes('disabled')).toBeDefined()
     await clickPanel('信任工作区')
-    expect(wrapper.get('.create-mission__submit').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('.send-button').attributes('disabled')).toBeUndefined()
     await wrapper.get('form').trigger('submit'); await flushPromises()
     expect(workflowApi.startWorkflowAsync).toHaveBeenCalledOnce()
     expect(vi.mocked(fetch).mock.calls.filter(call => String(call[0]).endsWith('/workspaces/current'))).toHaveLength(2)
@@ -73,7 +73,7 @@ describe('Create Mission desktop workspace', () => {
   it('blocks launch if authorization was revoked after the directory was displayed', async () => {
     binding = trusted()
     const { wrapper } = await page()
-    expect(wrapper.get('.create-mission__submit').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('.send-button').attributes('disabled')).toBeUndefined()
     binding = { ...trusted(), revoked: true }
     await wrapper.get('form').trigger('submit'); await flushPromises()
     expect(workflowApi.startWorkflowAsync).not.toHaveBeenCalled()

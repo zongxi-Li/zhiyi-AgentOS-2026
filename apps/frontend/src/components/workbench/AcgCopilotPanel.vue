@@ -40,8 +40,8 @@
       <div v-if="loading && !state" class="empty-state"><el-icon class="is-loading"><Loading /></el-icon><p>正在读取任务对话…</p></div>
       <div v-else-if="!messages.length && !state?.question && !state?.review && !state?.planningProgress && !state?.initialPlan && !state?.toolActivity?.length && !hasPendingToolApproval && !hasTimelineContent && !['pending', 'planning'].includes(state?.status || runStatus || '')" class="empty-state">
         <img class="empty-watermark" :src="activePack.mark" alt="" aria-hidden="true" />
-        <h3>{{ runId ? '一起推进这项任务' : '从一项任务开始' }}</h3>
-        <p>{{ runId ? '检查进展、理解问题，或一起梳理下一步。' : '选择或启动任务后，在这里与任务助手交流。' }}</p>
+        <h3 v-if="!creating">{{ runId ? '一起推进这项任务' : '从一项任务开始' }}</h3>
+        <p v-if="!creating">{{ runId ? '检查进展、理解问题，或一起梳理下一步。' : '选择或启动任务后，在这里与任务助手交流。' }}</p>
       </div>
 
       <article v-if="busy && pendingUser" class="stream-turn">
@@ -105,11 +105,15 @@
     <div v-if="reviewReceipt" class="wait-note" role="status">{{ reviewReceipt }}</div>
     <div v-if="permissionReceipt" class="wait-note permission-receipt" role="status">{{ permissionReceipt }}</div>
     <div v-if="error" class="error-note" role="alert"><span>{{ error }}</span><button @click="refresh()">刷新</button></div>
-    <div v-if="historical || readonly || !allows('canCollaborate')" class="readonly-note">{{ historical ? '历史 Run 只读，可讨论原始证据。' : '操作按所选 Run 的服务端能力限制。' }}<button v-if="state?.latestRunId && state.latestRunId !== runId" type="button" @click="emit('select-run', state.latestRunId)">查看最新创建的 Run</button></div>
+    <slot v-if="creating" name="creation-status" />
+    <div v-if="!creating && (historical || readonly || !allows('canCollaborate'))" class="readonly-note">{{ historical ? '历史 Run 只读，可讨论原始证据。' : '操作按所选 Run 的服务端能力限制。' }}<button v-if="state?.latestRunId && state.latestRunId !== runId" type="button" @click="emit('select-run', state.latestRunId)">查看最新创建的 Run</button></div>
     <form ref="composerRoot" class="composer" :class="{ 'is-answering': answering && state?.question }" @submit.prevent="send" @keydown.esc="openMenu = null">
       <div v-if="state?.question" class="composer-mode"><button type="button" :class="{ selected: answering }" @click="answering = true">回答问题</button><button type="button" :class="{ selected: !answering }" @click="answering = false">询问助手</button></div>
-      <textarea ref="composerInput" v-model="draft" rows="3" :maxlength="answering && state?.question ? 2000 : 4000" :disabled="!runId || busy" :placeholder="composerPlaceholder" aria-label="任务对话输入" @keydown="onKeydown"></textarea>
+      <slot v-if="creating" name="composer-context" />
+      <textarea ref="composerInput" v-model="draft" rows="3" :maxlength="creating ? undefined : answering && state?.question ? 2000 : 4000" :disabled="(!runId && !creating) || busy || creationPending" :placeholder="composerPlaceholder" aria-label="任务对话输入" @keydown="onKeydown"></textarea>
       <div class="composer-footer">
+        <slot v-if="creating" name="creation-tools" />
+        <template v-else>
         <div class="composer-picker"><button type="button" class="picker-trigger" aria-label="任务操作" :disabled="busy || loading || !state || permission !== 'task_collaboration' || readonly || historical || !(allows('canCollaborate') || operationAllowed('recover') || allows('canRerunSuccessor'))" :aria-expanded="openMenu === 'operation'" @click="openMenu = openMenu === 'operation' ? null : 'operation'"><el-icon><CircleCheck /></el-icon></button>
           <div v-if="openMenu === 'operation'" class="picker-menu operation-menu">
             <div class="menu-heading">任务操作</div>
@@ -138,9 +142,11 @@
             <p>仅用于本次对话，不修改任务执行模型。</p>
           </div>
         </div>
-        <button class="send-button" type="submit" :disabled="!canSend" :aria-label="answering && state?.question ? '提交回答并继续' : '发送消息'"><el-icon v-if="busy" class="is-loading"><Loading /></el-icon><el-icon v-else><ArrowUp /></el-icon></button>
+        </template>
+        <button class="send-button" type="submit" :disabled="!canSend" :aria-label="creating ? '发送任务' : answering && state?.question ? '提交回答并继续' : '发送消息'"><el-icon v-if="busy" class="is-loading"><Loading /></el-icon><el-icon v-else><ArrowUp /></el-icon></button>
       </div>
     </form>
+    <slot v-if="creating" name="creation-notice" />
     <div class="composer-caption">{{ answering && state?.question ? permission === 'read_only' ? '选择「按需确认」后，可提交回答并继续任务' : '回答由任务规划模型处理 · Enter 提交' : 'Enter 发送 · Shift + Enter 换行' }}</div>
   </section>
 </template>
@@ -169,9 +175,14 @@ const props = withDefaults(defineProps<{
   entry?: WorkspaceEntry | null; graphNode?: WorkspaceGraphNode | null; graphNodes?: WorkspaceGraphNode[]
   graph?: GraphProjection | null; runId?: string | null; runStatus?: string | null
   runtimeObservation?: RuntimeObservation | null; historical?: boolean; readonly?: boolean; actionCapabilities?: RunActionCapabilities | null
+  createTask?: (message: string) => Promise<void>
+  creationDisabled?: boolean
+  creationPending?: boolean
+  initialDraft?: string
   missionId?: string; canCancel?: boolean; cancelPending?: boolean; projectionRevision?: number; workspaceRefreshing?: boolean
 }>(), { entry: null, graphNode: null, graphNodes: () => [], graph: null, runId: null, runStatus: null, runtimeObservation: null, historical: false, readonly: false, missionId: '', canCancel: false, cancelPending: false })
-const emit = defineEmits<{ 'select-run': [runId: string]; 'refresh-run': []; 'cancel-run': [] }>()
+const emit = defineEmits<{ 'select-run': [runId: string]; 'refresh-run': []; 'cancel-run': []; 'draft-change': [message: string] }>()
+const creating = computed(() => !props.runId && Boolean(props.createTask))
 const { activePack } = useBrand()
 const controlRun = computed(() => props.runtimeObservation?.runId === props.runId ? props.runtimeObservation?.run || null : null)
 const offeredCapabilities = computed(() => props.actionCapabilities === undefined ? controlRun.value?.actionCapabilities : props.actionCapabilities)
@@ -257,7 +268,7 @@ let validatedRunId: string | null = null
 let viewActive = true
 let viewSuspended = false
 let requestKey: { content: string; target: string; id: string; options: string } | undefined
-const targetTitle = computed(() => props.graphNode?.name || props.entry?.name || '当前任务')
+const targetTitle = computed(() => creating.value ? '新任务' : props.graphNode?.name || props.entry?.name || '当前任务')
 const failedSteps = computed(() => state.value?.steps.filter(step => step.status === 'failed') || [])
 const reviewKind = computed(() => state.value?.review?.kind || (state.value?.review?.decisionRejected ? 'planner_rejected' : state.value?.review?.subjectType === 'planner' ? 'planner_wait' : 'step_review'))
 const reviewValidationDetails = computed(() => validationFailureDetails(state.value?.review?.validationFailures))
@@ -304,8 +315,11 @@ const statusLabel = computed(() => {
       waiting_review: current?.question ? '等待你的回答' : reviewPending.value ? '自动修订中' : reviewKind.value === 'workspace_revision_blocked' ? '修订受阻' : '已暂停',
       completed: '已完成', failed: '执行失败', cancelled: '已取消', superseded: '已替换' } as Record<string, string>)[status] || '尚未启动')
 })
-const composerPlaceholder = computed(() => !props.runId ? '先选择一项任务' : answering.value && state.value?.question ? '补充你的选择或信息，让任务继续…' : '询问当前任务，或一起梳理下一步…')
-const canSend = computed(() => !!props.runId && !!state.value && allows('canDiscuss') && !loading.value && !busy.value && !!draft.value.trim() && (answering.value && state.value.question && allows('canAnswerPlanner') ? permission.value === 'task_collaboration' : selectedModel.value ? availableModels.value.some(m => m.id === selectedModel.value) : state.value.modelAvailable))
+const composerPlaceholder = computed(() => creating.value ? '输入任务，描述你想完成的事情…' : !props.runId ? '先选择一项任务' : answering.value && state.value?.question ? '补充你的选择或信息，让任务继续…' : '询问当前任务，或一起梳理下一步…')
+const canSend = computed(() => creating.value
+  ? Boolean(draft.value.trim()) && !busy.value && !props.creationPending && !props.creationDisabled
+    && !props.readonly && !props.historical
+  : !!props.runId && !!state.value && allows('canDiscuss') && !loading.value && !busy.value && !!draft.value.trim() && (answering.value && state.value.question && allows('canAnswerPlanner') ? permission.value === 'task_collaboration' : selectedModel.value ? availableModels.value.some(m => m.id === selectedModel.value) : state.value.modelAvailable))
 const messages = computed<CopilotConversationMessage[]>(() => [
   ...(state.value?.exchanges || []).flatMap(e => [ ...(e.user ? [{ id: `${e.sourceRunId || props.runId}:${e.operationId}-u`, role: 'user', content: e.user, time: e.createdAt, planner: false, action: undefined, receipt: undefined, proposalId: e.operationId, sourceRunId: e.sourceRunId || props.runId || undefined }] : []), { id: `${e.sourceRunId || props.runId}:${e.operationId}-a`, role: 'assistant', content: e.assistant, time: e.createdAt, planner: false, action: e.action, receipt: e.receipt, proposalId: e.operationId, sourceRunId: e.sourceRunId || props.runId || undefined, responseTimings: e.responseTimings, latencyMs: e.latencyMs, providerRequest: e.providerRequest, contextUsage: e.contextUsage }]),
   ...(state.value?.humanAnswers || []).flatMap(a => [{ id: `${a.questionId}-q`, role: 'assistant', content: a.prompt, time: a.answeredAt, planner: true, action: undefined, receipt: undefined, proposalId: '', sourceRunId: a.sourceRunId }, { id: `${a.questionId}-r`, role: 'user', content: a.answer, time: a.answeredAt, planner: true, action: undefined, receipt: undefined, proposalId: '', sourceRunId: a.sourceRunId }])
@@ -516,6 +530,20 @@ async function loadCalls(more = false) {
   finally { if (token === generation) callsLoading.value = false }
 }
 async function send() {
+  if (creating.value) {
+    if (!canSend.value) return
+    const token = generation
+    busy.value = true
+    error.value = ''
+    try {
+      await props.createTask!(draft.value.trim())
+    } catch (cause) {
+      if (token === generation) error.value = cause instanceof Error ? cause.message : '任务创建失败，请重试'
+    } finally {
+      if (token === generation) busy.value = false
+    }
+    return
+  }
   if (!canSend.value || !state.value || !props.runId) return
   const id = props.runId, token = generation, content = draft.value.trim(), question = answering.value && allows('canAnswerPlanner') ? state.value.question : null
   const target = question?.questionId || 'chat'
@@ -618,7 +646,7 @@ watch(() => props.runId, (_next, previous) => {
   validatedRunId = null
   hasPendingToolApproval.value = false
   hasTimelineContent.value = false
-  state.value = null; draft.value = ''; error.value = ''; busy.value = false; requestKey = undefined; answering.value = false
+  state.value = null; draft.value = creating.value ? props.initialDraft || '' : ''; error.value = ''; busy.value = false; requestKey = undefined; answering.value = false
   reviewComment.value = ''; reviewReceipt.value = ''; reviewRequest = undefined
   approvalMode.value = 'ask'; settingPermission.value = false; permissionReceipt.value = ''; permissionRequest = undefined
   selectedModel.value = ''; permission.value = 'task_collaboration'; openMenu.value = null
@@ -631,6 +659,7 @@ watch(() => props.runId, (_next, previous) => {
 }, { immediate: true })
 watch(tab, value => { if (value === 'trace') void loadCalls() })
 watch(reasoningOptions, options => { if (!options.includes(reasoningEffort.value)) reasoningEffort.value = '' })
+watch(draft, value => { if (creating.value) emit('draft-change', value) }, { flush: 'sync' })
 watch(draft, () => void nextTick(() => { const e = composerInput.value; if (e) { e.style.height = 'auto'; e.style.height = `${Math.min(180, Math.max(76, e.scrollHeight))}px` } }))
 function closePickers(e: PointerEvent) { if (!composerRoot.value?.contains(e.target as Node)) openMenu.value = null }
 onMounted(() => { document.addEventListener('pointerdown', closePickers); document.addEventListener('visibilitychange', onVisibilityChange) })

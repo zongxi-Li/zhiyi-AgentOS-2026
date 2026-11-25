@@ -6,14 +6,16 @@
       </div>
     </header>
     <div class="auxiliary-sidebar__body">
-      <component
-        :is="view.component"
-        v-bind="componentProps"
-        @open-file="emit('open-file', $event)"
-        @select-run="emit('select-run', $event)"
-        @refresh-run="emit('refresh-run')"
-        @cancel-run="emit('cancel-run')"
-      />
+      <slot>
+        <component
+          :is="view.component"
+          v-bind="componentProps"
+          @open-file="emit('open-file', $event)"
+          @select-run="emit('select-run', $event)"
+          @refresh-run="emit('refresh-run')"
+          @cancel-run="emit('cancel-run')"
+        />
+      </slot>
     </div>
   </aside>
 </template>

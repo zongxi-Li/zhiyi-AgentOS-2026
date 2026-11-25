@@ -95,7 +95,7 @@
       </template>
 
       <template #right="rightState">
-        <div v-if="projection" class="workspace-inspector-column">
+        <div v-if="projection || (route.query.inspector === 'copilot' && selectedRunId)" class="workspace-inspector-column">
         <WorkbenchAuxiliarySidebar
           v-if="activeAuxiliaryView"
           :view="activeAuxiliaryView"
@@ -293,7 +293,9 @@ const projection = ref<MissionWorkspaceProjection | null>(null)
 const loading = ref(false)
 const loadError = ref('')
 const requestErrorCollapsed = ref(false)
-const activeAuxiliaryId = ref<string | null>(null)
+const activeAuxiliaryId = ref<string | null>(
+  route.query.inspector === 'copilot' ? 'acg-copilot.sidebar' : null
+)
 const rerunPending = ref(false)
 let recoveryUiGeneration = 0
 const cancelPending = ref(false)
