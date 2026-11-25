@@ -31,7 +31,7 @@
       </nav>
     </aside>
 
-    <main class="settings-content">
+    <main class="settings-content" :class="{ 'settings-content--flush': activeTab === 'profile' }">
       <header v-if="activeTab !== 'profile'" class="settings-header">
         <div>
           <span class="settings-eyebrow">PERSONAL SETTINGS</span>
@@ -1046,13 +1046,20 @@ function ensureSelectedModel(models: string[]): void {
 
 .settings-header,
 .settings-section,
-.settings-profile,
 .settings-footer {
   width: min(100%, 1400px);
   margin: 0 auto;
 }
 
+/* 个人资料的留白交给内容层，滚动层铺满主栏直到窗口右缘。 */
+.settings-content.settings-content--flush {
+  --profile-content-padding: 42px clamp(24px, 5vw, 76px) 56px;
+  padding: 0;
+  overflow: hidden;
+}
+
 .settings-profile {
+  width: 100%;
   height: 100%;
   min-height: 0;
 }
@@ -1592,6 +1599,7 @@ function ensureSelectedModel(models: string[]): void {
 @media (max-width: 980px) {
   .settings-view { grid-template-columns: 190px minmax(0, 1fr); }
   .settings-content { padding-right: 28px; padding-left: 28px; }
+  .settings-content.settings-content--flush { --profile-content-padding: 42px 28px 56px; }
   .provider-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
@@ -1605,6 +1613,7 @@ function ensureSelectedModel(models: string[]): void {
   .settings-nav-item .item-arrow { display: none; }
   .settings-search { margin: 12px 0 10px; }
   .settings-content { height: auto; overflow: visible; padding: 26px 16px 36px; }
+  .settings-content.settings-content--flush { --profile-content-padding: 26px 16px 36px; overflow: visible; }
   .settings-profile { height: auto; }
   .settings-header { align-items: flex-start; flex-direction: column; gap: 18px; }
   .settings-header-actions { width: 100%; justify-content: space-between; }
