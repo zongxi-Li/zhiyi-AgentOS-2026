@@ -1,7 +1,7 @@
 <template>
   <WorkbenchLayout :show-left="false" :show-right="false" storage-key="zhiyi.projects.layout.v1">
     <template #main>
-      <main class="project-list" aria-label="Projects">
+      <main ref="listElement" class="project-list" aria-label="Projects">
         <header class="project-list__header">
           <div>
             <h1>工程</h1>
@@ -78,11 +78,13 @@
             v-for="mission in filteredMissions"
             :key="mission.missionId"
             class="project-row"
-            :class="{ 'is-grid': viewMode === 'grid' }"
+            :class="{ 'is-grid': viewMode === 'grid', 'is-last-opened': mission.missionId === lastOpenedId }"
+            :data-mission-id="mission.missionId"
+            :aria-busy="openingMissionId === mission.missionId || undefined"
             role="button"
             tabindex="0"
             :aria-label="`打开项目：${mission.title || '未命名工程'}`"
-            @click="openMission(mission)"
+            @click="openMission(mission, $event.detail === 0)"
             @keydown.enter="handleProjectRowKeydown($event, mission)"
             @keydown.space="handleProjectRowKeydown($event, mission)"
             @contextmenu.prevent="openActionMenu($event, mission)"
@@ -90,7 +92,7 @@
             <span class="project-row__icon" aria-hidden="true"><el-icon><FolderOpened /></el-icon></span>
             <span class="project-row__copy">
               <strong :title="missionDisplayTitle(mission)">{{ missionDisplayTitle(mission) }}</strong>
-              <span>{{ mission.missionId }}</span>
+              <span>{{ openingMissionId === mission.missionId ? '正在打开…' : mission.missionId }}</span>
             </span>
             <span class="project-row__meta">
               <span class="project-row__status" :class="`is-${statusTone(mission)}`">
@@ -189,9 +191,22 @@
   </Teleport>
 </template>
 
+<script lang="ts">
+import type { Router } from 'vue-router'
+
+interface ProjectListPosition {
+  search: string
+  scrollTop: number
+  missionId: string
+  restoreFocus: boolean
+}
+
+const projectListPositions = new WeakMap<Router, ProjectListPosition>()
+</script>
+
 <script setup lang="ts">
 import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { CopyDocument, Delete as DeleteIcon, Document, Download, FolderAdd, FolderOpened, Grid, List, Memo, MoreFilled, Plus, Search, Tickets, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import BrandEmpty from '@/components/common/BrandEmpty.vue'
@@ -203,7 +218,22 @@ import { plainMissionTitle } from '@/utils/missionTitle'
 
 const router = useRouter()
 const missions = ref<MissionListItem[]>([])
-const searchText = ref('')
+const savedPosition = projectListPositions.get(router)
+const listElement = ref<HTMLElement | null>(null)
+const searchText = ref(savedPosition?.search ?? '')
+const lastOpenedId = ref(savedPosition?.missionId ?? '')
+const openingMissionId = ref('')
+let restorePosition = savedPosition
+let restoreFocus = false
+
+onBeforeRouteLeave(() => {
+  projectListPositions.set(router, {
+    search: searchText.value,
+    scrollTop: restorePosition?.scrollTop ?? listElement.value?.scrollTop ?? 0,
+    missionId: lastOpenedId.value,
+    restoreFocus
+  })
+})
 const loading = ref(false)
 const errorMessage = ref('')
 let controller: AbortController | null = null
@@ -279,23 +309,47 @@ const loadMissions = async () => {
     if (requestController.signal.aborted || error?.name === 'CanceledError' || error?.name === 'AbortError') return
     errorMessage.value = error?.response?.data?.detail || error?.message || '请稍后重试。'
   } finally {
-    if (controller === requestController && !requestController.signal.aborted) loading.value = false
+    if (controller === requestController && !requestController.signal.aborted) {
+      loading.value = false
+      if (restorePosition && !errorMessage.value) {
+        await nextTick()
+        if (requestController.signal.aborted || !listElement.value) return
+        const { scrollTop, missionId, restoreFocus: shouldFocus } = restorePosition
+        listElement.value.scrollTop = scrollTop
+        if (shouldFocus) {
+          const row = [...listElement.value.querySelectorAll<HTMLElement>('[data-mission-id]')]
+            .find(element => element.dataset.missionId === missionId)
+          row?.focus({ preventScroll: true })
+        }
+        restorePosition = undefined
+      }
+    }
   }
 }
 
-const openMission = (mission: MissionListItem) => {
+const openMission = async (mission: MissionListItem, keyboard = false) => {
+  if (openingMissionId.value) return
   closeActionMenu()
-  void router.push({
-    name: 'MissionWorkspace',
-    params: { missionId: mission.missionId },
-    query: mission.latestRunId ? { runId: mission.latestRunId } : undefined
-  })
+  lastOpenedId.value = mission.missionId
+  restoreFocus = keyboard
+  openingMissionId.value = mission.missionId
+  try {
+    await router.push({
+      name: 'MissionWorkspace',
+      params: { missionId: mission.missionId },
+      query: mission.latestRunId ? { runId: mission.latestRunId } : undefined
+    })
+  } catch {
+    ElMessage.error('工作台暂时无法打开，请重试。')
+  } finally {
+    openingMissionId.value = ''
+  }
 }
 
 const handleProjectRowKeydown = (event: KeyboardEvent, mission: MissionListItem) => {
   if (event.target !== event.currentTarget) return
   event.preventDefault()
-  openMission(mission)
+  void openMission(mission, true)
 }
 
 const createMission = () => {
@@ -591,7 +645,6 @@ onBeforeUnmount(() => {
 <style scoped>
 .project-list { display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 34px clamp(24px, 5vw, 76px) 56px; color: var(--text-primary); background: var(--bg-app); }
 .project-list__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; max-width: 1040px; width: 100%; margin: 0 auto; padding-bottom: 28px; }
-.project-list__eyebrow { color: var(--primary-color); font: 10px var(--font-mono, monospace); letter-spacing: .14em; }
 .project-list h1 { margin: 8px 0 5px; font-size: 25px; line-height: 1.2; }
 .project-list__header p { margin: 0; color: var(--text-secondary); font-size: 12px; }
 /* 主操作按钮：主题深蓝→亮蓝渐变，贴合暗色底（原花环奶油配色只适合浅色主题） */
@@ -641,7 +694,7 @@ onBeforeUnmount(() => {
 .project-row.is-grid + .project-row.is-grid { margin-top: 0; }
 .project-row.is-grid:hover, .project-row.is-grid:focus-visible { border-color: var(--primary-line); box-shadow: var(--shadow-md); }
 .project-row.is-grid .project-row__copy strong { font-size: 13px; line-height: 1.5; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; text-wrap: pretty; }
-.project-row.is-grid .project-row__meta { grid-column: 1 / -1; gap: 12px; justify-content: space-between; width: 100%; padding-top: 10px; border-top: 1px solid var(--border-light); font-size: 10px; }
+.project-row.is-grid .project-row__meta { grid-column: 1 / -1; gap: 12px; justify-content: space-between; width: 100%; padding-top: 10px; font-size: 10px; }
 .project-row.is-grid .project-row__meta time { margin-left: auto; }
 .project-row.is-grid .project-row__actions { grid-column: 3; grid-row: 1; }
 .project-row.is-grid .project-row__arrow { grid-column: 4; grid-row: 1; }
@@ -657,6 +710,10 @@ onBeforeUnmount(() => {
 .project-list__state--error strong { color: var(--danger); }
 @media (max-width: 960px) { .project-list__rows.is-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 720px) { .project-list { padding: 24px 18px 40px; } .project-list__header { display: block; } .project-list__create { margin-top: 18px; } .project-list__toolbar { align-items: stretch; flex-direction: column; gap: 12px; padding: 12px 0; } .project-list__search { width: 100%; } .project-list__toolbar-actions { justify-content: flex-end; gap: 8px; flex-wrap: wrap; } .project-view-toggle button { min-width: 30px; padding: 0 7px; } .project-view-toggle button span { display: none; } .project-row { grid-template-columns: 40px minmax(0, 1fr) 32px 20px; gap: 12px; min-height: 76px; padding: 12px; } .project-row__meta { grid-column: 2 / 3; gap: 12px; margin-top: -8px; font-size: 10px; } .project-row__actions { grid-column: 3; grid-row: 1 / 3; } .project-row__arrow { grid-column: 4; grid-row: 1 / 3; } .project-list__rows.is-grid { grid-template-columns: 1fr; } .project-row.is-grid { grid-template-columns: 40px minmax(0, 1fr) 32px 20px; } .project-row.is-grid .project-row__meta { grid-column: 1 / -1; margin-top: 0; } }
+.project-row.is-last-opened {
+  box-shadow: inset 2px 0 0 var(--primary-color);
+  background: color-mix(in srgb, var(--primary-color) 6%, var(--bg-card));
+}
 </style>
 
 <style>
@@ -667,7 +724,7 @@ onBeforeUnmount(() => {
 .project-action-menu button:disabled { color: var(--text-disabled); cursor: not-allowed; }
 .project-action-menu__separator { height: 1px; margin: 4px 6px; background: var(--border-light); }
 .project-export-menu { width: 216px; }
-.project-export-menu__context { padding: 4px 9px 5px; border-bottom: 1px solid var(--border-light); margin-bottom: 4px; color: var(--text-muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-export-menu__context { padding: 4px 9px 5px; margin-bottom: 4px; color: var(--text-muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @keyframes project-action-menu-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @media (prefers-reduced-motion: reduce) { .project-action-menu { animation: none; } }
 </style>
