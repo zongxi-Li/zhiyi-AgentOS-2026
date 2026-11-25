@@ -66,6 +66,7 @@ async def test_legacy_client_uses_selected_glm_runtime(monkeypatch):
     monkeypatch.setattr("app.ai_engine.model_runtime.AsyncOpenAI", FakeClient)
     client = KylinAIClient(api_key="", api_endpoint="http://unused")
     result = await client.generate_text(prompt="hello")
+    assert client._sdk_client_instance is None
     await client.close()
 
     assert result["text"] == "glm answer"
@@ -74,3 +75,33 @@ async def test_legacy_client_uses_selected_glm_runtime(monkeypatch):
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
     }
     assert captured["model"] == "glm-test"
+
+
+async def test_unused_legacy_sdk_is_not_initialized_even_when_closing(monkeypatch):
+    from unittest.mock import Mock
+    from app.ai_engine.kylin_sdk import client as module
+
+    factory = Mock(side_effect=AssertionError("unused SDK must not be constructed"))
+    monkeypatch.setattr(module, "KylinSDKClient", factory)
+    client = module.KylinAIClient(api_endpoint="http://unused")
+    await client.close()
+    factory.assert_not_called()
+
+
+async def test_legacy_sdk_initializes_once_on_first_multimodal_use(monkeypatch):
+    from unittest.mock import AsyncMock, Mock
+    from app.ai_engine.kylin_sdk import client as module
+
+    sdk = SimpleNamespace(recognize_speech=AsyncMock(return_value={"text": "hello"}), close=AsyncMock())
+    factory = Mock(return_value=sdk)
+    monkeypatch.setattr(module, "KylinSDKClient", factory)
+    client = module.KylinAIClient(api_endpoint="http://unused", timeout=17)
+    factory.assert_not_called()
+    assert await client.recognize_speech(b"audio") == {"text": "hello"}
+    assert await client.recognize_speech(b"again") == {"text": "hello"}
+    factory.assert_called_once()
+    assert factory.call_args.kwargs["api_endpoint"] == "http://unused"
+    assert factory.call_args.kwargs["timeout"] == 17
+    sdk.recognize_speech.assert_any_await(b"audio")
+    await client.close()
+    sdk.close.assert_awaited_once()

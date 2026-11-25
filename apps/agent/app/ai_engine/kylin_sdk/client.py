@@ -8,6 +8,7 @@ import asyncio
 from typing import List, Dict, Optional
 import httpx
 import platform
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -715,17 +716,26 @@ class KylinAIClient:
             logger.info("获取API密钥: https://dashscope.aliyuncs.com/")
             _api_key_warning_printed = True
         
-        # 创建底层SDK客户端
-        self._sdk_client = KylinSDKClient(
-            api_key=self._api_key,
-            api_endpoint=self._api_endpoint,
-            timeout=self._timeout,
-            qwen_api_key=self._qwen_api_key,
-            qwen_model=self._qwen_model,
-            deepseek_api_key=self._deepseek_api_key,
-            deepseek_model=self._deepseek_model
-        )
-    
+        # Most routes use the selected text Runtime. Do not construct unused
+        # legacy HTTP/OpenAI clients (and their TLS/proxy transports) at import.
+        self._sdk_client_instance: Optional[KylinSDKClient] = None
+        self._sdk_client_lock = threading.Lock()
+
+    @property
+    def _sdk_client(self) -> KylinSDKClient:
+        with self._sdk_client_lock:
+            if self._sdk_client_instance is None:
+                self._sdk_client_instance = KylinSDKClient(
+                    api_key=self._api_key,
+                    api_endpoint=self._api_endpoint,
+                    timeout=self._timeout,
+                    qwen_api_key=self._qwen_api_key,
+                    qwen_model=self._qwen_model,
+                    deepseek_api_key=self._deepseek_api_key,
+                    deepseek_model=self._deepseek_model,
+                )
+            return self._sdk_client_instance
+
     async def generate_text(
         self,
         text: Optional[str] = None,
@@ -943,4 +953,5 @@ class KylinAIClient:
     
     async def close(self):
         """关闭客户端"""
-        await self._sdk_client.close()
+        if self._sdk_client_instance is not None:
+            await self._sdk_client_instance.close()
