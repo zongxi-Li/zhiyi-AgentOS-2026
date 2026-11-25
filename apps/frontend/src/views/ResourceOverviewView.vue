@@ -14,9 +14,9 @@
             <div class="resource-pulse__lead">
               <span class="resource-kicker">LIVE RESOURCE FIELD</span>
               <strong>{{ totals.runtime }}</strong>
-              <span>已登记运行时</span>
+              <span>当前登记资源</span>
               <i class="resource-pulse__rule" aria-hidden="true"></i>
-              <small>{{ totals.online }} 可调度 · {{ totals.attention }} 需关注</small>
+              <small>{{ totals.online }} 健康已确认 · {{ totals.attention }} 需关注</small>
             </div>
             <div class="resource-pulse__tiers">
               <div v-for="tier in tiers" :key="tier.id" class="tier-readout" :class="`is-${tier.id}`">
@@ -29,7 +29,7 @@
 
           <section class="resource-overview-grid">
             <div class="resource-overview-grid__heading">
-              <div><span class="resource-kicker">CONNECTED CAPABILITIES</span><h2>正在运行</h2></div>
+              <div><span class="resource-kicker">CONNECTED CAPABILITIES</span><h2>当前登记</h2></div>
               <RouterLink to="/agentos/resources/manage">打开资源管理 <el-icon aria-hidden="true"><ArrowRight /></el-icon></RouterLink>
             </div>
             <div v-if="loading" class="resource-loading" role="status">正在读取资源状态…</div>
@@ -45,7 +45,7 @@
             <div v-else class="resource-recent-list">
               <article v-for="item in recentResources" :key="item.profile.resourceId" class="resource-recent-row">
                 <span class="resource-recent-row__signal" :class="`is-${item.snapshot.healthStatus}`" aria-hidden="true"></span>
-                <div class="resource-recent-row__name"><strong>{{ item.profile.displayName || item.profile.resourceId }}</strong><span>{{ kindLabel(item.profile.runtimeKind || item.profile.resourceType) }}<template v-if="item.profile.provider"> · {{ item.profile.provider }}</template></span></div>
+                <div class="resource-recent-row__name"><strong>{{ resourceDisplayName(item) }}</strong><span>{{ kindLabel(item.profile.runtimeKind || item.profile.resourceType) }}<template v-if="item.profile.provider"> · {{ item.profile.provider }}</template></span></div>
                 <span class="resource-recent-row__tier">{{ tierLabel(item.profile.deploymentTier) }}</span>
                 <span class="resource-recent-row__health">{{ healthLabel(item.snapshot.healthStatus) }}</span>
               </article>
@@ -70,23 +70,23 @@ import type { RuntimeResourceItem } from '@/services/api/agentos'
 import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
 import WorkspacePageHero from '@/components/app/WorkspacePageHero.vue'
 import ResourceCenterNav from '@/components/resource-center/ResourceCenterNav.vue'
+import { resourceDisplayName } from '@/components/resource-center/resourceCenterPresentation'
 
 const resources = ref<RuntimeResourceItem[]>([])
 const loading = ref(true)
 const error = ref('')
 let controller: AbortController | null = null
 const totals = computed(() => ({
-  runtime: resources.value.filter(item => item.profile.runtimeKind !== 'model_endpoint').length,
+  runtime: resources.value.length,
   online: resources.value.filter(item => item.snapshot.healthStatus === 'online' && item.profile.enabled).length,
   attention: resources.value.filter(item => item.snapshot.healthStatus !== 'online' || !item.profile.enabled).length
 }))
 const tiers = computed(() => [
-  { id: 'device', index: '01', label: '本地设备', count: countTier('device') },
-  { id: 'edge', index: '02', label: '边缘节点', count: countTier('edge') },
+  { id: 'device', index: '01', label: '本地能力', count: countTier('device') },
+  { id: 'edge', index: '02', label: '边缘能力', count: countTier('edge') },
   { id: 'cloud', index: '03', label: '云端服务', count: countTier('cloud') }
 ])
 const recentResources = computed(() => [...resources.value]
-  .filter(item => item.profile.runtimeKind !== 'model_endpoint')
   .sort((a, b) => Number(b.snapshot.healthStatus === 'online') - Number(a.snapshot.healthStatus === 'online'))
   .slice(0, 5))
 
@@ -94,8 +94,8 @@ function countTier(tier: string) {
   return resources.value.filter(item => item.profile.deploymentTier === tier || (tier === 'device' && ['local', 'terminal'].includes(String(item.profile.deploymentTier || '')))).length
 }
 const tierLabel = (tier?: string | null) => ({ device: '本地', local: '本地', terminal: '本地', edge: '边缘', cloud: '云端' }[tier || ''] || '未分类')
-const kindLabel = (kind?: string | null) => ({ model_server: '模型服务', tool_service: '工具服务', execution_backend: '执行服务', model_endpoint: '模型端点' }[kind || ''] || '资源')
-const healthLabel = (health?: string | null) => ({ online: '可调度', degraded: '需关注', offline: '离线', unknown: '待检测' }[health || ''] || '状态未知')
+const kindLabel = (kind?: string | null) => ({ model_server: '模型服务', tool_service: '工具服务', execution_backend: '执行服务', agent_instance: 'Agent 能力', model_endpoint: '模型端点' }[kind || ''] || '资源')
+const healthLabel = (health?: string | null) => ({ online: '健康正常', degraded: '需关注', offline: '离线', unknown: '待检测' }[health || ''] || '状态未知')
 
 async function load() {
   controller?.abort()

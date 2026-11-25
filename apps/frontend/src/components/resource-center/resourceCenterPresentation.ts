@@ -1,4 +1,4 @@
-import type { RuntimeDeploymentTier, RuntimeResourceHealth, RuntimeResourceType } from '@/services/api/agentos'
+import type { RuntimeDeploymentTier, RuntimeResourceHealth, RuntimeResourceType, RuntimeResourceItem } from '@/services/api/agentos'
 
 export type CustomerDeploymentGroup = {
   id: 'device' | 'edge' | 'cloud' | 'other'
@@ -16,7 +16,8 @@ export const customerResourceType = (kind: RuntimeResourceType | string | null |
   model_server: '模型',
   model_endpoint: '模型',
   tool_service: '工具',
-  execution_backend: '设备服务',
+  execution_backend: '执行服务',
+  agent_instance: 'Agent 能力',
   agent: '智能体',
   worker: '执行服务',
   embedding: '向量模型',
@@ -38,3 +39,21 @@ export const customerHealthLabel = (health: RuntimeResourceHealth | string | nul
 export const customerPrivacyLabel = (privacy: string | null | undefined): string => ({
   public: '公开数据', internal: '内部数据', confidential: '敏感数据', restricted: '受限数据'
 }[privacy || ''] || privacy || '隐私未标注')
+
+
+export const resourceDisplayName = (item: RuntimeResourceItem): string => ({
+  native_general_agent: '通用任务助手', workspace_developer: '工作区开发助手',
+  'Local Runtime': '本机文件与命令服务', '进程内 Agent 运行时': 'Agent 执行服务'
+}[item.profile.displayName || ''] || item.profile.displayName || item.profile.resourceId)
+
+export const confirmedResourceSlots = (item: RuntimeResourceItem): number | null => {
+  if (!item.profile.enabled) return 0
+  if (item.snapshot.healthStatus !== 'online' || item.health?.healthy === false) return null
+  const slots = item.snapshot.availableSlots
+  return typeof slots === 'number' && Number.isFinite(slots) && slots >= 0 ? slots : null
+}
+
+export const resourceCapacityLabel = (item: RuntimeResourceItem): string => {
+  const available = confirmedResourceSlots(item)
+  return `登记并发 ${item.profile.capacity} · ${available === null ? '可用容量待确认' : `已确认可用 ${available}`}`
+}

@@ -17,7 +17,8 @@
       <dl class="resource-detail__kv">
         <div><dt>健康状态</dt><dd :class="`is-${item.snapshot.healthStatus}`">{{ healthLabel(item.snapshot.healthStatus) }}</dd></div>
         <template v-if="!isModelEndpoint">
-          <div><dt>可用槽位</dt><dd>{{ item.snapshot.availableSlots ?? '未观测' }} / {{ item.profile.capacity }}</dd></div>
+          <div><dt>登记并发</dt><dd>{{ item.profile.capacity }}</dd></div>
+          <div><dt>已确认可用</dt><dd>{{ confirmedResourceSlots(item) ?? '待确认' }}</dd></div>
           <div><dt>利用率</dt><dd>{{ formatPercent(item.snapshot.utilization) }}</dd></div>
           <div><dt>延迟</dt><dd>{{ formatMetric(item.snapshot.latencyMs, 'ms') }}</dd></div>
           <div><dt>可靠性</dt><dd>{{ formatPercent(item.snapshot.reliability) }}</dd></div>
@@ -181,6 +182,7 @@
 </template>
 
 <script setup lang="ts">
+import { confirmedResourceSlots } from './resourceCenterPresentation'
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { agentosApi, type ResourceCredentialMetadata, type ResourceHealthEvent, type ResourceUsageRecord, type RuntimeResourceItem } from '@/services/api/agentos'

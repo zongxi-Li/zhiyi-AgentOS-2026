@@ -20,6 +20,34 @@ const item = (id: string, placement: string): RuntimeResourceItem => ({
 const stubs = { 'el-icon': true, 'el-drawer': true }
 
 describe('resource plane adaptation', () => {
+  it('counts one device and nests Agent abilities under their current host, with models separate', async () => {
+    const host = item('runtime:agents', 'device')
+    const agent = item('agent:current', 'device')
+    agent.profile.runtimeKind = 'agent_instance'
+    agent.profile.displayName = 'native_general_agent'
+    agent.profile.hostRuntimeId = host.profile.resourceId
+    const model = item('model:cloud', 'cloud')
+    model.profile.runtimeKind = 'model_endpoint'
+    vi.spyOn(agentosApi, 'listResources').mockResolvedValue({ items: [host, agent, model], total: 3 })
+    vi.spyOn(agentosApi, 'listNodes').mockResolvedValue({ items: [{
+      profile: { nodeId: 'node-1', displayName: '本机设备', placement: 'device', trust: 'host_trusted', enabled: true },
+      healthStatus: 'online', snapshotVersion: 1
+    }], total: 1 })
+    const wrapper = mount(ResourceOverviewPanel, { global: { stubs } })
+    await flushPromises()
+    const device = wrapper.get('.resource-topology__column.is-device')
+    expect(device.get('header span').text()).toBe('1 台设备')
+    expect(device.get('.resource-topology__service .resource-topology__agent').text()).toContain('通用任务助手')
+    expect(device.text()).toContain('登记并发 2 · 可用容量待确认')
+    expect(device.text()).not.toContain('可用位')
+    expect(wrapper.get('.resource-topology__models').text()).toContain('model:cloud')
+    expect(device.text()).not.toContain('model:cloud')
+    await wrapper.findAll('.resource-catalog-filters select')[0].setValue('agent')
+    expect(wrapper.get('.resource-topology__service .resource-topology__agent').text()).toContain('通用任务助手')
+    expect(wrapper.get('.resource-topology').text()).not.toContain('宿主服务未登记')
+    wrapper.unmount()
+  })
+
   it('renders device and unknown placements without dropping rows or inventing compute', async () => {
     vi.spyOn(agentosApi, 'listResources').mockResolvedValue({ items: [item('embedded', 'device'), item('future', 'satellite')], total: 2 })
     vi.spyOn(agentosApi, 'listNodes').mockResolvedValue({ items: [], total: 0 })

@@ -37,12 +37,12 @@
       </label>
       <div class="resource-toolbar__meta">
         <span class="resource-toolbar__count"><b>{{ filteredResources.length }}</b> / {{ resources.length }} 个资源</span>
-        <span class="resource-toolbar__mode"><i aria-hidden="true"></i> 已连接资源</span>
+        <span class="resource-toolbar__mode"><i aria-hidden="true"></i> 当前登记资源</span>
       </div>
     </div>
 
     <div class="resource-catalog-filters" aria-label="资源目录筛选">
-      <label><span>类型</span><select v-model="selectedType"><option value="">全部</option><option value="device">设备</option><option value="model">模型</option><option value="tool">工具</option></select></label>
+      <label><span>类型</span><select v-model="selectedType"><option value="">全部</option><option value="device">执行服务</option><option value="agent">Agent 能力</option><option value="model">模型</option><option value="tool">工具</option></select></label>
       <label><span>位置</span><select v-model="selectedTier"><option value="">全部位置</option><option value="device">本地</option><option value="edge">边缘</option><option value="cloud">云端</option><option v-for="tier in otherTierOptions" :key="tier" :value="tier">{{ tier }}</option></select></label>
       <label><span>状态</span><select v-model="selectedHealth"><option value="">全部状态</option><option value="online">可用</option><option value="degraded">需关注</option><option value="offline">离线</option><option value="unknown">待检测</option></select></label>
       <label><span>数据区域</span><select v-model="selectedDataZone"><option value="">全部区域</option><option v-for="zone in dataZoneOptions" :key="zone" :value="zone">{{ zone }}</option></select></label>
@@ -61,7 +61,7 @@
       >{{ domain.name }}<small>{{ domain.count }}</small></button>
     </div>
 
-    <ResourceTopologyPanel :items="filteredResources" :nodes="filteredNodes" :nodes-error="nodesError" :pending-nodes="pendingNodes" @open="openDetail" @toggle-node="toggleNode" />
+    <ResourceTopologyPanel :items="filteredResources" :context-items="resources" :nodes="filteredNodes" :nodes-error="nodesError" :pending-nodes="pendingNodes" @open="openDetail" @toggle-node="toggleNode" />
     <section v-if="loading && !resources.length" class="resource-state" role="status">
       <BrandLoader title="正在读取 ResourceService" subtitle="只读加载系统 Resource profile…" />
     </section>
@@ -74,7 +74,7 @@
       <strong>{{ hasFilters ? '没有匹配的资源' : '还没有接入资源' }}</strong>
       <span>{{ hasFilters ? '调整筛选条件，或清除筛选查看全部资源。' : '接入设备、模型或工具后，它们会显示在这里。' }}</span>
     </section>
-    <div v-else class="resource-groups" aria-label="系统资源">
+    <details v-else class="resource-groups" aria-label="资源明细"><summary>资源明细 · {{ filteredResources.length }} 项</summary>
       <section v-for="group in groupedResources" :key="group.tier" class="resource-tier-group" :class="`is-tier-${group.tier}`">
         <header class="resource-tier-group__header">
           <span class="resource-tier-group__dot" aria-hidden="true"></span>
@@ -89,7 +89,7 @@
                 <i :class="`resource-row__health-dot is-${item.snapshot.healthStatus}`"></i>
               </span>
               <div>
-                <strong>{{ item.profile.displayName || item.profile.resourceId }}</strong>
+                <strong>{{ resourceDisplayName(item) }}</strong>
               <span class="resource-row__meta">{{ customerResourceType(item.profile.runtimeKind || item.profile.resourceType) }}<template v-if="item.profile.provider"> · {{ item.profile.provider }}</template><template v-if="item.profile.sourceType"> · {{ item.profile.sourceType }}</template></span>
               </div>
             </div>
@@ -110,7 +110,7 @@
           </article>
         </div>
       </section>
-    </div>
+    </details>
   </section>
 
   <el-drawer v-model="drawerOpen" :title="selectedResource ? selectedResource.profile.resourceId : '资源详情'" size="440px" append-to-body class="resource-detail-drawer">
@@ -128,7 +128,7 @@ import ResourceTopologyPanel from './ResourceTopologyPanel.vue'
 import BrandLoader from '@/components/common/BrandLoader.vue'
 import { formatCapacity, formatMetric, formatPercent, healthLabel, resourceTypeMeta, resourcePlacement, tierLabel } from '@/utils/resourceFormat'
 import { resourceTypeIcon } from '@/utils/resourceTypeIcons'
-import { customerHealthLabel, customerPrivacyLabel, customerResourceType } from './resourceCenterPresentation'
+import { customerHealthLabel, customerPrivacyLabel, customerResourceType, resourceDisplayName } from './resourceCenterPresentation'
 
 const resources = ref<RuntimeResourceItem[]>([])
 const nodes = ref<NodeCatalogItem[]>([])
@@ -217,7 +217,7 @@ const filteredResources = computed(() => {
   const domain = selectedDomain.value
   return resources.value.filter(item => {
     const runtimeKind = item.profile.runtimeKind || item.profile.resourceType
-    const type = runtimeKind === 'model_endpoint' || runtimeKind === 'model_server' || item.profile.resourceType === 'model' ? 'model'
+    const type = runtimeKind === 'agent_instance' ? 'agent' : runtimeKind === 'model_endpoint' || runtimeKind === 'model_server' || item.profile.resourceType === 'model' ? 'model'
       : runtimeKind === 'tool_service' || item.profile.resourceType === 'tool' || item.profile.resourceType === 'mcp' ? 'tool' : 'device'
     if (selectedType.value && type !== selectedType.value) return false
     if (selectedTier.value && resourcePlacement(item.profile.deploymentTier) !== selectedTier.value) return false
