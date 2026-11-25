@@ -46,9 +46,9 @@ agentOS/
 │  │  ├─ recovery/                       [core] 恢复器：受控自愈、检查点与局部重规划请求
 │  │  ├─ attachments/                    [basic] 存储器：材料抽取、记忆抽取的数据服务与存储
 │  │  ├─ environment/                    [basic] 环境器：内容工作区、沙盒、执行及上下文压缩工具
-│  │  │  ├─ content/                            内容工作集、内容清单与内容引用
-│  │  │  ├─ hands/                              独立工具执行引擎（TypeScript 项目）
-│  │  │  └─ compact/                            独立上下文压缩引擎（TypeScript 项目）
+│  │  │  ├─ content/                             内容工作集、内容清单与内容引用
+│  │  │  ├─ hands/                               独立工具执行引擎（TypeScript 项目）
+│  │  │  └─ compact/                             独立上下文压缩引擎（TypeScript 项目）
 │  │  ├─ evolution/                      [great] 进化器：skills 进化、图自进化与候选版本评估
 │  │  └─ safe/                           [great] 安全部件：拆分推理、激活边界与差分隐私机制
 │  │
