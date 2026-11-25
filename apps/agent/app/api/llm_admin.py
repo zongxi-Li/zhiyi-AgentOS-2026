@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from contextlib import contextmanager
@@ -87,6 +88,40 @@ def _store_payload() -> Dict[str, Any]:
 async def list_llm_profiles():
     """列出服务端供应商档案与当前激活项（不含任何密钥）。"""
     return _store_payload()
+
+
+@router.get("/llm/provider-models")
+async def list_provider_models():
+    """Read model IDs from each configured provider connection."""
+    from openai import AsyncOpenAI
+    from app.llm.capabilities import normalize_deepseek_model
+
+    store = get_profile_store()
+    profiles = store.list_profiles()
+    connections = {
+        (profile.provider, profile.base_url.rstrip("/"), profile.resolved_api_key())
+        for profile in profiles if profile.is_usable()
+    }
+    # The effective system connection can come from environment configuration.
+    gateway = get_llm_gateway()
+    config = gateway.config
+    if config.provider not in {"", "mock", "unavailable"} and config.base_url and config.api_key:
+        connections.add((config.provider, config.base_url.rstrip("/"), config.api_key))
+
+    async def discover(provider, base_url, api_key):
+        try:
+            async with AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=8.0, max_retries=0) as client:
+                page = await client.models.list()
+            models = sorted({
+                normalize_deepseek_model(item.id) if provider == "deepseek" else item.id
+                for item in page.data if getattr(item, "id", "")
+            })
+            return {"provider": provider, "models": models, "status": "loaded"}
+        except Exception as exc:
+            logger.info("Provider model listing failed for %s (%s)", provider, type(exc).__name__)
+            return {"provider": provider, "models": [], "status": "unavailable"}
+
+    return {"catalogs": await asyncio.gather(*(discover(*connection) for connection in sorted(connections)))}
 
 
 @router.post("/llm/profiles/active")
