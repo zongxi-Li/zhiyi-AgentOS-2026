@@ -162,6 +162,8 @@ const mountPage = async (query = '?workspace=agent&contextId=conversation_1'): P
 describe('ChatView ACG progress integration', () => {
   beforeEach(() => {
     localStorage.clear()
+    // 信息栏登录默认收起；本组断言均针对展开态卡片，先以用户显式展开的偏好落盘
+    localStorage.setItem('chat.chat_info_collapsed.v2', '0')
     sessionStorage.clear()
     chatStoreMock = createChatStoreMock()
     vi.clearAllMocks()
@@ -495,7 +497,7 @@ describe('ChatView ACG progress integration', () => {
       await dock.get('.chat-info-dock__collapse').trigger('click')
       await flushPromises()
       expect(wrapper.find('.chat-info-card').exists()).toBe(false)
-      expect(localStorage.getItem('chat.chat_info_collapsed')).toBe('1')
+      expect(localStorage.getItem('chat.chat_info_collapsed.v2')).toBe('1')
       await wrapper.get('.chat-info-dock__expand').trigger('click')
       await flushPromises()
       expect(wrapper.find('.chat-info-card').exists()).toBe(true)

@@ -700,14 +700,15 @@ const CONTEXT_PANEL_DEFAULT_HEIGHT = 250
 const CONTEXT_PANEL_MIN_HEIGHT = 170
 const CONTEXT_PANEL_MAX_HEIGHT = 420
 // —— Chat 模式右侧停靠信息栏（ZCode/DSH 式：拖宽 + 收起 + 持久化）——
-const CHAT_INFO_COLLAPSED_KEY = 'chat.chat_info_collapsed'
+// v2：登录默认收起；只有用户显式开关才落盘（待审批自动展开不写偏好）。
+const CHAT_INFO_COLLAPSED_KEY = 'chat.chat_info_collapsed.v2'
 const CHAT_INFO_WIDTH_KEY = 'chat.chat_info_width'
 const CHAT_INFO_DEFAULT_WIDTH = DOCK_RIGHT_DEFAULT
 const CHAT_INFO_MIN_WIDTH = 280
 const CHAT_INFO_MAX_WIDTH = 960
 const CHAT_INFO_COLLAPSED_WIDTH = 44
 const CHAT_INFO_MIN_CONVERSATION_WIDTH = 560
-const chatInfoCollapsed = ref(localStorage.getItem(CHAT_INFO_COLLAPSED_KEY) === '1')
+const chatInfoCollapsed = ref(localStorage.getItem(CHAT_INFO_COLLAPSED_KEY) !== '0')
 const dockGeometry = useDockedWorkspaceGeometry()
 const chatInfoWidth = dockGeometry.rightWidth
 const chatInfoResizing = ref(false)
@@ -963,9 +964,10 @@ const handleChatInfoResizeKeydown = (event: KeyboardEvent) => {
   persistChatInfoWidth()
 }
 
-const setChatInfoCollapsed = (value: boolean) => {
+// persist=false 用于程序化开合（如待审批自动展开）：不落盘，登录默认仍以用户显式选择为准。
+const setChatInfoCollapsed = (value: boolean, persist = true) => {
   chatInfoCollapsed.value = value
-  localStorage.setItem(CHAT_INFO_COLLAPSED_KEY, value ? '1' : '0')
+  if (persist) localStorage.setItem(CHAT_INFO_COLLAPSED_KEY, value ? '1' : '0')
 }
 
 // 视口变化时回收超宽的信息栏，保证消息列可用宽度
@@ -1423,7 +1425,7 @@ const chatInfoTab = ref<ChatInfoTab>('info')
 // 有待审批而信息栏收起时自动展开并切到「命令与执行」，避免审批被藏住卡住整轮对话
 watch(pendingWorkApprovalCount, (count, previous) => {
   if (count > previous && (chatInfoCollapsed.value || chatInfoTab.value !== 'work')) {
-    if (chatInfoCollapsed.value) setChatInfoCollapsed(false)
+    if (chatInfoCollapsed.value) setChatInfoCollapsed(false, false)
     chatInfoTab.value = 'work'
   }
 })

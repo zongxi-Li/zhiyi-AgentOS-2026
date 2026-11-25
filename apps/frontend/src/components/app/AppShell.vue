@@ -317,8 +317,9 @@ let disposeAppKeyboardShortcuts: (() => void) | null = null
 type WorkspaceMode = 'agent' | 'chat'
 const workspaceMode = computed<WorkspaceMode>(() => isAcgPath(route.path) ? 'agent' : 'chat')
 // 对话子栏只在 OScode（/chat）存在：ACG 工程页只有中心列表，子栏不再于该页弹出。
-const CHAT_NAV_OPEN_KEY = 'layout.chat_nav_open'
-const chatNavOpen = ref(route.path.startsWith('/chat') && localStorage.getItem(CHAT_NAV_OPEN_KEY) === '1')
+// v2：登录默认展开；只有用户显式开关才落盘（离开对话页的自动收起不写偏好）。
+const CHAT_NAV_OPEN_KEY = 'layout.chat_nav_open.v2'
+const chatNavOpen = ref(route.path.startsWith('/chat') && localStorage.getItem(CHAT_NAV_OPEN_KEY) !== '0')
 const ACG_NAV_OPEN_KEY = 'layout.acg_nav_open'
 const isMissionWorkspacePath = (path: string) => path.startsWith('/agentos/missions/') && path.endsWith('/workspace')
 const isDockedWorkspaceRoute = computed(() => route.path.startsWith('/chat') || isMissionWorkspacePath(route.path))
@@ -495,9 +496,9 @@ const handleChatNavToggle = async () => {
   }
 }
 
+// 自动收起（离开 /chat、切往 ACG）只改内存态，不落盘：登录默认仍以用户显式选择为准。
 const closeChatPanel = () => {
   chatNavOpen.value = false
-  localStorage.setItem(CHAT_NAV_OPEN_KEY, '0')
 }
 
 const closeAcgPanel = () => {
