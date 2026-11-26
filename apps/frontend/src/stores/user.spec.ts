@@ -70,4 +70,34 @@ describe('current user loading', () => {
       expect(request.get).toHaveBeenCalledTimes(2)
     } finally { now.mockRestore() }
   })
+
+  it('refreshes a launcher projection without avatar after the backend settles', async () => {
+    vi.useFakeTimers()
+    try {
+      const store = useUserStore()
+      vi.mocked(request.get)
+        .mockRejectedValueOnce(new Error('backend not ready'))
+        .mockResolvedValueOnce({ data: { ...profile, avatar: 'a.png' } })
+      store.setCurrentUser({ id: 'user-a', username: 'Alice' }, { refreshProfile: true })
+      expect(store.currentUser?.avatar).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(4000)
+      expect(request.get).toHaveBeenCalledTimes(1)
+      expect(request.get).toHaveBeenCalledWith('/user/profile', { timeout: 10000, silent: true })
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(store.currentUser?.avatar).toBe('a.png')
+      expect(request.get).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(6000)
+      expect(request.get).toHaveBeenCalledTimes(2)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('does not schedule a backend refresh for a projection that already carries the avatar', async () => {
+    vi.useFakeTimers()
+    try {
+      const store = useUserStore()
+      store.setCurrentUser({ id: 'user-a', username: 'Alice', avatar: 'a.png' }, { refreshProfile: true })
+      await vi.advanceTimersByTimeAsync(10000)
+      expect(request.get).not.toHaveBeenCalled()
+    } finally { vi.useRealTimers() }
+  })
 })

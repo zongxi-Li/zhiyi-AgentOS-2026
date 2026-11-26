@@ -40,6 +40,7 @@ provideGlobalConfig({ locale: getElementPlusLocale() }, app, true)
 
 // 本机账号是入口身份的事实源：把已登录账号投影进 userStore，不再向尚未就绪的
 // 后端 /user/profile 发请求。后端 N03 的 LocalIdentity 仍由平台层独立校验，不受影响。
+// 投影不含头像字段，延后静默补拉完整档案，否则侧栏头像在重新拉档前一直是首字母占位。
 if (isAuthenticated()) {
   const account = currentAccount()
   if (account) {
@@ -47,7 +48,7 @@ if (isAuthenticated()) {
       id: account.id,
       username: account.username,
       email: account.email
-    })
+    }, { refreshProfile: true })
   }
 }
 app.use(router)

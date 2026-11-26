@@ -7,6 +7,13 @@ import {
 
 export { wasErrorUserNotified } from './requestErrors'
 
+declare module 'axios' {
+  export interface AxiosRequestConfig {
+    /** silent: 失败不弹全局提示，由调用方自行消化（启动期档案补拉等后台请求）。 */
+    silent?: boolean
+  }
+}
+
 const request = axios.create({
   baseURL: apiUrl('/api'),
   timeout: 240000,
@@ -35,6 +42,10 @@ request.interceptors.response.use(
     return response
   },
   (error: AxiosError) => {
+    // silent 请求（如启动期的档案补拉）由调用方自行消化失败，不弹全局提示
+    if (error.config?.silent) {
+      return Promise.reject(error)
+    }
     let userNotified = false
     const notifyError = (message: string) => {
       ElMessage.error(message)
