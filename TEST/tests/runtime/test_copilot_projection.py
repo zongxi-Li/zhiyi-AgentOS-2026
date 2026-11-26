@@ -2,7 +2,7 @@ import json
 from types import SimpleNamespace
 
 from components.executor.value_store import SQLiteExecutionValueStore
-from contracts.planning import TaskPlan, PlannedTask
+from contracts.planning import TaskPlan, PlannedTask, TaskPlanRelation
 from runtime.projections.copilot_projection import initial_plan_summary, planning_progress, review_summary
 from contracts.workflow import WorkflowStatus, utc_now
 
@@ -10,7 +10,10 @@ from contracts.workflow import WorkflowStatus, utc_now
 def sources():
     plan = TaskPlan(missionId="mission_0123456789ab", nodes=(PlannedTask(key="T1", title="核对事实", objective="确认来源",
         decompositionRationale="先核对事实，避免后续分析依赖假设", constraints=[{"value": "不修改文件"}],
-        acceptanceCriteria=("标明来源",), producedArtifacts=("分析报告",)),), expectedArtifacts=("分析报告",))
+        acceptanceCriteria=("标明来源",), capabilityRequirements=("read",)),
+        PlannedTask(key="T2", title="汇总", objective="整理结论", producedArtifacts=("分析报告",))),
+        relations=(TaskPlanRelation(sourceKey="T1", targetKey="T2", relationType="depends_on"),),
+        expectedArtifacts=("分析报告",))
     run = SimpleNamespace(run_id="run", mission_id="mission_0123456789ab", input={"taskGoal": "分析故障", "apiKey": "private"},
         execution_state={"taskPlan": plan.model_dump(by_alias=True, mode="json"), "reasoning_content": "private"})
     return plan, run
@@ -36,6 +39,8 @@ def test_initial_commit_is_available_before_graph_materialization_and_run_scoped
         get_by_idempotency_key=lambda key: record if key == "initial-planning:run" else None)))
     summary = initial_plan_summary(runtime, run)
     assert summary["commitId"] == "accepted" and summary["commitmentRevision"] == 2
+    assert summary["tasks"][0]["capabilities"] == ["read"]
+    assert summary["relations"] == [{"sourceKey": "T1", "targetKey": "T2", "relationType": "depends_on"}]
     record.source_provenance.source_run_id = "foreign"
     assert initial_plan_summary(runtime, run) is None
 

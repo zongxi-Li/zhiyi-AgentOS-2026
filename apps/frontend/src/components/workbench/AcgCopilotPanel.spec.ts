@@ -24,6 +24,40 @@ const state = (): CopilotState => ({ runId: 'run-1', status: 'running', revision
 const wrappers: ReturnType<typeof mount>[] = []
 const review = (rejected = false) => ({ subjectId: 'graph-1', subjectType: 'planner', reason: 'Recovery authority rejected proposal', reasonCode: 'PLANNER_WAIT', canApprove: !rejected, decisionRejected: rejected, expectedRunUpdatedAt: '2026-10-06T12:00:00Z' })
 
+describe('new tasks in the working Copilot', () => {
+  it('creates through the same composer without calling a Run-only discussion endpoint', async () => {
+    const createTask = vi.fn().mockResolvedValue(undefined)
+    const w = await panel({ runId: null, createTask })
+    const input = w.get('textarea[aria-label="任务对话输入"]')
+    expect(input.attributes('disabled')).toBeUndefined()
+    expect(w.find('.readonly-note').exists()).toBe(false)
+    await input.setValue('检查工作区并整理结果')
+    await input.trigger('keydown', { key: 'Enter', isComposing: true })
+    expect(createTask).not.toHaveBeenCalled()
+    await input.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(createTask).toHaveBeenCalledOnce()
+    expect(createTask).toHaveBeenCalledWith('检查工作区并整理结果')
+    expect(agentosApi.streamCopilotMessage).not.toHaveBeenCalled()
+  })
+
+  it('keeps the initial message on failure and prevents duplicate creation while pending', async () => {
+    let reject!: (cause: Error) => void
+    const createTask = vi.fn(() => new Promise<void>((_, fail) => { reject = fail }))
+    const w = await panel({ runId: null, createTask, initialDraft: '需要恢复的目标' })
+    expect((w.get('textarea').element as HTMLTextAreaElement).value).toBe('需要恢复的目标')
+    await w.get('form').trigger('submit')
+    await w.get('form').trigger('submit')
+    expect(createTask).toHaveBeenCalledOnce()
+    reject(new Error('lost response'))
+    await flushPromises()
+    expect((w.get('textarea').element as HTMLTextAreaElement).value).toBe('需要恢复的目标')
+    expect(w.get('.error-note').text()).toContain('lost response')
+    await w.setProps({ creationDisabled: true })
+    expect(w.get('.send-button').attributes('disabled')).toBeDefined()
+  })
+})
+
 describe('explicit review interaction', () => {
   it('projects an equal-revision durable review state above a stale Copilot running state', async () => {
     vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), revision: 3, status: 'running' })

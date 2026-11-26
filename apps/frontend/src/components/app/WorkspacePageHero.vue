@@ -1,7 +1,7 @@
 <template>
   <header class="workspace-page-hero">
     <div class="workspace-page-hero__copy">
-      <span class="workspace-page-hero__eyebrow">{{ eyebrow }}</span>
+      <span v-if="eyebrow" class="workspace-page-hero__eyebrow">{{ eyebrow }}</span>
       <h1>{{ title }}</h1>
       <p v-if="description">{{ description }}</p>
     </div>
@@ -13,7 +13,7 @@
 
 <script setup lang="ts">
 defineProps<{
-  eyebrow: string
+  eyebrow?: string
   title: string
   description?: string
 }>()
@@ -26,7 +26,6 @@ defineProps<{
   justify-content: space-between;
   gap: 24px;
   padding: 30px 0 24px;
-  border-bottom: 1px solid var(--border-light);
 }
 
 .workspace-page-hero__eyebrow {

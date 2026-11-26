@@ -6,7 +6,7 @@
       ref="workbenchLayout"
       shared-dock-geometry
       :show-right="true"
-      :show-bottom-panel="Boolean(projection)"
+      :show-bottom-panel="Boolean(projection) || loading"
       bottom-panel-storage-key="zhiyi.mission.workspace.bottom-panel.v1"
       :bottom-panel-default-collapsed="false"
       :bottom-panel-collapsed-height="0"
@@ -37,12 +37,18 @@
             @open-file="openWorkspaceFile"
           />
         </KeepAlive>
-        <section v-if="!projection" class="workspace-loading-pane" aria-label="Workspace loading status">
-          <img class="workspace-loading-pane__watermark" src="/logo-mark.svg" alt="" aria-hidden="true" />
-          <span class="workspace-loading-pane__mark">MISSION</span>
-          <strong>{{ loading ? 'Loading workspace…' : 'Workspace unavailable' }}</strong>
-          <span>{{ loadError || '等待 Mission 投影。' }}</span>
-          <button v-if="loadError" type="button" @click="loadWorkspace()">Retry</button>
+        <section v-if="!projection" class="workspace-loading-pane" :class="{ 'is-loading': loading }" aria-label="项目导航加载状态">
+          <div v-if="loading" class="workspace-pane-placeholder" aria-hidden="true">
+            <div class="workspace-pane-placeholder__rail"></div>
+            <div class="workspace-pane-placeholder__lines"><i></i><i></i><i></i></div>
+          </div>
+          <template v-else>
+            <img class="workspace-loading-pane__watermark" src="/logo-mark.svg" alt="" aria-hidden="true" />
+            <span class="workspace-loading-pane__mark">MISSION</span>
+            <strong>项目导航不可用</strong>
+            <span>{{ loadError || '等待 Mission 投影。' }}</span>
+            <button v-if="loadError" type="button" @click="loadWorkspace()">重新加载</button>
+          </template>
         </section>
         </div>
       </template>
@@ -52,6 +58,7 @@
         <p v-if="deliveryIntentError" role="alert">{{ deliveryIntentError }}</p>
         <EditorGroup
           v-if="projection"
+          class="workspace-content-arrive"
           :projection="projection"
           :open-entries="openEntries"
           :active-editor-id="activeEditorId"
@@ -85,9 +92,13 @@
           @artifact-projection="artifactProjection = $event"
           @semantics-saved="loadWorkspace(selectedRunId || undefined)"
         />
+        <section v-else-if="loading" class="workspace-pane-placeholder workspace-pane-placeholder--editor" role="status">
+          <div class="workspace-pane-placeholder__rail" aria-hidden="true"></div>
+          <p>正在打开工作台…</p>
+        </section>
         <section v-else class="workspace-main-state" role="status">
           <img class="workspace-main-state__watermark" src="/logo-mark.svg" alt="" aria-hidden="true" />
-          <strong>{{ loading ? 'Loading Mission Workspace…' : 'Mission Workspace unavailable' }}</strong>
+          <strong>工作台不可用</strong>
           <span>{{ loadError || '请从 Mission 导航进入一个 Project Workspace。' }}</span>
           <button v-if="loadError" type="button" @click="loadWorkspace()">重新加载</button>
         </section>
@@ -95,7 +106,7 @@
       </template>
 
       <template #right="rightState">
-        <div v-if="projection" class="workspace-inspector-column">
+        <div v-if="projection || (route.query.inspector === 'copilot' && selectedRunId)" class="workspace-inspector-column">
         <WorkbenchAuxiliarySidebar
           v-if="activeAuxiliaryView"
           :view="activeAuxiliaryView"
@@ -138,10 +149,15 @@
           @close="rightState.toggleRightPane"
         />
         </div>
+        <div v-else-if="loading" class="workspace-pane-placeholder" aria-hidden="true">
+          <div class="workspace-pane-placeholder__rail"></div>
+          <div class="workspace-pane-placeholder__lines"><i></i><i></i><i></i></div>
+        </div>
       </template>
 
       <template #bottom="{ setCollapsed }">
         <WorkbenchBottomPanel
+          v-if="projection"
           headerless
           :tabs="panelTabs"
           :active-tab="panelActiveTab"
@@ -157,6 +173,9 @@
             />
           </template>
         </WorkbenchBottomPanel>
+        <div v-else class="workspace-pane-placeholder" aria-hidden="true">
+          <div class="workspace-pane-placeholder__rail"></div>
+        </div>
       </template>
 
       <template v-if="projection" #status-bar="{ collapsed, setCollapsed }">
@@ -250,7 +269,7 @@ import type { RunDocumentSymbol } from '@/workbench/runtime/runDocument'
 import type { ArtifactDocumentModel } from '@/workbench/runtime/artifactProjection'
 import { beginRunRecovery, pendingRunRecovery, completeRunRecovery, confirmCurrentRunRecovery,
   RecoveryResponseError } from '@/workbench/runtime/recoveryIdentity'
-import { readRunCapabilities } from '@/workbench/runtime/runCapabilities'
+import { readRunCapabilities, recoveryCheckPending } from '@/workbench/runtime/runCapabilities'
 import { conversationBindingKey, readRunDeliverableIntent } from '@/features/workspace/navigation'
 import { projectLifecycle } from '@/workbench/runtime/lifecycleProjection'
 import { initialEditorIntent, selectLifecycleEditor } from '@/workbench/runtime/editorSelection'
@@ -293,7 +312,9 @@ const projection = ref<MissionWorkspaceProjection | null>(null)
 const loading = ref(false)
 const loadError = ref('')
 const requestErrorCollapsed = ref(false)
-const activeAuxiliaryId = ref<string | null>(null)
+const activeAuxiliaryId = ref<string | null>(
+  route.query.inspector === 'copilot' ? 'acg-copilot.sidebar' : null
+)
 const rerunPending = ref(false)
 let recoveryUiGeneration = 0
 const cancelPending = ref(false)
@@ -350,9 +371,9 @@ const workspaceProjectionRetryDelays = [
   ...Array.from({ length: 23 }, () => 5000)
 ]
 
-// A workspace projection is a small read model. Do not let the shared
-// 240-second API timeout turn a stalled gateway into a frozen editor.
-const WORKSPACE_PROJECTION_TIMEOUT_MS = 15000
+// Review/recovery evidence can take more than 15s on a persisted Run. Keep
+// this read bounded below the shared 240s timeout; navigation still aborts it.
+const WORKSPACE_PROJECTION_TIMEOUT_MS = 60000
 
 // Run Progress is a first-class editor entry. Its identity is scoped to the Run
 // so reopening/history switching cannot silently reuse another Run's document.
@@ -443,8 +464,9 @@ const pendingSelectedRecovery = computed(() => {
   try { return pendingRunRecovery(missionId.value, runId, sessionStorage) } catch { return null }
 })
 const canRerunSelectedRun = computed(() => Boolean(
-  projection.value?.activeRun?.runId && (pendingSelectedRecovery.value || lifecycle.value.capabilities?.canRetrySuccessor
-    || lifecycle.value.capabilities?.canRecoverCurrentRun || lifecycle.value.capabilities?.canRerunSuccessor)
+  projection.value?.activeRun?.runId && (pendingSelectedRecovery.value || !recoveryCheckPending(lifecycle.value.capabilities)
+    && (lifecycle.value.capabilities?.canRetrySuccessor || lifecycle.value.capabilities?.canRecoverCurrentRun
+      || lifecycle.value.capabilities?.canRerunSuccessor))
 ))
 const shouldResumeSelectedRun = computed(() => pendingSelectedRecovery.value?.kind === 'retry'
   || lifecycle.value.capabilities?.canRetrySuccessor === true || lifecycle.value.capabilities?.canRecoverCurrentRun === true)
@@ -456,6 +478,7 @@ const canCancelActiveRun = computed(() => Boolean(
 ))
 const rerunDisabledReason = computed(() => {
   if (rerunPending.value) return '正在提交恢复或再次运行请求'
+  if (recoveryCheckPending(lifecycle.value.capabilities)) return '正在核对可用的恢复方式'
   if (!canRerunSelectedRun.value) return '服务端未提供恢复或再次运行的能力'
   return shouldResumeSelectedRun.value
     ? '复用已完成节点，从失败节点继续执行'
@@ -498,6 +521,7 @@ const activeAuxiliaryView = computed(() => (
     : null
 ))
 const auxiliaryViewProps = computed(() => ({
+  resourceStepId: typeof route.query.resourceStepId === 'string' ? route.query.resourceStepId : undefined,
   entry: inspectorEntry.value,
   graphNode: inspectorGraphNode.value,
   graphNodes: projection.value?.graphNodes || [],
@@ -682,7 +706,8 @@ const requestWorkspaceProjection = async (runId: string | null, signal: AbortSig
       return await agentosApi.getMissionWorkspace(missionId.value, {
         runId: runId || undefined,
         signal,
-        timeout: WORKSPACE_PROJECTION_TIMEOUT_MS
+        timeout: WORKSPACE_PROJECTION_TIMEOUT_MS,
+        includeRecovery: false
       })
     } catch (error: unknown) {
       const status = responseStatus(error)
@@ -1228,6 +1253,9 @@ const locateGraph = (entry: WorkspaceEntry) => {
 
 void loadWorkspace()
 watch(lifecycle, followLifecycle)
+watch(() => route.query.resourceStepId, stepId => {
+  if (typeof stepId === 'string' && route.query.inspector === 'copilot') activeAuxiliaryId.value = 'acg-copilot.sidebar'
+})
 watch(() => JSON.stringify([route.query.entryIntent, route.query.entryIntentId, route.query.entryIntentMissionId, route.query.entryIntentRunId]), () => {
   if (isWorkspaceVisible() && route.query.entryIntent) void loadWorkspace(typeof route.query.runId === 'string' ? route.query.runId : null)
 })
@@ -1323,6 +1351,21 @@ onBeforeUnmount(() => {
 .workspace-main-state strong { color: var(--text-primary); font-size: 14px; font-weight: 650; }
 .workspace-main-state > span { max-width: 320px; line-height: 1.65; }
 .workspace-main-state button { margin-top: 3px; }
+
+.workspace-loading-pane.is-loading { flex: 1; min-height: 0; display: block; padding: 0; }
+.workspace-pane-placeholder { height: 100%; min-height: 0; overflow: hidden; background: var(--wb-surface-1); }
+.workspace-pane-placeholder--editor { flex: 1; background: var(--wb-surface-shell); }
+.workspace-pane-placeholder__rail { height: var(--editor-rail-height, 32px); }
+.workspace-pane-placeholder__lines { display: grid; gap: 12px; padding: 16px 12px; }
+.workspace-pane-placeholder__lines i { width: 68%; height: 8px; border-radius: 3px; background: var(--wb-hover); }
+.workspace-pane-placeholder__lines i:nth-child(2) { width: 52%; }
+.workspace-pane-placeholder__lines i:nth-child(3) { width: 60%; }
+.workspace-pane-placeholder--editor p { margin: 18px; color: var(--text-secondary); font-size: 12px; }
+.workspace-content-arrive { animation: workspace-content-arrive 160ms ease-out; }
+@keyframes workspace-content-arrive { from { opacity: .65; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .workspace-content-arrive { animation: none; }
+}
 
 @keyframes workspace-state-pulse {
   0%, 100% { opacity: .85; transform: scale(.985); }
@@ -1497,12 +1540,12 @@ onBeforeUnmount(() => {
 }
 .artifact-choice { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 18px; background: color-mix(in srgb, var(--bg-app) 55%, transparent); }
 .artifact-choice__panel { width: min(420px, 100%); border: 1px solid var(--border-light); background: var(--bg-card); box-shadow: var(--shadow-md); }
-.artifact-choice__panel header { display: flex; justify-content: space-between; gap: 18px; padding: 14px 16px; border-bottom: 1px solid var(--border-light); }
+.artifact-choice__panel header { display: flex; justify-content: space-between; gap: 18px; padding: 14px 16px; }
 .artifact-choice__panel header span, .artifact-choice__panel header strong { display: block; }
 .artifact-choice__panel header span { color: var(--text-secondary); font-size: 12px; }
 .artifact-choice__panel header strong { margin-top: 5px; color: var(--primary-color); font: 11px var(--font-mono, monospace); }
 .artifact-choice__panel header button { width: 26px; height: 26px; border: 0; color: var(--text-muted); background: transparent; cursor: pointer; font-size: 18px; }
-.artifact-choice__item { display: flex; justify-content: space-between; width: 100%; padding: 11px 16px; border: 0; border-bottom: 1px solid var(--border-light); color: var(--text-primary); background: transparent; cursor: pointer; text-align: left; }
+.artifact-choice__item { display: flex; justify-content: space-between; width: 100%; padding: 11px 16px; border: 0; color: var(--text-primary); background: transparent; cursor: pointer; text-align: left; }
 .artifact-choice__item:hover { background: var(--primary-fade); }
 .artifact-choice__item code { color: var(--text-muted); font: 10px var(--font-mono, monospace); }
 </style>

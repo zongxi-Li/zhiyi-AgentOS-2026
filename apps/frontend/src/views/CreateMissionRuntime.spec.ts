@@ -23,10 +23,10 @@ const page = async (efforts: string[], alwaysThinking = false) => {
   ] })
   await router.push('/new'); await router.isReady()
   wrapper = mount(CreateMissionView, { global: { plugins: [router], stubs: {
-    WorkbenchLayout: { template: '<main><slot name="main" /></main>' }, PluginExtensionHost: true
+    WorkbenchLayout: { template: '<main><slot name="main" /><slot name="right" /></main>' }, PluginExtensionHost: true
   } } })
   await flushPromises()
-  await wrapper.get('#mission-goal').setValue('验证运行设置')
+  await wrapper.get('textarea[aria-label="任务对话输入"]').setValue('验证运行设置')
   return wrapper
 }
 
@@ -67,11 +67,11 @@ describe('Create Mission runtime settings', () => {
     const view = await page(['low', 'high', 'max'])
     const seed = view.get('input[aria-label="Planning seed"]')
     await seed.setValue('1.5')
-    expect(view.get('.create-mission__submit').attributes('disabled')).toBeDefined()
+    expect(view.get('.send-button').attributes('disabled')).toBeDefined()
     await view.get('form').trigger('submit'); await flushPromises()
     expect(workflowApi.startWorkflowAsync).not.toHaveBeenCalled()
     await seed.setValue('9007199254740991')
-    expect(view.get('.create-mission__submit').attributes('disabled')).toBeUndefined()
+    expect(view.get('.send-button').attributes('disabled')).toBeUndefined()
     await view.get('form').trigger('submit'); await flushPromises()
     expect(vi.mocked(workflowApi.startWorkflowAsync).mock.calls[0][0].input?.planningSeed).toBe(9007199254740991)
   })

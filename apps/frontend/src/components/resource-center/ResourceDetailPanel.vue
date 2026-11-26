@@ -17,12 +17,20 @@
       <dl class="resource-detail__kv">
         <div><dt>健康状态</dt><dd :class="`is-${item.snapshot.healthStatus}`">{{ healthLabel(item.snapshot.healthStatus) }}</dd></div>
         <template v-if="!isModelEndpoint">
-          <div><dt>可用槽位</dt><dd>{{ item.snapshot.availableSlots ?? '未观测' }} / {{ item.profile.capacity }}</dd></div>
+          <div><dt>登记并发</dt><dd>{{ item.profile.capacity }}</dd></div>
+          <div><dt>已确认可用</dt><dd>{{ confirmedResourceSlots(item) ?? '待确认' }}</dd></div>
           <div><dt>利用率</dt><dd>{{ formatPercent(item.snapshot.utilization) }}</dd></div>
           <div><dt>延迟</dt><dd>{{ formatMetric(item.snapshot.latencyMs, 'ms') }}</dd></div>
           <div><dt>可靠性</dt><dd>{{ formatPercent(item.snapshot.reliability) }}</dd></div>
         </template>
       </dl>
+    </section>
+
+    <section v-if="item.profile.capabilities.length" class="resource-detail__section" aria-label="全部能力">
+      <h3>能力 · {{ item.profile.capabilities.length }} 项</h3>
+      <div class="resource-detail__chips">
+        <span v-for="capability in item.profile.capabilities" :key="capability">{{ capability }}</span>
+      </div>
     </section>
 
     <section v-if="healthEvents.length" class="resource-detail__section">
@@ -40,6 +48,18 @@
         </svg>
       </div>
       <p class="resource-detail__spark-meta">最近 {{ healthEvents.length }} 次观测 · 最早 {{ formatDate(healthEvents[healthEvents.length - 1]?.observedAt) }}</p>
+    </section>
+
+    <section v-if="showsExecution" class="resource-detail__section">
+      <h3>当前占用</h3>
+      <p v-if="poolResource">{{ poolResource.activeSlots }}/{{ poolResource.capacity }} 槽位已占用</p>
+      <ul v-if="poolResource?.activeSteps.length" class="resource-detail__usage">
+        <li v-for="step in poolResource.activeSteps" :key="`${step.runId}:${step.stepId}`">
+          <router-link class="resource-detail__history-link" :to="stepLink(step)">{{ step.stepName || step.stepId }} →</router-link>
+          <span>{{ step.runId }}</span>
+        </li>
+      </ul>
+      <p v-else class="resource-detail__empty">{{ poolResource ? '暂无可见的运行步骤' : poolStatus }}</p>
     </section>
 
     <section class="resource-detail__section">
@@ -100,13 +120,6 @@
         <div><dt>接入适配器</dt><dd>{{ item.profile.adapter || '未标注' }}</dd></div>
         <!-- 执行端点与凭据引用已随 N1.2 投影迁移从资源目录移除（任务书：资源目录无 endpoint/credential）。 -->
       </dl>
-      </section>
-
-      <section v-if="item.profile.capabilities.length" class="resource-detail__section">
-      <h3>能力</h3>
-      <div class="resource-detail__chips">
-        <span v-for="capability in item.profile.capabilities" :key="capability">{{ capability }}</span>
-      </div>
       </section>
 
       <section v-if="item.profile.domains.length" class="resource-detail__section">
@@ -181,12 +194,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { confirmedResourceSlots } from './resourceCenterPresentation'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { agentosApi, type ResourceCredentialMetadata, type ResourceHealthEvent, type ResourceUsageRecord, type RuntimeResourceItem } from '@/services/api/agentos'
 import ResourceTypeBadge from './ResourceTypeBadge.vue'
 import { formatDate, formatMetric, formatPercent, healthLabel, resourceTypeMeta, tierLabel, formatCapacity } from '@/utils/resourceFormat'
 import { resourceTypeIcon } from '@/utils/resourceTypeIcons'
+import type { AgentPoolActiveStep, AgentPoolHost, AgentPoolInstance } from '@/services/api/agentos/types/agentPool'
 
 const props = defineProps<{ item: RuntimeResourceItem }>()
 const emit = defineEmits<{ (event: 'enabled-changed', payload: { resourceId: string; enabled: boolean }): void }>()
@@ -201,6 +216,34 @@ const healthEvents = ref<ResourceHealthEvent[]>([])
 const credential = ref<ResourceCredentialMetadata | null>(null)
 const rotatePending = ref(false)
 const isModelEndpoint = computed(() => props.item.profile.runtimeKind === 'model_endpoint')
+const showsExecution = computed(() => ['agent_instance', 'execution_backend'].includes(props.item.profile.runtimeKind || ''))
+const poolResource = ref<AgentPoolInstance | AgentPoolHost>()
+const poolStatus = ref('正在读取占用…')
+let poolRequest: AbortController | undefined
+let poolTimer: ReturnType<typeof setInterval> | undefined
+const stepLink = (step: AgentPoolActiveStep) => ({
+  name: 'MissionWorkspace',
+  params: { missionId: step.missionId },
+  query: { runId: step.runId, inspector: 'copilot', resourceStepId: step.stepId },
+})
+async function loadPoolResource() {
+  if (!showsExecution.value || poolRequest) return
+  const request = new AbortController()
+  poolRequest = request
+  const resourceId = props.item.profile.resourceId
+  try {
+    const snapshot = await agentosApi.getAgentPool({ signal: request.signal })
+    if (request.signal.aborted) return
+    poolResource.value = [...snapshot.instances, ...(snapshot.hosts || [])].find(item => item.resourceId === resourceId)
+    poolStatus.value = '暂无该资源的实时占用记录'
+  } catch {
+    if (request.signal.aborted) return
+    poolResource.value = undefined
+    poolStatus.value = '暂时无法读取占用'
+  } finally {
+    if (poolRequest === request) poolRequest = undefined
+  }
+}
 
 const canProbe = computed(() => !isModelEndpoint.value && props.item.profile.deploymentTier !== 'device' && props.item.profile.deploymentTier !== 'local' && props.item.profile.resourceType === 'worker')
 
@@ -234,8 +277,20 @@ const loadDetailData = async () => {
   }
 }
 
-onMounted(() => { void loadDetailData() })
-watch(() => props.item.profile.resourceId, () => { void loadDetailData() })
+onMounted(() => {
+  void loadDetailData()
+  void loadPoolResource()
+  poolTimer = setInterval(() => { if (!document.hidden && document.visibilityState !== 'hidden') void loadPoolResource() }, 4000)
+})
+onBeforeUnmount(() => { poolRequest?.abort(); clearInterval(poolTimer) })
+watch(() => props.item.profile.resourceId, () => {
+  void loadDetailData()
+  poolRequest?.abort()
+  poolRequest = undefined
+  poolResource.value = undefined
+  poolStatus.value = '正在读取占用…'
+  void loadPoolResource()
+})
 
 const onToggleEnabled = async (value: string | number | boolean) => {
   const enabled = Boolean(value)
@@ -358,7 +413,7 @@ const latencyPoints = computed(() => {
 .resource-detail__section { display: grid; gap: 8px; }
 .resource-detail__section h3 { margin: 0; color: var(--text-secondary); font-size: 11px; font-weight: 650; letter-spacing: .02em; }
 .resource-detail__kv { display: grid; margin: 0; border: 1px solid var(--border-light); border-radius: var(--radius-card, 9px); overflow: hidden; }
-.resource-detail__kv > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 9px 14px; border-bottom: 1px solid var(--border-light); background: var(--bg-card); }
+.resource-detail__kv > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 9px 14px; background: var(--bg-card); }
 .resource-detail__kv > div:last-child { border-bottom: 0; }
 .resource-detail__kv dt { color: var(--text-muted); font-size: 11px; }
 .resource-detail__kv dd { margin: 0; color: var(--text-secondary); font: 11px var(--font-mono, monospace); text-align: right; word-break: break-all; }

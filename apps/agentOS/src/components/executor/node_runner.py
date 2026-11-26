@@ -609,6 +609,8 @@ class ACGNodeRunner:
             )
         if self.evidence_manifest.for_step(step_id, "consume"):
             allowed_evidence_refs.update(pack.evidence_refs)
+        if communication_reader is not None:
+            allowed_evidence_refs.update(communication_reader.receipt_evidence_refs)
         if set(evidence_refs) - allowed_evidence_refs:
             raise NodeEvidenceReferenceError(f"step {step_id} produced unauthorized evidence references")
 

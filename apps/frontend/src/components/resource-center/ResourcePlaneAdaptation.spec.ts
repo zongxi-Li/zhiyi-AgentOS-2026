@@ -1,11 +1,15 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentosApi, type RuntimeResourceItem } from '@/services/api/agentos'
+import * as platform from '@/platform'
 import ResourceOverviewPanel from './ResourceOverviewPanel.vue'
 import ResourceDetailPanel from './ResourceDetailPanel.vue'
 import ResourceRegistrationDialog from './ResourceRegistrationDialog.vue'
 
 beforeEach(() => {
+  vi.spyOn(platform, 'localFetch').mockImplementation(async input => new Response(
+    JSON.stringify(String(input).endsWith('/ai/llm/profiles') ? { profiles: [] } : { catalogs: [] })
+  ))
   vi.spyOn(agentosApi, 'listResourceUsage').mockResolvedValue({ resourceId: 'fixture', items: [], total: 0 })
   vi.spyOn(agentosApi, 'getResourceHealthHistory').mockResolvedValue({ resourceId: 'fixture', items: [], total: 0 })
   vi.spyOn(agentosApi, 'getResourceCredential').mockResolvedValue({ resourceId: 'fixture', credentialId: 'credential-fixture', createdAt: '2026-01-01T00:00:00Z' })
@@ -17,9 +21,67 @@ const item = (id: string, placement: string): RuntimeResourceItem => ({
     computeCapacity: { cpuCores: 0, memoryMb: 0, gpuMemoryMb: 0 } },
   snapshot: { healthStatus: 'unknown' }, snapshotVersion: 1
 })
-const stubs = { 'el-icon': true, 'el-drawer': true }
+const stubs = { 'el-icon': true, 'el-drawer': true, RouterLink: true }
 
 describe('resource plane adaptation', () => {
+  it('groups registered, discovered and unconfigured models without repeating a provider alias', async () => {
+    const registered = item('model:deepseek/deepseek-flash', 'cloud')
+    Object.assign(registered.profile, { runtimeKind: 'model_endpoint', provider: 'deepseek', model: 'deepseek-flash', displayName: 'deepseek-flash' })
+    vi.spyOn(agentosApi, 'listResources').mockResolvedValue({ items: [registered], total: 1 })
+    vi.spyOn(agentosApi, 'listNodes').mockResolvedValue({ items: [], total: 0 })
+    vi.mocked(platform.localFetch).mockImplementation(async input => new Response(JSON.stringify(
+      String(input).endsWith('/ai/llm/profiles')
+        ? { profiles: [
+          { provider: 'deepseek', model: 'deepseek-chat', usable: true, active: true, key_source: 'secret' },
+          { provider: 'glm', model: 'glm-5.3-flash', usable: false, active: false, key_source: 'missing' }
+        ] }
+        : { catalogs: [{ provider: 'deepseek', models: ['deepseek-flash', 'deepseek-v4-pro'] }] }
+    )))
+    const wrapper = mount(ResourceOverviewPanel, { global: { stubs } })
+    await flushPromises()
+    await vi.waitFor(() => expect(wrapper.findAll('.resource-topology__provider')).toHaveLength(2))
+    const [deepseek, glm] = wrapper.findAll('.resource-topology__provider')
+    expect(deepseek.get('h3').text()).toBe('DeepSeek')
+    expect(deepseek.findAll('.resource-topology__card')).toHaveLength(2)
+    expect(deepseek.text()).toContain('deepseek-v4-pro')
+    expect(deepseek.text()).toContain('提供商模型 · 未登记为任务资源')
+    expect(glm.text()).toContain('glm-5.3-flash')
+    expect(glm.text()).toContain('待配置凭据')
+    await wrapper.findAll('.resource-catalog-filters select')[5].setValue('glm')
+    expect(wrapper.findAll('.resource-topology__provider')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('counts one device and nests Agent abilities under their current host, with models separate', async () => {
+    const host = item('runtime:agents', 'device')
+    const agent = item('agent:current', 'device')
+    agent.profile.runtimeKind = 'agent_instance'
+    agent.profile.displayName = 'native_general_agent'
+    agent.profile.hostRuntimeId = host.profile.resourceId
+    const model = item('model:cloud', 'cloud')
+    model.profile.runtimeKind = 'model_endpoint'
+    vi.spyOn(agentosApi, 'listResources').mockResolvedValue({ items: [host, agent, model], total: 3 })
+    vi.spyOn(agentosApi, 'listNodes').mockResolvedValue({ items: [{
+      profile: { nodeId: 'node-1', displayName: '本机设备', placement: 'device', trust: 'host_trusted', enabled: true },
+      healthStatus: 'online', snapshotVersion: 1
+    }], total: 1 })
+    const wrapper = mount(ResourceOverviewPanel, { global: { stubs } })
+    await flushPromises()
+    const device = wrapper.get('.resource-topology__column.is-device')
+    expect(device.get('header span').text()).toBe('1 台设备')
+    expect(device.get('.resource-topology__service .resource-topology__agent').text()).toContain('通用任务助手')
+    expect(device.text()).toContain('登记并发 2 · 可用容量待确认')
+    expect(device.text()).not.toContain('可用位')
+    expect(wrapper.get('.resource-topology__column.is-cloud .resource-topology__models').text()).toContain('model:cloud')
+    expect(wrapper.get('.resource-topology__column.is-cloud > header').text()).toContain('1 个提供商')
+    expect(wrapper.find('.resource-topology > .resource-topology__models').exists()).toBe(false)
+    expect(device.text()).not.toContain('model:cloud')
+    await wrapper.findAll('.resource-catalog-filters select')[0].setValue('agent')
+    expect(wrapper.get('.resource-topology__service .resource-topology__agent').text()).toContain('通用任务助手')
+    expect(wrapper.get('.resource-topology').text()).not.toContain('宿主服务未登记')
+    wrapper.unmount()
+  })
+
   it('renders device and unknown placements without dropping rows or inventing compute', async () => {
     vi.spyOn(agentosApi, 'listResources').mockResolvedValue({ items: [item('embedded', 'device'), item('future', 'satellite')], total: 2 })
     vi.spyOn(agentosApi, 'listNodes').mockResolvedValue({ items: [], total: 0 })

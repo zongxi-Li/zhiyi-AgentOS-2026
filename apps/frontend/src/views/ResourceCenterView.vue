@@ -3,7 +3,7 @@
     <WorkbenchLayout :show-left="false" :show-right="false" storage-key="zhiyi.resources.layout.v1">
       <template #main>
         <main class="resource-center__main" aria-label="资源与连接中心" data-max-width="1400px">
-          <WorkspacePageHero eyebrow="RESOURCE & CONNECTIONS" title="资源与连接中心">
+          <WorkspacePageHero title="资源与连接中心">
             <template #actions>
               <button class="resource-action resource-action--primary" type="button" @click="openRegistration">
                 <el-icon aria-hidden="true"><Plus /></el-icon>
@@ -29,7 +29,9 @@
           </nav>
 
           <section class="resource-center__content">
-            <ResourceOverviewPanel v-if="resourceTab === 'overview'" ref="overviewPanel" />
+            <ResourceOverviewPanel v-if="resourceTab === 'overview'" ref="overviewPanel"
+              :resource-id="typeof route.query.resourceId === 'string' ? route.query.resourceId : undefined"
+              @close-resource="closeResource" />
             <ModelManagementPanel v-else />
           </section>
         </main>
@@ -70,6 +72,11 @@ const refreshOverview = () => {
   overviewPanel.value?.loadResources()
 }
 
+const closeResource = () => {
+  const { resourceId: _resourceId, ...query } = route.query
+  if (_resourceId) void router.replace({ query })
+}
+
 const openRegistration = () => {
   registrationOpen.value = true
 }
@@ -91,7 +98,7 @@ watch(() => route.query.tab, value => {
 .resource-action--primary { border-color: transparent; color: #fff; background: var(--primary-color); box-shadow: 0 4px 12px color-mix(in srgb, var(--primary-color) 28%, transparent); }
 .resource-action--primary:hover { filter: brightness(1.06); }
 .resource-action:disabled { cursor: default; opacity: .55; }
-.resource-tabs { display: flex; gap: 4px; padding: 14px 0 0; border-bottom: 1px solid var(--border-light); }
+.resource-tabs { display: flex; gap: 4px; padding: 14px 0 0; }
 .resource-tabs button { min-height: 36px; padding: 0 14px; border: 0; border-bottom: 2px solid transparent; color: var(--text-secondary); background: transparent; cursor: pointer; font: inherit; font-size: 12px; }
 .resource-tabs button:hover, .resource-tabs button.active { color: var(--primary-color); }
 .resource-tabs button.active { border-bottom-color: var(--primary-color); font-weight: 650; }

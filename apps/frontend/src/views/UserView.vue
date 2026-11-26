@@ -2,13 +2,13 @@
 <template>
   <div class="user-view" :class="{ 'user-view--embedded': props.embedded }">
     <div class="user-content">
+      <div class="user-content-frame">
       <header class="content-header">
         <div>
           <button v-if="!props.embedded" class="back-to-app" type="button" @click="goBack">
             <el-icon><ArrowLeft /></el-icon>
             返回
           </button>
-          <span class="content-eyebrow">PROFILE</span>
           <h1>个人资料</h1>
         </div>
         <div class="content-actions">
@@ -29,7 +29,6 @@
             </span>
           </button>
           <input ref="avatarInput" class="avatar-input" type="file" accept="image/jpeg,image/png,image/webp,image/gif" @change="handleAvatarChange" />
-          <p class="avatar-hint">{{ avatarUploading ? '正在上传头像…' : '点击头像更换 · JPG、PNG、WebP 或 GIF，最大 5MB' }}</p>
           <h2 class="hero-name">{{ userInfo.username || '—' }}</h2>
           <p class="hero-handle"><span>@{{ userInfo.email || '未设置邮箱' }}</span><span class="hero-badge">{{ roleBadge }}</span></p>
         </section>
@@ -77,6 +76,7 @@
           </article>
         </section>
 
+      </div>
     </div>
   </div>
 </template>
@@ -316,7 +316,9 @@ const loadActivity = async () => {
   activityLoading.value = false
 }
 onMounted(async () => {
-  await userStore.loadCurrentUser()
+  // The login bootstrap only seeds id/name/email. Always read the saved profile
+  // here so that its short cache cannot hide the persisted avatar and metadata.
+  await userStore.loadCurrentUser({ force: true })
   if (userStore.currentUser) {
     userInfo.value = { username: userStore.currentUser.username || '', email: userStore.currentUser.email || '', avatar: userStore.currentUser.avatar || '', createdAt: userStore.currentUser.createdAt || new Date() }
     await loadAvatar(userStore.currentUser.id, userStore.currentUser.avatar)
@@ -328,15 +330,17 @@ onBeforeUnmount(releaseAvatarObjectUrl)
 
 <style scoped lang="scss">
 .user-view { width: 100%; height: 100%; min-height: 0; overflow: hidden; background: var(--bg-app); color: var(--text-primary); }
-.user-content { width: min(100%, 1400px); height: 100%; min-width: 0; min-height: 0; margin: 0 auto; padding: 30px clamp(20px, 4vw, 58px) 52px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto; overflow-x: hidden; }
-.user-view--embedded .user-content { width: 100%; padding: 0; }
-.content-header { padding-bottom: 21px; display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--border-light); }
+/* 滚动容器全宽：滚动条贴住窗口右缘；内容列由 frame 限宽居中（保持原有边距观感）。 */
+.user-content { width: 100%; height: 100%; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+.user-content-frame { width: min(100%, 1400px); min-width: 0; margin: 0 auto; padding: 30px clamp(20px, 4vw, 58px) 52px; display: flex; flex-direction: column; gap: 20px; }
+.user-view--embedded .user-content-frame { padding: var(--profile-content-padding, 0); }
+.content-header { padding-bottom: 21px; display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
 .back-to-app { min-height: 30px; margin: 0 0 12px; padding: 0; display: inline-flex; align-items: center; gap: 6px; border: 0; color: var(--text-secondary); background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
 .back-to-app:hover, .back-to-app:focus-visible { color: var(--text-primary); }.back-to-app:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 3px; }
-.content-eyebrow, .card-kicker { display: block; color: var(--primary-color); font: 600 10px/1 var(--font-mono, monospace); letter-spacing: .12em; }
-.content-eyebrow { margin-bottom: 6px; } .content-header h1 { margin: 0; color: var(--text-primary); font: 650 clamp(24px, 2.4vw, 32px)/1.15 var(--font-serif); letter-spacing: -.025em; } .content-header p { margin: 7px 0 0; color: var(--text-secondary); font-size: 12px; }
+.card-kicker { display: block; color: var(--primary-color); font: 600 10px/1 var(--font-mono, monospace); letter-spacing: .12em; }
+.content-header h1 { margin: 0; color: var(--text-primary); font: 650 clamp(24px, 2.4vw, 32px)/1.15 var(--font-serif); letter-spacing: -.025em; } .content-header p { margin: 7px 0 0; color: var(--text-secondary); font-size: 12px; }
 .content-actions { display: flex; align-items: center; gap: 8px; } .profile-action, .activity-mode { border: 0; color: var(--text-secondary); background: transparent; font: inherit; cursor: pointer; transition: var(--transition); } .profile-action { min-height: 33px; padding: 0 4px; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; } .profile-action:hover, .profile-action:focus-visible { color: var(--text-primary); } .profile-action:focus-visible, .avatar-uploader:focus-visible, .activity-mode:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 3px; } .profile-status { color: var(--text-muted); cursor: default; }
-.user-sections { display: flex; align-items: center; gap: 4px; padding-bottom: 4px; border-bottom: 1px solid var(--border-light); }
+.user-sections { display: flex; align-items: center; gap: 4px; padding-bottom: 4px; }
 .user-sections button { min-height: 34px; padding: 0 12px; border: 0; border-radius: 6px; color: var(--text-muted); background: transparent; font: inherit; font-size: 12px; cursor: pointer; transition: var(--transition); }
 .user-sections button:hover, .user-sections button.active { color: var(--text-primary); background: var(--primary-fade); }
 .user-sections button.active { box-shadow: inset 0 -2px var(--primary-color); }
@@ -344,14 +348,14 @@ onBeforeUnmount(releaseAvatarObjectUrl)
 .stats-row { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--border-light); border-radius: 14px; background: color-mix(in srgb, var(--surface-solid) 92%, transparent); } .stats-cell { min-height: 80px; padding: 15px 12px; display: grid; align-content: center; justify-items: center; gap: 4px; border-right: 1px solid var(--border-light); } .stats-cell:hover { background: var(--bg-input); } .stats-cell:last-child { border-right: 0; } .stats-cell strong { color: var(--text-primary); font: 700 21px/1.1 var(--font-sans); } .stats-cell span { color: var(--text-secondary); font-size: 11px; }
 .activity-card, .detail-card, .security-panel { border: 1px solid var(--border-light); border-radius: 14px; background: color-mix(in srgb, var(--surface-solid) 92%, transparent); } .activity-card { padding: 20px 22px 14px; } .activity-card__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; } .activity-card__header h2 { margin: 7px 0 0; color: var(--text-primary); font: 650 17px/1.2 var(--font-sans); } .activity-card__header p { margin: 5px 0 0; color: var(--text-secondary); font-size: 11px; } .activity-modes { display: inline-flex; gap: 2px; flex-shrink: 0; } .activity-mode { position: relative; padding: 4px 6px 7px; border-color: transparent; border-radius: 5px; font-size: 12px; } .activity-mode.active { color: var(--text-primary); } .activity-mode.active::after { content: ''; position: absolute; right: 6px; bottom: 2px; left: 6px; height: 2px; border-radius: 2px; background: var(--primary-color); }
 .activity-chart { margin-top: 20px; overflow-x: auto; } .activity-chart.loading { opacity: .72; } .activity-months, .activity-grid-shell, .activity-legend { min-width: 700px; } .activity-months { margin-left: 31px; display: grid; grid-template-columns: repeat(53, minmax(8px, 1fr)); column-gap: 4px; min-height: 17px; color: var(--text-muted); font-size: 10px; } .activity-months span { white-space: nowrap; } .activity-grid-shell { display: grid; grid-template-columns: 23px minmax(0, 1fr); gap: 8px; } .weekday-labels { display: grid; grid-template-rows: repeat(7, 12px); row-gap: 4px; color: var(--text-muted); font-size: 9px; line-height: 12px; } .weekday-labels span:nth-child(1) { grid-row: 2; } .weekday-labels span:nth-child(2) { grid-row: 4; } .weekday-labels span:nth-child(3) { grid-row: 6; }
-.heatmap-grid { display: grid; grid-template-columns: repeat(53, minmax(8px, 1fr)); gap: 4px; } .heatmap-week { display: grid; grid-template-rows: repeat(7, 12px); gap: 4px; } .heatmap-cell { width: 100%; min-width: 0; height: 12px; padding: 0; border: 1px solid transparent; border-radius: 3px; background: color-mix(in srgb, var(--text-primary) 5%, var(--bg-input)); transition: var(--transition); } button.heatmap-cell { cursor: pointer; } button.heatmap-cell:hover, button.heatmap-cell:focus-visible { z-index: 1; border-color: var(--primary-color); transform: scale(1.18); outline: 0; } .heatmap-cell.level-1 { background: color-mix(in srgb, var(--primary-color) 22%, var(--bg-input)); } .heatmap-cell.level-2 { background: color-mix(in srgb, var(--primary-color) 40%, var(--bg-input)); } .heatmap-cell.level-3 { background: color-mix(in srgb, var(--primary-color) 62%, var(--bg-input)); } .heatmap-cell.level-4 { background: color-mix(in srgb, var(--primary-color) 86%, #fff); } .heatmap-cell.today { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary-color) 72%, #fff); } .heatmap-cell.future { opacity: .42; }
-.activity-legend { margin-top: 14px; display: flex; align-items: center; justify-content: flex-end; gap: 6px; color: var(--text-muted); font-size: 10px; } .legend-swatches { display: inline-flex; gap: 4px; } .legend-swatches .heatmap-cell { width: 12px; flex: 0 0 12px; } .activity-card__footer { margin-top: 14px; padding-top: 11px; display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid color-mix(in srgb, var(--border-light) 72%, transparent); color: var(--text-muted); font-size: 10px; }
-.detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; } .detail-card { overflow: hidden; } .detail-card__header { min-height: 58px; padding: 14px 18px; border-bottom: 1px solid var(--border-light); } .card-kicker { margin-bottom: 5px; font-size: 9px; } .detail-card__header h3 { margin: 0; color: var(--text-primary); font-size: 15px; } .insight-list { margin: 0; padding: 6px 18px 12px; } .insight-row { min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid color-mix(in srgb, var(--border-light) 60%, transparent); } .insight-row:last-child { border-bottom: 0; } .insight-row dt { color: var(--text-secondary); font-size: 12px; } .insight-row dd { max-width: 70%; margin: 0; overflow: hidden; color: var(--text-primary); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; } .detail-card__body { padding: 16px 18px 18px; }
+.heatmap-grid { display: grid; grid-template-columns: repeat(53, minmax(8px, 1fr)); gap: 4px; } .heatmap-week { display: grid; grid-template-rows: repeat(7, 12px); gap: 4px; } .heatmap-cell { width: 100%; min-width: 0; height: 12px; padding: 0; border: 1px solid transparent; border-radius: 3px; background: color-mix(in srgb, var(--text-primary) 9%, var(--surface-solid)); transition: var(--transition); } button.heatmap-cell { cursor: pointer; } button.heatmap-cell:hover, button.heatmap-cell:focus-visible { z-index: 1; border-color: var(--primary-color); transform: scale(1.18); outline: 0; } .heatmap-cell.level-1 { background: color-mix(in srgb, var(--primary-color) 22%, var(--bg-input)); } .heatmap-cell.level-2 { background: color-mix(in srgb, var(--primary-color) 40%, var(--bg-input)); } .heatmap-cell.level-3 { background: color-mix(in srgb, var(--primary-color) 62%, var(--bg-input)); } .heatmap-cell.level-4 { background: color-mix(in srgb, var(--primary-color) 86%, #fff); } .heatmap-cell.today { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary-color) 72%, #fff); } .heatmap-cell.future { opacity: .42; }
+.activity-legend { margin-top: 14px; display: flex; align-items: center; justify-content: flex-end; gap: 6px; color: var(--text-muted); font-size: 10px; } .legend-swatches { display: inline-flex; gap: 4px; } .legend-swatches .heatmap-cell { width: 12px; flex: 0 0 12px; } .activity-card__footer { margin-top: 14px; padding-top: 11px; display: flex; justify-content: space-between; gap: 12px; color: var(--text-muted); font-size: 10px; }
+.detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; } .detail-card { overflow: hidden; } .detail-card__header { min-height: 58px; padding: 14px 18px; } .card-kicker { margin-bottom: 5px; font-size: 9px; } .detail-card__header h3 { margin: 0; color: var(--text-primary); font-size: 15px; } .insight-list { margin: 0; padding: 6px 18px 12px; } .insight-row { min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 12px; } .insight-row:last-child { border-bottom: 0; } .insight-row dt { color: var(--text-secondary); font-size: 12px; } .insight-row dd { max-width: 70%; margin: 0; overflow: hidden; color: var(--text-primary); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; } .detail-card__body { padding: 16px 18px 18px; }
 .user-form .el-form-item { margin-bottom: 15px; } .user-form .el-form-item:last-child { margin-bottom: 0; } .user-form :deep(.el-form-item__label) { margin-bottom: 6px; padding: 0; color: var(--text-primary); font-size: 12px; font-weight: 650; } .custom-input :deep(.el-input__wrapper) { min-height: 38px; border: 1px solid var(--border-light); border-radius: 9px; background: var(--bg-input); box-shadow: none; } .custom-input :deep(.el-input__inner) { color: var(--text-primary); font-size: 12px; } .custom-input :deep(.el-input__wrapper:hover) { border-color: var(--border-hover); } .form-hint { margin-top: 5px; color: var(--text-disabled); font-size: 11px; } .user-form :deep(.el-button) { min-width: 108px; height: 34px; border-radius: 9px; font-size: 12px; font-weight: 650; } .user-form :deep(.el-button--primary) { border-color: var(--primary-color); background: var(--primary-color); } .user-form :deep(.el-button.is-disabled) { color: var(--text-disabled); background: var(--bg-input); border-color: var(--border-light); }
 .security-panel { width: min(100%, 560px); margin: 10px auto 0; padding: 20px 22px 22px; } .security-hero .hero-name { font-size: 23px; }
-@media (max-width: 900px) { .detail-grid { grid-template-columns: 1fr; } .stats-row { grid-template-columns: repeat(3, minmax(0, 1fr)); } .stats-cell:nth-child(3) { border-right: 0; } .stats-cell:nth-child(-n + 3) { border-bottom: 1px solid var(--border-light); } }
-@media (max-width: 640px) { .user-content { padding: 22px 14px 38px; } .content-header { flex-direction: column; } .content-actions { width: 100%; flex-wrap: wrap; } .profile-status { margin-left: auto; } .stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } .stats-cell:nth-child(2n) { border-right: 0; } .stats-cell:nth-child(n + 3) { border-top: 1px solid var(--border-light); } .activity-card { padding: 18px 14px 13px; } .activity-card__header { flex-direction: column; gap: 10px; } .activity-card__footer { flex-direction: column; gap: 4px; } }
-@media (max-width: 700px) { .user-view--embedded { height: auto; min-height: 70vh; overflow: visible; } .user-view--embedded .user-content { height: auto; overflow: visible; padding: 0; } }
+@media (max-width: 900px) { .detail-grid { grid-template-columns: 1fr; } .stats-row { grid-template-columns: repeat(3, minmax(0, 1fr)); } .stats-cell:nth-child(3) { border-right: 0; } .stats-cell:nth-child(-n + 3) { } }
+@media (max-width: 640px) { .user-content-frame { padding: 22px 14px 38px; } .content-header { flex-direction: column; } .content-actions { width: 100%; flex-wrap: wrap; } .profile-status { margin-left: auto; } .stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } .stats-cell:nth-child(2n) { border-right: 0; } .stats-cell:nth-child(n + 3) {} .activity-card { padding: 18px 14px 13px; } .activity-card__header { flex-direction: column; gap: 10px; } .activity-card__footer { flex-direction: column; gap: 4px; } }
+@media (max-width: 700px) { .user-view--embedded { height: auto; min-height: 70vh; overflow: visible; } .user-view--embedded .user-content { height: auto; overflow: visible; } }
 
 /* Keep the calendar rhythm compact instead of stretching cells across the card. */
 .activity-months,

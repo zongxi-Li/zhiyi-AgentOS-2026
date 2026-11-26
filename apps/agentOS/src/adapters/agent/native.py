@@ -326,10 +326,12 @@ class NativeGeneralAgent(BaseAgent):
                 )
 
                 def validate_citations(candidate: dict[str, Any]) -> str | None:
+                    reader = session.context_tools.reader
+                    current_citations = allowed_citations.union(reader.receipt_evidence_refs) if reader else allowed_citations
                     for key in evidence_fields:
                         refs = candidate.get(key, [])
                         if isinstance(refs, list) and any(
-                            not isinstance(ref, str) or ref not in allowed_citations for ref in refs
+                            not isinstance(ref, str) or ref not in current_citations for ref in refs
                         ):
                             return ("Use only citationId values from retrievalEvidence.sources or authorized "
                                     "upstream citations in the evidence reference field. Return an empty list "
@@ -343,10 +345,10 @@ class NativeGeneralAgent(BaseAgent):
                     'objective': task_summary, 'stepGoal':context.step.goal or context.step.name,
                     'retrievalEvidence':retrieval_output.output}
                 historical_observations = None
-                if context.run.execution_state.get('retryEvidenceContextVersion') == 1:
+                if context.run.execution_state.get('retryEvidenceContextVersion') == 1 or session.uses_evidence_pages():
                     historical_observations = await _retry_observations(context)
                     if historical_observations:
-                        retrieval_request['previousAttemptObservations'] = historical_observations
+                        retrieval_request['previousAttemptObservations'] = session.project_receipts(historical_observations)
                 delivery_version = (context.step.input.get('contextPolicy') or {}).get('executionContextVersion')
                 if type(delivery_version) is int and delivery_version == 1:
                     # New compiled steps receive the same authorized input and
@@ -428,15 +430,22 @@ class NativeGeneralAgent(BaseAgent):
         source_data = delivered_context["sourceData"]
         evidence_refs = delivered_context["evidenceRefs"]
         memory_records = delivered_context["memory"]
+        tool_session = AgentToolSession(context) if supports_agent_tools(context) else None
+        context_tools = tool_session.context_tools if tool_session is not None else ContextReadTools(context)
+        if tool_session is not None:
+            context_tools.evidence_enabled = tool_session.uses_evidence_pages()
         allowed_tools = sorted(
             str(item) for item in getattr(context.tool_runtime, "allowed_tools", ()) if str(item)
         )
-        allowed_tools = sorted(set(allowed_tools) | {tool.name for tool in ContextReadTools(context).list_tools()})
+        allowed_tools = sorted(set(allowed_tools) | {tool.name for tool in context_tools.list_tools()})
         verified_tool_observations = []
         collect_evidence = getattr(context.tool_runtime, 'verified_observations', None)
         if capability in {'verification','artifact_generation'} and callable(collect_evidence):
             verified_tool_observations = await collect_evidence(context)
         previous_attempt_observations = await _retry_observations(context)
+        tool_observations = verified_tool_observations + previous_attempt_observations
+        if tool_session is not None:
+            tool_observations = tool_session.project_receipts(tool_observations)
         prompt_envelope = self.prompt_builder.build_envelope(
             capability_descriptor=descriptor,
             step_goal=context.step.goal or context.step.name,
@@ -446,7 +455,7 @@ class NativeGeneralAgent(BaseAgent):
             task_title=context.task.title,
             mission_intent_basis=context.mission_intent_basis,
             execution_guidance=(delivered_context.get("executionGuidance")
-                if not supports_agent_tools(context) else None),
+                if tool_session is None else None),
             task_input={**context.task.input, "evidenceScope": policy.get("evidenceScope", "authorized_sources")},
             context_data=upstream,
             source_data=dict(source_data) if isinstance(source_data, dict) else {},
@@ -458,7 +467,7 @@ class NativeGeneralAgent(BaseAgent):
             tool_observations=(
                 [{"kind": "deterministic_calculation", "content": item} for item in calculated]
                 if execution_path == "calculator" else []
-            ) + verified_tool_observations + previous_attempt_observations,
+            ) + tool_observations,
         )
         if previous_attempt_observations:
             prompt_envelope = replace(prompt_envelope, system_prompt=prompt_envelope.system_prompt + (
@@ -487,7 +496,6 @@ class NativeGeneralAgent(BaseAgent):
         thinking_fallback_reason: str | None = None
         recovered_output: dict[str, Any] | None = None
         runtime_events: list[dict[str, Any]] = []
-        tool_session = AgentToolSession(context) if supports_agent_tools(context) else None
         try:
             streamer = getattr(runtime, "stream_generate_json", None)
             if callable(streamer) and hasattr(runtime, "delegate"):
@@ -496,7 +504,9 @@ class NativeGeneralAgent(BaseAgent):
                 generated = await tool_session.generate_json(prompt=prompt, schema=generation_schema,
                     system_prompt=system_prompt, prompt_metadata=prompt_metadata,
                     historical_observations=(previous_attempt_observations
-                        if context.run.execution_state.get('retryEvidenceContextVersion') == 1 else None),
+                        if context.run.execution_state.get('retryEvidenceContextVersion') == 1
+                        or tool_session.uses_evidence_pages() else None),
+                    verified_observations=verified_tool_observations,
                     thinking_mode=thinking_mode, reasoning_effort=_requested_reasoning_effort(context),
                     timeout_seconds=timeout_seconds, prompt_version=base_prompt_version,
                     commit_id=context.commit_id)
@@ -812,6 +822,7 @@ class NativeGeneralAgent(BaseAgent):
         return AgentOutput(
             output=output,
             summary=f"Native capability completed: {capability}.",
+            evidenceRefs=sorted(reader.receipt_evidence_refs) if reader is not None else [],
             toolExecutions=deterministic_tool_executions + (tool_session.records if tool_session else []),
             modelInvocations=invocations,
             runtimeEvents=runtime_events,

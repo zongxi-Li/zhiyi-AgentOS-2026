@@ -6,7 +6,7 @@
     <header class="panel-head">
       <div class="head-left">
         <el-icon class="head-icon"><Share /></el-icon>
-        <h4>ACG 拓扑图</h4>
+        <h4>{{ title || '执行图 RGraph' }}</h4>
       </div>
       <div class="head-right">
         <span class="meta" v-if="hasData">{{ stats }}</span>
@@ -29,8 +29,8 @@
             v-if="collapsible"
             class="action-btn"
             type="button"
-            aria-label="收起 ACG 拓扑"
-            title="收起 ACG 拓扑"
+            aria-label="收起拓扑图"
+            title="收起拓扑图"
             @click="emit('collapse')"
           >
             <el-icon><ArrowDownBold /></el-icon>
@@ -42,7 +42,7 @@
     <WorkspaceReviewProgress v-if="!historical" :review="blueprint?.workspaceReview" :graph-version="blueprint?.graphVersion" :nodes="blueprint?.nodes" navigable @select-node="onFlowSelect" />
     <div v-if="!hasData" class="empty">
       <span class="empty__badge" aria-hidden="true"><el-icon><Share /></el-icon></span>
-      <p class="empty__title">暂无 ACG 拓扑数据</p>
+      <p class="empty__title">暂无拓扑数据</p>
       <p class="empty__hint">启动一个 ACG 引擎工作流后，这里会呈现任务步骤的执行拓扑。</p>
     </div>
     <div v-else class="graph-surface">
@@ -67,7 +67,7 @@
         <div v-if="focusMainPath && visibleBlueprint" class="graph-canvas">
           <AcgExecutionFlow ref="executionFlow" :blueprint="visibleBlueprint" :positions="executionPositions"
             :selected-id="detailAsideOpen ? '' : selectedNodeId" :anchor-id="contextAnchorId" :statuses="flowStatuses"
-            :difference="difference" :historical="historical"
+            :difference="difference" :historical="historical" :overview-on-load="useOverviewOnLoad"
             @select="onFlowSelect" @double-click="emit('nodeDoubleClicked', $event)" @zoom="zoomPercent = $event">
             <template #detail>
         <article v-if="umlCardVisible" class="uml-card execution-detail" :data-node-id="selectedNodeId" aria-label="节点详情卡片">
@@ -268,6 +268,8 @@ import type { GraphDifference } from '@/utils/acgGraphDifference'
 import { graphChangeLabel, graphDifferenceMaps } from '@/utils/acgGraphDifference'
 
 const props = defineProps<{
+  title?: string
+  overviewOnLoad?: boolean
   blueprint: GraphProjection | null
   completedStepIds?: string[]
   stepStates?: AcgStepState[]
@@ -296,7 +298,10 @@ const selectedNodeId = ref('')
 type GraphViewMode = 'main' | 'exceptions'
 const viewMode = ref<GraphViewMode>('main')
 const focusMainPath = computed(() => viewMode.value === 'main')
-const localScope = ref(Boolean(props.workbench && props.observeResize && !props.historical))
+const localScope = ref(false)
+const useOverviewOnLoad = computed(() => props.overviewOnLoad ?? (
+  focusMainPath.value && !localScope.value
+))
 const changes = computed(() => graphDifferenceMaps(props.difference))
 const contextNodeId = ref('')
 const zoomPercent = ref(100)
@@ -1055,11 +1060,17 @@ const setExecutionScope = async (local: boolean) => {
   selectedNodeId.value = ''
   network?.unselectAll()
   await render()
-  await actualSize(false)
+  await nextTick()
+  if (local) await actualSize(false)
+  else if (focusMainPath.value) await executionFlow.value?.overview()
+  else fitWithSafePadding(false)
 }
 
 const showOverview = async () => {
-  if (focusMainPath.value) await setExecutionScope(false)
+  if (focusMainPath.value && localScope.value) {
+    await setExecutionScope(false)
+    return
+  }
   if (focusMainPath.value) await executionFlow.value?.overview()
   else fitWithSafePadding()
 }
@@ -1207,6 +1218,7 @@ const setViewMode = (mode: GraphViewMode) => {
 const focusNode = async (nodeId: string) => {
   if (!props.blueprint?.nodes.some(node => node.nodeId === nodeId)) return
   if (focusMainPath.value) {
+    localScope.value = true
     contextNodeId.value = nodeId
     selectedNodeId.value = nodeId
     detailAsideOpen.value = false

@@ -3,7 +3,7 @@
     <WorkbenchLayout :show-left="false" :show-right="false" storage-key="zhiyi.resources.overview.v2">
       <template #main>
         <main class="resource-page__main" aria-label="资源概览">
-          <WorkspacePageHero eyebrow="RESOURCE PLANE / 01" title="资源概览">
+          <WorkspacePageHero title="资源概览">
             <template #actions>
               <RouterLink class="resource-button resource-button--primary" to="/agentos/resources/store">浏览资源商店</RouterLink>
             </template>
@@ -14,9 +14,9 @@
             <div class="resource-pulse__lead">
               <span class="resource-kicker">LIVE RESOURCE FIELD</span>
               <strong>{{ totals.runtime }}</strong>
-              <span>已登记运行时</span>
+              <span>当前登记资源</span>
               <i class="resource-pulse__rule" aria-hidden="true"></i>
-              <small>{{ totals.online }} 可调度 · {{ totals.attention }} 需关注</small>
+              <small>{{ totals.online }} 健康已确认 · {{ totals.attention }} 需关注</small>
             </div>
             <div class="resource-pulse__tiers">
               <div v-for="tier in tiers" :key="tier.id" class="tier-readout" :class="`is-${tier.id}`">
@@ -29,7 +29,7 @@
 
           <section class="resource-overview-grid">
             <div class="resource-overview-grid__heading">
-              <div><span class="resource-kicker">CONNECTED CAPABILITIES</span><h2>正在运行</h2></div>
+              <div><span class="resource-kicker">CONNECTED CAPABILITIES</span><h2>当前登记</h2></div>
               <RouterLink to="/agentos/resources/manage">打开资源管理 <el-icon aria-hidden="true"><ArrowRight /></el-icon></RouterLink>
             </div>
             <div v-if="loading" class="resource-loading" role="status">正在读取资源状态…</div>
@@ -45,7 +45,7 @@
             <div v-else class="resource-recent-list">
               <article v-for="item in recentResources" :key="item.profile.resourceId" class="resource-recent-row">
                 <span class="resource-recent-row__signal" :class="`is-${item.snapshot.healthStatus}`" aria-hidden="true"></span>
-                <div class="resource-recent-row__name"><strong>{{ item.profile.displayName || item.profile.resourceId }}</strong><span>{{ kindLabel(item.profile.runtimeKind || item.profile.resourceType) }}<template v-if="item.profile.provider"> · {{ item.profile.provider }}</template></span></div>
+                <div class="resource-recent-row__name"><strong>{{ resourceDisplayName(item) }}</strong><span>{{ kindLabel(item.profile.runtimeKind || item.profile.resourceType) }}<template v-if="item.profile.provider"> · {{ item.profile.provider }}</template></span></div>
                 <span class="resource-recent-row__tier">{{ tierLabel(item.profile.deploymentTier) }}</span>
                 <span class="resource-recent-row__health">{{ healthLabel(item.snapshot.healthStatus) }}</span>
               </article>
@@ -70,23 +70,23 @@ import type { RuntimeResourceItem } from '@/services/api/agentos'
 import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
 import WorkspacePageHero from '@/components/app/WorkspacePageHero.vue'
 import ResourceCenterNav from '@/components/resource-center/ResourceCenterNav.vue'
+import { resourceDisplayName } from '@/components/resource-center/resourceCenterPresentation'
 
 const resources = ref<RuntimeResourceItem[]>([])
 const loading = ref(true)
 const error = ref('')
 let controller: AbortController | null = null
 const totals = computed(() => ({
-  runtime: resources.value.filter(item => item.profile.runtimeKind !== 'model_endpoint').length,
+  runtime: resources.value.length,
   online: resources.value.filter(item => item.snapshot.healthStatus === 'online' && item.profile.enabled).length,
   attention: resources.value.filter(item => item.snapshot.healthStatus !== 'online' || !item.profile.enabled).length
 }))
 const tiers = computed(() => [
-  { id: 'device', index: '01', label: '本地设备', count: countTier('device') },
-  { id: 'edge', index: '02', label: '边缘节点', count: countTier('edge') },
+  { id: 'device', index: '01', label: '本地能力', count: countTier('device') },
+  { id: 'edge', index: '02', label: '边缘能力', count: countTier('edge') },
   { id: 'cloud', index: '03', label: '云端服务', count: countTier('cloud') }
 ])
 const recentResources = computed(() => [...resources.value]
-  .filter(item => item.profile.runtimeKind !== 'model_endpoint')
   .sort((a, b) => Number(b.snapshot.healthStatus === 'online') - Number(a.snapshot.healthStatus === 'online'))
   .slice(0, 5))
 
@@ -94,8 +94,8 @@ function countTier(tier: string) {
   return resources.value.filter(item => item.profile.deploymentTier === tier || (tier === 'device' && ['local', 'terminal'].includes(String(item.profile.deploymentTier || '')))).length
 }
 const tierLabel = (tier?: string | null) => ({ device: '本地', local: '本地', terminal: '本地', edge: '边缘', cloud: '云端' }[tier || ''] || '未分类')
-const kindLabel = (kind?: string | null) => ({ model_server: '模型服务', tool_service: '工具服务', execution_backend: '执行服务', model_endpoint: '模型端点' }[kind || ''] || '资源')
-const healthLabel = (health?: string | null) => ({ online: '可调度', degraded: '需关注', offline: '离线', unknown: '待检测' }[health || ''] || '状态未知')
+const kindLabel = (kind?: string | null) => ({ model_server: '模型服务', tool_service: '工具服务', execution_backend: '执行服务', agent_instance: 'Agent 能力', model_endpoint: '模型端点' }[kind || ''] || '资源')
+const healthLabel = (health?: string | null) => ({ online: '健康正常', degraded: '需关注', offline: '离线', unknown: '待检测' }[health || ''] || '状态未知')
 
 async function load() {
   controller?.abort()
@@ -140,7 +140,7 @@ onBeforeUnmount(() => controller?.abort())
 .tier-readout.is-edge > i { border-color: color-mix(in srgb, var(--success) 38%, transparent); }
 .tier-readout.is-cloud > i { border-color: color-mix(in srgb, #55a8ce 35%, transparent); }
 .resource-overview-grid { margin-top: 12px; }
-.resource-overview-grid__heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border-light); }
+.resource-overview-grid__heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; padding-bottom: 12px; }
 .resource-overview-grid__heading h2 { margin: 5px 0 0; font-size: 16px; font-weight: 600; }
 .resource-overview-grid__heading > a, .resource-overview-footer a { display: inline-flex; align-items: center; gap: 6px; color: var(--primary-color); text-decoration: none; font-size: 11px; }
 .resource-loading, .resource-empty { display: grid; justify-items: center; gap: 9px; min-height: 190px; align-content: center; color: var(--text-secondary); font-size: 12px; }
@@ -148,7 +148,7 @@ onBeforeUnmount(() => controller?.abort())
 .resource-loading button, .resource-empty a { border: 0; color: var(--primary-color); background: transparent; text-decoration: underline; cursor: pointer; font: inherit; }
 .resource-empty strong { color: var(--text-primary); font-size: 14px; }
 .resource-empty__mark { display: grid; place-items: center; width: 38px; aspect-ratio: 1; border: 1px solid var(--primary-line); color: var(--primary-color); font-size: 22px; }
-.resource-recent-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) 90px 72px; align-items: center; gap: 13px; min-height: 66px; border-bottom: 1px solid var(--border-light); }
+.resource-recent-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) 90px 72px; align-items: center; gap: 13px; min-height: 66px; }
 .resource-recent-row__signal { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); }
 .resource-recent-row__signal.is-online { background: var(--success); box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 12%, transparent); }
 .resource-recent-row__signal.is-degraded, .resource-recent-row__signal.is-unknown { background: var(--warning); }
@@ -157,7 +157,7 @@ onBeforeUnmount(() => controller?.abort())
 .resource-recent-row__name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 550; }
 .resource-recent-row__name span, .resource-recent-row__tier, .resource-recent-row__health { color: var(--text-muted); font-size: 10px; }
 .resource-recent-row__health { text-align: right; }
-.resource-overview-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 28px; padding-top: 13px; border-top: 1px solid var(--border-light); color: var(--text-muted); font-size: 10px; }
-@media (max-width: 760px) { .resource-pulse { grid-template-columns: 1fr; }.resource-pulse__lead { border-right: 0; border-bottom: 1px solid var(--border-light); }.resource-pulse__tiers { min-height: 128px; }.tier-readout { gap: 7px; padding: 12px 8px; }.tier-readout strong { font-size: 25px; }.tier-readout__index { display: none; } }
+.resource-overview-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 28px; padding-top: 13px; color: var(--text-muted); font-size: 10px; }
+@media (max-width: 760px) { .resource-pulse { grid-template-columns: 1fr; }.resource-pulse__lead { border-right: 0; }.resource-pulse__tiers { min-height: 128px; }.tier-readout { gap: 7px; padding: 12px 8px; }.tier-readout strong { font-size: 25px; }.tier-readout__index { display: none; } }
 @media (max-width: 480px) { .resource-page__main { padding-right: 14px; padding-left: 14px; }.resource-pulse { margin-top: 18px; }.resource-recent-row { grid-template-columns: 8px minmax(0, 1fr) 58px; gap: 8px; }.resource-recent-row__health { display: none; }.resource-recent-row__tier { text-align: right; }.resource-overview-footer { align-items: flex-start; flex-direction: column; } }
 </style>

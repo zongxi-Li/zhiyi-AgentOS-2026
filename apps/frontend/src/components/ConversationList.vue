@@ -510,7 +510,6 @@ $shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.06);
   min-height: 62px;
   padding: 9px 12px;
   border: 0;
-  border-bottom: 1px solid var(--border-light);
   border-radius: 0;
   background: transparent;
   overflow: visible;
@@ -538,7 +537,7 @@ $shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.06);
 .item-right .action-btn { width: 26px; height: 26px; border-radius: 5px; color: var(--text-disabled); }
 .item-right .action-btn .el-icon { font-size: 13px; }
 .loading-state { display: flex; flex-direction: column; gap: 0; }
-.skeleton-item { padding: 9px 12px; border: 0; border-bottom: 1px solid var(--border-light); border-radius: 0; }
+.skeleton-item { padding: 9px 12px; border: 0; border-radius: 0; }
 .empty-state { padding: 64px 20px; }
 .empty-state .empty-content .empty-icon { width: 40px; height: 40px; margin-bottom: 10px; border-radius: 8px; font-size: 20px; background: var(--primary-fade); }
 .empty-state .empty-content .empty-text { margin-bottom: 4px; font-size: 13px; }

@@ -8,15 +8,10 @@
       <template #main>
         <main class="rag-view__main" aria-label="知识库">
           <WorkspacePageHero
-            eyebrow="KNOWLEDGE BASE"
             title="知识库"
+            description="从文档中查找答案、追溯来源和探索知识关系。"
           >
             <template #actions>
-              <div class="rag-document-count" aria-label="文档数量">
-                <el-icon aria-hidden="true"><Document /></el-icon>
-                <strong>{{ documents.length }}</strong>
-                <span>个文档</span>
-              </div>
               <button
                 class="rag-action rag-action--primary"
                 type="button"
@@ -59,27 +54,54 @@
           </nav>
 
           <section
-            v-if="activeTab === 'query'"
+            v-show="activeTab === 'query'"
             class="rag-query-layout"
             aria-label="知识检索"
           >
             <RagQuery />
-            <KnowledgeDocumentsPanel
-              :documents="documents"
-              @delete="handleDelete"
-            />
+            <aside class="rag-library" aria-label="文档概览">
+              <header>
+                <h2><el-icon aria-hidden="true"><Document /></el-icon>文档库</h2>
+                <span v-if="!documentsLoading && !documentsError">{{ documents.length }} 个文档</span>
+              </header>
+              <p v-if="documentsLoading" role="status">正在加载文档…</p>
+              <div v-else-if="documentsError" class="rag-library__body">
+                <p role="status">加载文档失败</p>
+                <button class="rag-action" type="button" @click="loadDocuments">重试</button>
+              </div>
+              <div v-else-if="documents.length === 0" class="rag-library__body">
+                <p>添加文档，让检索有资料可查。</p>
+                <button class="rag-action" type="button" @click="showUploadDialog = true">
+                  <el-icon aria-hidden="true"><Upload /></el-icon>添加首份文档
+                </button>
+              </div>
+              <div v-else class="rag-library__body">
+                <ul aria-label="最近上传">
+                  <li v-for="document in recentDocuments" :key="document.doc_id" :title="document.filename">
+                    {{ document.filename }}
+                  </li>
+                </ul>
+                <button class="rag-action" type="button" @click="activeTab = 'docs'">查看全部文档</button>
+              </div>
+            </aside>
           </section>
 
           <section
-            v-else-if="activeTab === 'graph'"
+            v-if="activeTab === 'graph'"
             class="rag-graph"
             aria-label="知识图谱"
           >
             <KnowledgeGraphVisualization />
           </section>
 
-          <section v-else class="rag-docs-only" aria-label="文档管理">
+          <section v-if="activeTab === 'docs'" class="rag-docs-only" aria-label="文档管理">
+            <p v-if="documentsLoading" role="status">正在加载文档…</p>
+            <div v-else-if="documentsError" class="rag-library">
+              <p role="status">加载文档失败</p>
+              <button class="rag-action" type="button" @click="loadDocuments">重试</button>
+            </div>
             <KnowledgeDocumentsPanel
+              v-else
               :documents="documents"
               @delete="handleDelete"
             />
@@ -141,6 +163,11 @@ const roleStore = useRoleStore()
 const showUploadDialog = ref(false)
 const activeTab = ref<RagTab>('query')
 const documents = ref<KnowledgeDocument[]>([])
+const documentsLoading = ref(true)
+const documentsError = ref(false)
+const recentDocuments = computed(() => [...documents.value]
+  .sort((a, b) => (Date.parse(b.upload_time) || 0) - (Date.parse(a.upload_time) || 0))
+  .slice(0, 3))
 const currentRoleId = computed(() => resolveKnowledgeRoleId(roleStore.currentRole))
 
 const beforeUpload = (file: File) => {
@@ -161,14 +188,8 @@ const beforeUpload = (file: File) => {
   return true
 }
 
-const handleUpload = async (options: any) => {
-  try {
-    await ragApi.uploadDocument(options.file, currentRoleId.value)
-    handleUploadSuccess()
-  } catch (error: any) {
-    handleUploadError(error)
-  }
-}
+// 返回 Promise 交给 el-upload，成功/失败由 :on-success / :on-error 统一回调，避免重复提示
+const handleUpload = (options: any) => ragApi.uploadDocument(options.file, currentRoleId.value)
 
 const handleUploadSuccess = () => {
   ElMessage.success('文档上传成功')
@@ -191,11 +212,15 @@ const handleDelete = async (docId: string) => {
 }
 
 const loadDocuments = async () => {
+  documentsLoading.value = true
+  documentsError.value = false
   try {
     const response = await ragApi.listDocuments(currentRoleId.value)
     documents.value = response.documents || []
-  } catch (error: any) {
-    ElMessage.error(`加载文档列表失败：${error?.message || '未知错误'}`)
+  } catch {
+    documentsError.value = true
+  } finally {
+    documentsLoading.value = false
   }
 }
 
@@ -221,26 +246,6 @@ onMounted(() => {
   overflow: auto;
   padding: 0 clamp(20px, 4vw, 58px) 48px;
   color: var(--text-primary);
-}
-
-.rag-document-count {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 24px;
-  color: var(--text-muted);
-  font: 11px var(--font-mono, monospace);
-  white-space: nowrap;
-}
-
-.rag-document-count .el-icon {
-  color: var(--primary-color);
-  font-size: 15px;
-}
-
-.rag-document-count strong {
-  color: var(--text-secondary);
-  font: 12px var(--font-mono, monospace);
 }
 
 .rag-action {
@@ -287,7 +292,6 @@ onMounted(() => {
 .rag-tabs {
   display: flex;
   gap: 4px;
-  padding: 14px 0 0;
   border-bottom: 1px solid var(--border-light);
 }
 
@@ -318,10 +322,66 @@ onMounted(() => {
 
 .rag-query-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.55fr) minmax(300px, 0.75fr);
-  gap: 14px;
-  min-height: min(680px, calc(100vh - 220px));
-  padding-top: 18px;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 28%);
+  align-items: start;
+  gap: 20px;
+  padding-top: 24px;
+}
+
+.rag-library {
+  padding: 18px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-panel);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.rag-library header,
+.rag-library h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rag-library header {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.rag-library h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.rag-library h2 .el-icon {
+  color: var(--primary-color);
+}
+
+.rag-library__body {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-light);
+}
+
+.rag-library__body p,
+.rag-library__body ul {
+  margin: 0 0 12px;
+}
+
+.rag-library__body ul {
+  display: grid;
+  gap: 6px;
+  padding: 0;
+  list-style: none;
+}
+
+.rag-library__body li {
+  overflow: hidden;
+  padding-block: 4px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .rag-query-layout > * {
@@ -399,14 +459,9 @@ onMounted(() => {
   font-size: 12px;
 }
 
-@media (max-width: 960px) {
+@media (max-width: 820px) {
   .rag-query-layout {
     grid-template-columns: 1fr;
-    min-height: 0;
-  }
-
-  .rag-query-layout > * {
-    min-height: 420px;
   }
 }
 

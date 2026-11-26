@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { connectionGuidance, customerResourceType, deploymentGroup } from './resourceCenterPresentation'
+import { connectionGuidance, customerResourceType, deploymentGroup, confirmedResourceSlots } from './resourceCenterPresentation'
 
 describe('resource center presentation', () => {
   it('maps runtime catalog categories to customer resource names', () => {
     expect(customerResourceType('model_server')).toBe('模型')
     expect(customerResourceType('tool_service')).toBe('工具')
-    expect(customerResourceType('execution_backend')).toBe('设备服务')
+    expect(customerResourceType('execution_backend')).toBe('执行服务')
   })
 
   it('groups local, edge, and cloud deployments into customer topology columns', () => {
@@ -19,4 +19,19 @@ describe('resource center presentation', () => {
   it('explains an offline resource with a direct next action', () => {
     expect(connectionGuidance('offline')).toEqual({ tone: 'danger', action: '检测连接' })
   })
+})
+
+
+it('does not present nominal or unhealthy capacity as confirmed available', () => {
+  const item: import('@/services/api/agentos').RuntimeResourceItem = {
+    profile: { resourceId: 'r', resourceType: 'worker', capabilities: [], domains: [], enabled: true, capacity: 4, version: 1 },
+    snapshot: { healthStatus: 'unknown', availableSlots: 4 }, snapshotVersion: 1
+  }
+  expect(confirmedResourceSlots(item)).toBeNull()
+  item.snapshot.healthStatus = 'online'
+  expect(confirmedResourceSlots(item)).toBe(4)
+  item.health = { healthy: false, status: 'offline' }
+  expect(confirmedResourceSlots(item)).toBeNull()
+  item.profile.enabled = false
+  expect(confirmedResourceSlots(item)).toBe(0)
 })

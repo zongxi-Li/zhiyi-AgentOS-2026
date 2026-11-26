@@ -4,6 +4,7 @@ import type { GraphDifference } from '@/utils/acgGraphDifference'
 export type { GraphDifference } from '@/utils/acgGraphDifference'
 
 export const graphVersionKey = (entry: GraphVersionEntry) => entry.blueprintId || `${entry.graphId}:v${entry.graphVersion}`
+export const graphVersionPair = (entry: GraphVersionEntry) => `ACG ${entry.taskPlanVersion == null ? '版本未登记' : `v${entry.taskPlanVersion}`} · RGraph v${entry.graphVersion}`
 export const graphVersionTime = (entry: GraphVersionEntry) => {
   const value = entry.activatedAt || entry.createdAt
   if (!value) return '时间未记录'

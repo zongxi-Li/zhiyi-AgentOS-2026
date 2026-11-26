@@ -20,7 +20,7 @@ vi.mock('@/services/api/workflow', async importOriginal => {
 })
 
 const workbenchLayoutStub = {
-  template: '<section class="workbench-layout-stub"><slot name="main" /></section>'
+  template: '<section class="workbench-layout-stub"><slot name="main" /><slot name="right" /></section>'
 }
 
 describe('CreateMissionView', () => {
@@ -42,12 +42,12 @@ describe('CreateMissionView', () => {
     await router.push('/new')
     await router.isReady()
     const wrapper = mount(CreateMissionView, { global: { plugins: [router], stubs: { WorkbenchLayout: workbenchLayoutStub, PluginExtensionHost: true } } })
-    await wrapper.find('#mission-goal').setValue('明确的新目标')
+    await wrapper.find('textarea[aria-label="任务对话输入"]').setValue('明确的新目标')
     ;(wrapper.vm as any).draft.materialText = '不可重复创建的材料'
     await wrapper.find('form').trigger('submit')
     await flushPromises()
     const first = vi.mocked(workflowApi.startWorkflowAsync).mock.calls[0][0]
-    await wrapper.find('form').trigger('submit')
+    await wrapper.find('textarea[aria-label="任务对话输入"]').trigger('keydown', { key: 'Enter', ctrlKey: true })
     await flushPromises()
     expect(vi.mocked(workflowApi.startWorkflowAsync).mock.calls[1][0]).toEqual(first)
     expect(first.semantics?.objective).toBe('明确的新目标')
@@ -68,7 +68,7 @@ describe('CreateMissionView', () => {
     ] })
     await router.push('/new'); await router.isReady()
     const wrapper = mount(CreateMissionView, { global: { plugins: [router], stubs: { WorkbenchLayout: workbenchLayoutStub, PluginExtensionHost: true } } })
-    await wrapper.find('#mission-goal').setValue('唯一启动意图')
+    await wrapper.find('textarea[aria-label="任务对话输入"]').setValue('唯一启动意图')
     await wrapper.find('form').trigger('submit')
     await wrapper.find('form').trigger('submit')
     expect(workflowApi.startWorkflowAsync).toHaveBeenCalledTimes(1)
@@ -88,13 +88,13 @@ describe('CreateMissionView', () => {
     await router.push('/new'); await router.isReady()
     const options = { global: { plugins: [router], stubs: { WorkbenchLayout: workbenchLayoutStub, PluginExtensionHost: true } } }
     const first = mount(CreateMissionView, options)
-    await first.find('#mission-goal').setValue('恢复原始提交')
+    await first.find('textarea[aria-label="任务对话输入"]').setValue('恢复原始提交')
     ;(first.vm as any).draft.materialText = '必须复用的材料'
     await first.find('form').trigger('submit'); await flushPromises()
     const original = vi.mocked(workflowApi.startWorkflowAsync).mock.calls[0][0]
     first.unmount()
     const restored = mount(CreateMissionView, options)
-    expect((restored.find('#mission-goal').element as HTMLTextAreaElement).value).toBe('恢复原始提交')
+    expect((restored.find('textarea[aria-label="任务对话输入"]').element as HTMLTextAreaElement).value).toBe('恢复原始提交')
     await restored.findAll('button').find(button => button.text() === '核对并恢复原提交')!.trigger('click')
     await flushPromises()
     expect(workflowApi.reconcileMissionLaunch).toHaveBeenCalledWith(original, undefined)
@@ -104,7 +104,7 @@ describe('CreateMissionView', () => {
     restored.unmount()
   })
 
-  it('renders the mission launcher arrangement and restores runtime settings', async () => {
+  it('renders a bottom composer with collapsed execution settings', async () => {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -123,19 +123,19 @@ describe('CreateMissionView', () => {
 
     expect(wrapper.find('#mission-title').exists()).toBe(false)
     expect(wrapper.find('#mission-files').exists()).toBe(true)
-    expect(wrapper.find('#mission-goal').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Execution')
+    expect(wrapper.find('textarea[aria-label="任务对话输入"]').exists()).toBe(true)
+    expect(wrapper.find('.acg-copilot').exists()).toBe(true)
     expect(wrapper.text()).toContain('高级运行设置')
-    expect(wrapper.find('.create-mission__submit').text()).toContain('创建并运行')
+    expect(wrapper.find('.send-button').attributes('aria-label')).toBe('发送任务')
     expect(wrapper.find('.create-mission__back').text()).toContain('返回项目')
-    expect(wrapper.find('.create-mission__workspace').exists()).toBe(true)
-    expect(wrapper.find('.launch-bar').exists()).toBe(true)
+    expect(wrapper.find('.mission-canvas').exists()).toBe(true)
+    expect(wrapper.find('.composer-settings').attributes('open')).toBeUndefined()
     await wrapper.findAll('button').find(button => button.text() === '人工审核')!.trigger('click')
     expect(wrapper.text()).toContain('每个执行步骤完成后暂停，等待人工审核；最终交付须经批准。')
     wrapper.unmount()
   })
 
-  it('derives a launch summary and keeps Create & Run disabled until the brief is ready', async () => {
+  it('keeps the composer disabled until its task is ready', async () => {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -152,14 +152,14 @@ describe('CreateMissionView', () => {
       }
     })
 
-    expect(wrapper.find('.context-empty').exists()).toBe(true)
+    expect(wrapper.find('.composer-attach').exists()).toBe(true)
     expect(wrapper.find('.execution-settings').exists()).toBe(true)
     expect(wrapper.findAll('.execution-settings .config-option').length).toBeGreaterThan(0)
-    expect(wrapper.find('.create-mission__submit').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('.launch-bar__summary').text()).toContain('Dynamic · Native Core')
+    expect(wrapper.find('.send-button').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('textarea[aria-label="任务对话输入"]').attributes('placeholder')).toContain('输入任务')
 
-    await wrapper.find('#mission-goal').setValue('验证 Mission brief 可以启动 Run')
-    expect(wrapper.find('.create-mission__submit').attributes('disabled')).toBeUndefined()
+    await wrapper.find('textarea[aria-label="任务对话输入"]').setValue('验证 Mission brief 可以启动 Run')
+    expect(wrapper.find('.send-button').attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })
 
@@ -263,10 +263,10 @@ describe('CreateMissionView', () => {
       }
     })
 
-    await wrapper.find('#mission-goal').setValue('输出可验收的实施方案')
-    await wrapper.findAll('.config-option').find(button => button.text().includes('Template preferred'))?.trigger('click')
+    await wrapper.find('textarea[aria-label="任务对话输入"]').setValue('输出可验收的实施方案')
+    await wrapper.find('select[aria-label="规划方式"]').setValue('template_preferred')
     await wrapper.find('select[aria-label="Planning diversity"]').setValue('exploratory')
-    await wrapper.find('input[type="number"]').setValue('42')
+    await wrapper.find('input[aria-label="Planning seed"]').setValue('42')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
 
@@ -287,6 +287,7 @@ describe('CreateMissionView', () => {
     expect(router.currentRoute.value.name).toBe('MissionWorkspace')
     expect(router.currentRoute.value.params.missionId).toBe('mission_new')
     expect(router.currentRoute.value.query.runId).toBe('run_new')
+    expect(router.currentRoute.value.query.inspector).toBe('copilot')
     wrapper.unmount()
   })
 
@@ -321,7 +322,7 @@ describe('CreateMissionView', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('TXT · 16 B')
     expect(wrapper.text()).toContain('✓ 已就绪')
-    await wrapper.find('#mission-goal').setValue('生成最终合同审查报告')
+    await wrapper.find('textarea[aria-label="任务对话输入"]').setValue('生成最终合同审查报告')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
     expect(workflowApi.startWorkflowAsync).toHaveBeenCalledWith(

@@ -338,18 +338,25 @@ describe('workbench response compatibility', () => {
   it('projects the public initial plan and tool receipts without exposing runtime bodies', () => {
     const plan = { planVersion: 3, commitId: 'commit', commitmentRevision: 2,
       objective: 'Inspect the project', constraints: ['Keep existing behavior'], expectedArtifacts: ['report'],
+      relations: [{ sourceKey: 'inspect', targetKey: 'report', relationType: 'depends_on' }],
       tasks: [{ key: 'inspect', title: 'Inspect source', objective: 'Locate the cause',
         rationale: 'Read the relevant source before changing behavior', acceptanceCriteria: ['Identify the cause'],
-        sourceRefs: ['source:task'] }] };
+        sourceRefs: ['source:task'], capabilities: ['read'] }] };
     const activity = { executionId: 'execution', tool: 'fs.list', status: 'succeeded', stepId: 'inspect',
       attemptId: 'attempt', receiptRef: 'tool:receipt', createdAt: '2026-11-13T12:00:00Z' };
     const source = { runId: 'run', initialPlan: { ...plan, reasoning_content: 'PRIVATE',
-      tasks: plan.tasks.map(task => ({ ...task, modelMessages: ['PRIVATE'] })) },
+      relations: [...plan.relations.map(relation => ({ ...relation, private: 'PRIVATE' })),
+        { sourceKey: { private: 'PRIVATE' }, targetKey: 'report', relationType: 'depends_on' }],
+      tasks: plan.tasks.map(task => ({ ...task, capabilities: [...task.capabilities, { private: 'PRIVATE' }], modelMessages: ['PRIVATE'] })) },
       toolActivity: [{ ...activity, content: 'PRIVATE', output: { fileBody: 'PRIVATE' }, authorization: { secret: 'PRIVATE' } }],
       executionState: { rawModelMessages: 'PRIVATE' } };
     const snapshot = structuredClone(source);
     const result = projectAgentOsResponse('/ai/agentos/v2/runs/run/copilot', source) as Record<string, unknown>;
     expect(result.initialPlan).toEqual(plan);
+    const runDetail = projectAgentOsResponse('/ai/agentos/v2/runs/run', source);
+    expect(runDetail).toMatchObject({ runId: 'run', initialPlan: plan });
+    expect(JSON.stringify(runDetail)).not.toContain('PRIVATE');
+    expect(runDetail).not.toHaveProperty('executionState');
     expect(result.toolActivity).toEqual([activity]);
     expect(JSON.stringify(result)).not.toContain('PRIVATE');
     expect(result).not.toHaveProperty('executionState');
@@ -366,6 +373,26 @@ describe('workbench response compatibility', () => {
     expect(result.review).toMatchObject({ kind: 'planner_rejected', displayReason: '计划修订未通过正式校验',
       errorCode: 'INVALID_PROPOSAL', errorType: '_TransitionRejected', canApprove: false });
     expect(JSON.stringify(result)).not.toContain('PRIVATE');
+  });
+
+  it('projects the selected Run planning version through the same public plan shape', () => {
+    const plan = { planVersion: 2, commitId: null, commitmentRevision: null,
+      objective: 'Revise the inspection plan', constraints: ['Read only'], expectedArtifacts: ['report'],
+      relations: [{ sourceKey: 'inspect', targetKey: 'verify', relationType: 'depends_on' }],
+      tasks: [{ key: 'verify', title: 'Verify findings', objective: 'Check source references',
+        rationale: 'Verify the findings before publication', acceptanceCriteria: ['Cite source paths'],
+        sourceRefs: ['source:inspection'], capabilities: ['read'] }] };
+    const source = { runId: 'run', plan: { ...plan, metadata: { private: 'PRIVATE' },
+      tasks: plan.tasks.map(task => ({ ...task, capabilities: [...task.capabilities, { token: 'PRIVATE' }],
+        agentRegistration: { principal: 'PRIVATE' } })) },
+      executionState: { messages: 'PRIVATE' }, siblingPlans: ['PRIVATE'] };
+    const before = structuredClone(source);
+    const result = projectAgentOsResponse('/ai/agentos/v2/runs/run/plan', source);
+    expect(result).toEqual({ runId: 'run', plan });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE');
+    expect(source).toEqual(before);
+    expect(projectAgentOsResponse('/ai/agentos/v2/runs/run/plan', { runId: 'run', plan: null }))
+      .toEqual({ runId: 'run', plan: null });
   });
 
   it('keeps absent Copilot plan data compatible and rejects nested values in public scalar fields', () => {
@@ -443,6 +470,24 @@ describe('workbench response compatibility', () => {
       expect(result).not.toHaveProperty(field);
     }
     expect(JSON.stringify(result)).not.toContain('PRIVATE');
+  });
+  it('preserves the compiler task-plan mapping on historical RGraph nodes', () => {
+    const result = projectAgentOsResponse('/ai/agentos/v2/runs/run/graph', {
+      historical: true, graphId: 'graph', graphVersion: 2, taskPlanVersion: 2,
+      nodes: [
+        { nodeId: 'expanded-read', metadata: { taskPlanKey: 'inspect', private: 'PRIVATE' } },
+        { nodeId: 'explicit', metadata: { taskPlanKey: 'fallback', semanticTaskKey: 'canonical' } },
+        { nodeId: 'invalid', metadata: { semanticTaskKey: { private: 'PRIVATE' }, taskPlanKey: { private: 'PRIVATE' } } },
+      ],
+      edges: [],
+    });
+    expect(result).toMatchObject({ nodes: [
+      { nodeId: 'expanded-read', display: { semanticTaskKey: 'inspect' } },
+      { nodeId: 'explicit', display: { semanticTaskKey: 'canonical' } },
+      { nodeId: 'invalid', display: { semanticTaskKey: null } },
+    ] });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE');
+    expect(JSON.stringify(result)).not.toContain('taskPlanKey');
   });
   it('projects review, lineage and output references without exposing execution snapshots', () => {
     const result = projectAgentOsResponse('/ai/agentos/v2/runs/run', { runId: 'run', missionId: 'mission', status: 'waiting_review',

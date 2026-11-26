@@ -792,6 +792,31 @@ async def test_v2_graph_provenance_and_checkpoint_are_separate_safe_resources(tm
         assert "/agentos/v2/runs/{run_id}/reviews" in paths
 
 
+async def test_v2_resources_excludes_previous_registry_instances_without_mutating_the_store(tmp_path):
+    from components.resource.agents.pool import AgentPool
+    from components.resource.runtime.embedded_runtime import register_embedded_agents_runtime, EMBEDDED_AGENTS_RUNTIME_ID
+    runtime = _runtime(tmp_path)
+    registry = runtime.agent_registry
+    register_embedded_agents_runtime(runtime.resource_plane, registry.all())
+    current_pool = AgentPool(registry=registry, resource_plane=runtime.resource_plane, host_runtime_id=EMBEDDED_AGENTS_RUNTIME_ID)
+    current_pool.synchronize()
+    old_registry = AgentRegistry()
+    old_registry.register(_ApiAgent())
+    old_pool = AgentPool(registry=old_registry, resource_plane=runtime.resource_plane, host_runtime_id=EMBEDDED_AGENTS_RUNTIME_ID)
+    old_pool.synchronize()
+    old_ref = old_registry.registrations()[0].ref
+    current_ref = registry.registrations()[0].ref
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/agentos/v2/resources")
+    assert response.status_code == 200
+    items = {item['profile']['resourceId']: item for item in response.json()['items']}
+    assert old_ref.resource_id not in items
+    assert items[current_ref.resource_id]['profile']['hostRuntimeId'] == EMBEDDED_AGENTS_RUNTIME_ID
+    assert runtime.resource_plane.runtime(old_ref.resource_id)  # read query performs no deletion
+
+
 async def test_v2_resources_projects_authoritative_profile_and_unknown_health(tmp_path) -> None:
     runtime = _runtime(tmp_path)
     plane = runtime.resource_plane

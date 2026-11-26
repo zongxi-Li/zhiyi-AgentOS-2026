@@ -124,6 +124,12 @@ def test_current_run_retry_offer_requires_both_read_only_authority_gates(authori
     monkeypatch.setattr(RuntimeTaskOperations, 'assert_current_run_recovery', verify)
     runtime.runtime_recovery_coordinator = SimpleNamespace(prepare_single_step_retry=validate)
     before = run.model_dump(mode='json')
+    preview = project_run_capabilities(runtime, run, include_recovery=False)
+    assert calls == []
+    assert preview['canInspect'] and preview['canDelete']
+    assert not preview['canRecoverCurrentRun']
+    assert {'action': 'canRecoverCurrentRun', 'code': 'RECOVERY_CHECK_PENDING'} in preview['unavailableReasons']
+
     cap = project_run_capabilities(runtime, run)
     assert cap['canRecoverCurrentRun'] is (gate == 'ready')
     assert cap['canRetrySuccessor'] is False

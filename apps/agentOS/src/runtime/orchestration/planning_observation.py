@@ -127,7 +127,10 @@ class RuntimePlanningObservationBuilder(CollaboratorAccess):
         failed_steps = tuple(s.step_id for s in run.steps if s.status == StepStatus.FAILED)
         recovery_action = (run.execution_state.get("recoveryOutcome") or {}).get("action") if failure else None
         readonly_recovery_proof = None
-        if (failure and len(failed_steps) == 1 and recovery_action not in {"retry", "rebind"}
+        if failure.get("reasonCode") == "MODEL_INPUT_BUDGET_EXCEEDED":
+            # A read-only proof shows replay is safe, not that the same input fits.
+            recovery_action = "replan"
+        elif (failure and len(failed_steps) == 1 and recovery_action not in {"retry", "rebind"}
                 and failure.get("failureType") not in {"policy", "storage"}):
             from runtime.orchestration.permit_recovery import run_step_readonly_retry_proof
             try:

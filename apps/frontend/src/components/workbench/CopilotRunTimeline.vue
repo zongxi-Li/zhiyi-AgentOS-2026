@@ -14,7 +14,8 @@
         <component :is="agentState(group.agent) === 'completed' ? CircleCheck : agentState(group.agent) === 'failed' ? CircleClose : Connection" class="agent-work__icon" aria-hidden="true" />
         <strong>{{ group.agent.agentName || '执行 Agent 待确认' }}</strong>
         <span class="agent-work__state">{{ agentStateLabel(group.agent) }}</span>
-        <button v-if="group.agent.agentRegistration" type="button" class="agent-work__pool-link" @click="emit('inspect-agent', group.agent.agentRegistration.instanceId)">查看执行池 <ArrowRight aria-hidden="true" /></button>
+        <button v-if="group.agent.nodeId && hasResourceDetails" type="button" class="agent-work__pool-link" @click="emit('inspect-resource-step', group.agent.nodeId)">调度详情 <ArrowRight aria-hidden="true" /></button>
+        <button v-else-if="group.agent.agentRegistration" type="button" class="agent-work__pool-link" @click="emit('inspect-agent', group.agent.agentRegistration.instanceId)">查看执行池 <ArrowRight aria-hidden="true" /></button>
         <details class="agent-work__identity"><summary :aria-label="`${group.agent.agentName || 'Agent'} 的执行信息`"><MoreFilled aria-hidden="true" /></summary>
           <div><span>{{ group.agent.title }}</span><small v-if="group.agent.agentRegistration">{{ group.agent.agentRegistration.instanceId }} · 第 {{ group.agent.agentRegistration.generation }} 代</small></div>
         </details>
@@ -136,7 +137,7 @@ import { projectModelOutput, type RuntimeTraceObservation } from '@/workbench/ru
 import { renderCopilotMarkdown } from './copilotMarkdown'
 import { planningProfileText, planningProgressText, planningStageLabel, type CopilotConversationMessage } from './copilotConversation'
 
-const props = withDefaults(defineProps<{ runId: string | null; status: string; plan?: CopilotInitialPlan | null; graphNodes?: WorkspaceGraphNode[]; tools?: CopilotToolActivity[]; traces?: RuntimeTraceObservation[]; messages?: CopilotConversationMessage[]; startedAt?: string | null; updatedAt?: string | null; waitingForApproval?: boolean; workspaceReview?: WorkspaceReviewProjection | null }>(), { plan: null, graphNodes: () => [], tools: () => [], traces: () => [], messages: () => [], waitingForApproval: false, workspaceReview: null })
+const props = withDefaults(defineProps<{ runId: string | null; status: string; plan?: CopilotInitialPlan | null; graphNodes?: WorkspaceGraphNode[]; tools?: CopilotToolActivity[]; traces?: RuntimeTraceObservation[]; messages?: CopilotConversationMessage[]; startedAt?: string | null; updatedAt?: string | null; waitingForApproval?: boolean; workspaceReview?: WorkspaceReviewProjection | null; hasResourceDetails?: boolean }>(), { plan: null, graphNodes: () => [], tools: () => [], traces: () => [], messages: () => [], waitingForApproval: false, workspaceReview: null })
 const reviewNodes = computed(() => props.graphNodes.map(node => ({ nodeId: node.acgNodeId, name: node.name })))
 const planObjectiveMarkup = computed(() => {
   // Pasted task headings can contain separated markers such as "# # 任务".
@@ -145,7 +146,7 @@ const planObjectiveMarkup = computed(() => {
   return renderCopilotMarkdown(objective)
 })
 const active = computed(() => ['pending', 'planning', 'running', 'retrying', 'waiting_review'].includes(props.status))
-const emit = defineEmits<{ content: [hasContent: boolean]; 'inspect-agent': [instanceId: string] }>()
+const emit = defineEmits<{ content: [hasContent: boolean]; 'inspect-agent': [instanceId: string]; 'inspect-resource-step': [stepId: string] }>()
 const runtime = shallowRef<RunRuntimeStore | null>(null)
 const now = ref(Date.now())
 const historyExpanded = ref(true)

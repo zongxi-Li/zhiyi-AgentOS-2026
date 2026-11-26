@@ -9,11 +9,11 @@
 
     <div v-show="tab === 'chat'" ref="messageList" class="conversation" :class="{ 'has-run-controls': hasFormalControl }" aria-live="polite" @scroll="trackScroll">
       <CopilotRunTimeline :key="runId || ''" :run-id="runId" :status="state?.status || runStatus || ''"
-        :messages="messages" :graph-nodes="graphNodes" :plan="state?.initialPlan" :tools="state?.toolActivity" :workspace-review="state?.workspaceReview" :traces="runtimeObservation?.runId === runId ? runtimeObservation.traces : []" :started-at="controlRun?.startedAt" :updated-at="controlRun?.updatedAt" :waiting-for-approval="hasPendingToolApproval" @content="hasTimelineContent = $event; scrollBottom()" @inspect-agent="inspectAgent">
+        :messages="messages" :graph-nodes="graphNodes" :plan="state?.initialPlan" :tools="state?.toolActivity" :workspace-review="state?.workspaceReview" :traces="runtimeObservation?.runId === runId ? runtimeObservation.traces : []" :started-at="controlRun?.startedAt" :updated-at="controlRun?.updatedAt" :waiting-for-approval="hasPendingToolApproval" :has-resource-details="!!controlRun" @content="hasTimelineContent = $event; scrollBottom()" @inspect-agent="inspectAgent" @inspect-resource-step="inspectResourceStep">
       <template #controls><FormalExecutionControls :key="runId || ''" :run="controlRun" :run-id="runId"
         :action-capabilities="actionCapabilities"
         :mission-id="missionId || state?.missionId || ''" :historical="historical"
-        :can-cancel="canCancel" :cancel-pending="cancelPending" embedded conversational
+        :can-cancel="canCancel" :cancel-pending="cancelPending" embedded conversational launch-in-one-click
         :readonly="readonly || historical || busy || loading || !state"
         :execution-readonly="permission !== 'task_collaboration'" :reviewed-plan="state?.initialPlan" require-plan-review :waiting-for-approval="hasPendingToolApproval"
         :show-review="!state?.review && !state?.planningProgress" @refresh="refreshRun" @cancel="emit('cancel-run')" /></template>
@@ -40,8 +40,8 @@
       <div v-if="loading && !state" class="empty-state"><el-icon class="is-loading"><Loading /></el-icon><p>正在读取任务对话…</p></div>
       <div v-else-if="!messages.length && !state?.question && !state?.review && !state?.planningProgress && !state?.initialPlan && !state?.toolActivity?.length && !hasPendingToolApproval && !hasTimelineContent && !['pending', 'planning'].includes(state?.status || runStatus || '')" class="empty-state">
         <img class="empty-watermark" :src="activePack.mark" alt="" aria-hidden="true" />
-        <h3>{{ runId ? '一起推进这项任务' : '从一项任务开始' }}</h3>
-        <p>{{ runId ? '检查进展、理解问题，或一起梳理下一步。' : '选择或启动任务后，在这里与任务助手交流。' }}</p>
+        <h3 v-if="!creating">{{ runId ? '一起推进这项任务' : '从一项任务开始' }}</h3>
+        <p v-if="!creating">{{ runId ? '检查进展、理解问题，或一起梳理下一步。' : '选择或启动任务后，在这里与任务助手交流。' }}</p>
       </div>
 
       <article v-if="busy && pendingUser" class="stream-turn">
@@ -100,16 +100,20 @@
       <small class="trace-footnote">按已加载的活动记录计数，不代表步骤数；模型调用按页加载，内部投影合并在调用详情中。</small>
     </div>
 
-    <AgentPoolPanel v-if="tab === 'pool'" :selected-instance-id="selectedAgentInstanceId" @select-run="emit('select-run', $event)" />
+    <AgentPoolPanel v-if="tab === 'pool'" :run="controlRun" :selected-step-id="selectedResourceStepId" :selected-instance-id="selectedAgentInstanceId" @select-run="emit('select-run', $event)" />
 
     <div v-if="reviewReceipt" class="wait-note" role="status">{{ reviewReceipt }}</div>
     <div v-if="permissionReceipt" class="wait-note permission-receipt" role="status">{{ permissionReceipt }}</div>
     <div v-if="error" class="error-note" role="alert"><span>{{ error }}</span><button @click="refresh()">刷新</button></div>
-    <div v-if="historical || readonly || !allows('canCollaborate')" class="readonly-note">{{ historical ? '历史 Run 只读，可讨论原始证据。' : '操作按所选 Run 的服务端能力限制。' }}<button v-if="state?.latestRunId && state.latestRunId !== runId" type="button" @click="emit('select-run', state.latestRunId)">查看最新创建的 Run</button></div>
+    <slot v-if="creating" name="creation-status" />
+    <div v-if="!creating && (historical || readonly || !allows('canCollaborate'))" class="readonly-note">{{ historical ? '历史 Run 只读，可讨论原始证据。' : '操作按所选 Run 的服务端能力限制。' }}<button v-if="state?.latestRunId && state.latestRunId !== runId" type="button" @click="emit('select-run', state.latestRunId)">查看最新创建的 Run</button></div>
     <form ref="composerRoot" class="composer" :class="{ 'is-answering': answering && state?.question }" @submit.prevent="send" @keydown.esc="openMenu = null">
       <div v-if="state?.question" class="composer-mode"><button type="button" :class="{ selected: answering }" @click="answering = true">回答问题</button><button type="button" :class="{ selected: !answering }" @click="answering = false">询问助手</button></div>
-      <textarea ref="composerInput" v-model="draft" rows="3" :maxlength="answering && state?.question ? 2000 : 4000" :disabled="!runId || busy" :placeholder="composerPlaceholder" aria-label="任务对话输入" @keydown="onKeydown"></textarea>
+      <slot v-if="creating" name="composer-context" />
+      <textarea ref="composerInput" v-model="draft" rows="3" :maxlength="creating ? undefined : answering && state?.question ? 2000 : 4000" :disabled="(!runId && !creating) || busy || creationPending" :placeholder="composerPlaceholder" aria-label="任务对话输入" @keydown="onKeydown"></textarea>
       <div class="composer-footer">
+        <slot v-if="creating" name="creation-tools" />
+        <template v-else>
         <div class="composer-picker"><button type="button" class="picker-trigger" aria-label="任务操作" :disabled="busy || loading || !state || permission !== 'task_collaboration' || readonly || historical || !(allows('canCollaborate') || operationAllowed('recover') || allows('canRerunSuccessor'))" :aria-expanded="openMenu === 'operation'" @click="openMenu = openMenu === 'operation' ? null : 'operation'"><el-icon><CircleCheck /></el-icon></button>
           <div v-if="openMenu === 'operation'" class="picker-menu operation-menu">
             <div class="menu-heading">任务操作</div>
@@ -138,10 +142,11 @@
             <p>仅用于本次对话，不修改任务执行模型。</p>
           </div>
         </div>
-        <button class="send-button" type="submit" :disabled="!canSend" :aria-label="answering && state?.question ? '提交回答并继续' : '发送消息'"><el-icon v-if="busy" class="is-loading"><Loading /></el-icon><el-icon v-else><ArrowUp /></el-icon></button>
+        </template>
+        <button class="send-button" type="submit" :disabled="!canSend" :aria-label="creating ? '发送任务' : answering && state?.question ? '提交回答并继续' : '发送消息'"><el-icon v-if="busy" class="is-loading"><Loading /></el-icon><el-icon v-else><ArrowUp /></el-icon></button>
       </div>
     </form>
-    <div class="composer-caption">{{ answering && state?.question ? permission === 'read_only' ? '选择「按需确认」后，可提交回答并继续任务' : '回答由任务规划模型处理 · Enter 提交' : 'Enter 发送 · Shift + Enter 换行' }}</div>
+    <slot v-if="creating" name="creation-notice" />
   </section>
 </template>
 
@@ -149,7 +154,7 @@
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { ArrowDown, ArrowRight, ArrowUp, ChatDotRound, Check, CircleCheck, Clock, Connection, Cpu, Loading, Lock, MagicStick, Share } from '@element-plus/icons-vue'
 import { agentosApi, type GraphProjection, type WorkspaceEntry, type WorkspaceGraphNode, type ModelCallUsage, type RunActionCapabilities } from '@/services/api/agentos'
-import { readRunCapabilities, type RunCapabilityAction } from '@/workbench/runtime/runCapabilities'
+import { readRunCapabilities, recoveryCheckPending, type RunCapabilityAction } from '@/workbench/runtime/runCapabilities'
 import type { CopilotPermission, CopilotPermissionChange, CopilotState, CopilotAction, CopilotActionKind, CopilotProgressPhase, TaskApprovalMode } from '@/services/api/agentos/api/copilot'
 import { copilotResponseSummary, type CopilotConversationMessage } from './copilotConversation'
 import { validationFailureDetails, type RuntimeObservation, type RuntimeTraceObservation } from '@/workbench/runtime/observation'
@@ -169,9 +174,15 @@ const props = withDefaults(defineProps<{
   entry?: WorkspaceEntry | null; graphNode?: WorkspaceGraphNode | null; graphNodes?: WorkspaceGraphNode[]
   graph?: GraphProjection | null; runId?: string | null; runStatus?: string | null
   runtimeObservation?: RuntimeObservation | null; historical?: boolean; readonly?: boolean; actionCapabilities?: RunActionCapabilities | null
+  createTask?: (message: string) => Promise<void>
+  creationDisabled?: boolean
+  creationPending?: boolean
+  initialDraft?: string
+  resourceStepId?: string
   missionId?: string; canCancel?: boolean; cancelPending?: boolean; projectionRevision?: number; workspaceRefreshing?: boolean
 }>(), { entry: null, graphNode: null, graphNodes: () => [], graph: null, runId: null, runStatus: null, runtimeObservation: null, historical: false, readonly: false, missionId: '', canCancel: false, cancelPending: false })
-const emit = defineEmits<{ 'select-run': [runId: string]; 'refresh-run': []; 'cancel-run': [] }>()
+const emit = defineEmits<{ 'select-run': [runId: string]; 'refresh-run': []; 'cancel-run': []; 'draft-change': [message: string] }>()
+const creating = computed(() => !props.runId && Boolean(props.createTask))
 const { activePack } = useBrand()
 const controlRun = computed(() => props.runtimeObservation?.runId === props.runId ? props.runtimeObservation?.run || null : null)
 const offeredCapabilities = computed(() => props.actionCapabilities === undefined ? controlRun.value?.actionCapabilities : props.actionCapabilities)
@@ -214,8 +225,13 @@ const hasTimelineContent = ref(false)
 const sessionOwnerId = localStorage.getItem('userId')
 const tab = ref<'chat' | 'trace' | 'pool'>('chat')
 const selectedAgentInstanceId = ref<string | null>(null)
+const selectedResourceStepId = ref<string | null>(null)
 function inspectAgent(instanceId: string) { selectedAgentInstanceId.value = instanceId; tab.value = 'pool' }
-watch(() => props.runId, () => { selectedAgentInstanceId.value = null })
+function inspectResourceStep(stepId: string) { selectedResourceStepId.value = stepId; tab.value = 'pool' }
+watch(() => props.runId, () => { selectedAgentInstanceId.value = null; selectedResourceStepId.value = null })
+watch(() => [props.runId, props.resourceStepId], () => {
+  if (props.resourceStepId) inspectResourceStep(props.resourceStepId)
+}, { immediate: true })
 const draft = ref(''), error = ref(''), traceSearch = ref('')
 const reviewComment = ref(''), reviewReceipt = ref('')
 let reviewRequest: { subject: string; revision: string; decision: string; comment: string; id: string } | undefined
@@ -257,13 +273,13 @@ let validatedRunId: string | null = null
 let viewActive = true
 let viewSuspended = false
 let requestKey: { content: string; target: string; id: string; options: string } | undefined
-const targetTitle = computed(() => props.graphNode?.name || props.entry?.name || '当前任务')
+const targetTitle = computed(() => creating.value ? '新任务' : props.graphNode?.name || props.entry?.name || '当前任务')
 const failedSteps = computed(() => state.value?.steps.filter(step => step.status === 'failed') || [])
 const reviewKind = computed(() => state.value?.review?.kind || (state.value?.review?.decisionRejected ? 'planner_rejected' : state.value?.review?.subjectType === 'planner' ? 'planner_wait' : 'step_review'))
 const reviewValidationDetails = computed(() => validationFailureDetails(state.value?.review?.validationFailures))
 const reviewPending = computed(() => reviewKind.value === 'workspace_revision_pending')
 const planningRepairing = computed(() => state.value?.planningProgress?.kind === 'repairing')
-const reviewCanApprove = computed(() => !allows('canRecoverCurrentRun') && state.value?.review?.canApprove === true && !state.value.review.decisionRejected && !['workspace_revision_pending', 'workspace_revision_blocked', 'planner_rejected'].includes(reviewKind.value))
+const reviewCanApprove = computed(() => !recoveryCheckPending(offeredCapabilities.value) && !allows('canRecoverCurrentRun') && state.value?.review?.canApprove === true && !state.value.review.decisionRejected && !['workspace_revision_pending', 'workspace_revision_blocked', 'planner_rejected'].includes(reviewKind.value))
 const reviewTitle = computed(() => allows('canRecoverCurrentRun') ? '节点执行失败，可以局部恢复' : ({ workspace_revision_pending: '正在自动修订审查计划', workspace_revision_blocked: '审查计划修订受阻', planner_wait: '等待外部条件确认', planner_error: '规划处理失败', step_review: '请审核当前步骤的结果' } as Record<string, string>)[reviewKind.value]
   || (state.value?.review?.reasonCode === 'PLANNING_COMMIT_REJECTED' ? '计划修订未通过校验' : state.value?.decision?.action === 'recover' ? '任务暂停，未能自动恢复' : '任务暂停，下一步尚未执行'))
 const reviewDescription = computed(() => allows('canRecoverCurrentRun') ? '已完成的结果和工具证据已保留。打开输入框下方的任务操作，选择“恢复失败任务”，继续处理失败节点。' : state.value?.review?.displayReason || (reviewPending.value
@@ -304,8 +320,11 @@ const statusLabel = computed(() => {
       waiting_review: current?.question ? '等待你的回答' : reviewPending.value ? '自动修订中' : reviewKind.value === 'workspace_revision_blocked' ? '修订受阻' : '已暂停',
       completed: '已完成', failed: '执行失败', cancelled: '已取消', superseded: '已替换' } as Record<string, string>)[status] || '尚未启动')
 })
-const composerPlaceholder = computed(() => !props.runId ? '先选择一项任务' : answering.value && state.value?.question ? '补充你的选择或信息，让任务继续…' : '询问当前任务，或一起梳理下一步…')
-const canSend = computed(() => !!props.runId && !!state.value && allows('canDiscuss') && !loading.value && !busy.value && !!draft.value.trim() && (answering.value && state.value.question && allows('canAnswerPlanner') ? permission.value === 'task_collaboration' : selectedModel.value ? availableModels.value.some(m => m.id === selectedModel.value) : state.value.modelAvailable))
+const composerPlaceholder = computed(() => creating.value ? '输入任务，描述你想完成的事情…' : !props.runId ? '先选择一项任务' : answering.value && state.value?.question ? '补充你的选择或信息，让任务继续…' : '询问当前任务，或一起梳理下一步…')
+const canSend = computed(() => creating.value
+  ? Boolean(draft.value.trim()) && !busy.value && !props.creationPending && !props.creationDisabled
+    && !props.readonly && !props.historical
+  : !!props.runId && !!state.value && allows('canDiscuss') && !loading.value && !busy.value && !!draft.value.trim() && (answering.value && state.value.question && allows('canAnswerPlanner') ? permission.value === 'task_collaboration' : selectedModel.value ? availableModels.value.some(m => m.id === selectedModel.value) : state.value.modelAvailable))
 const messages = computed<CopilotConversationMessage[]>(() => [
   ...(state.value?.exchanges || []).flatMap(e => [ ...(e.user ? [{ id: `${e.sourceRunId || props.runId}:${e.operationId}-u`, role: 'user', content: e.user, time: e.createdAt, planner: false, action: undefined, receipt: undefined, proposalId: e.operationId, sourceRunId: e.sourceRunId || props.runId || undefined }] : []), { id: `${e.sourceRunId || props.runId}:${e.operationId}-a`, role: 'assistant', content: e.assistant, time: e.createdAt, planner: false, action: e.action, receipt: e.receipt, proposalId: e.operationId, sourceRunId: e.sourceRunId || props.runId || undefined, responseTimings: e.responseTimings, latencyMs: e.latencyMs, providerRequest: e.providerRequest, contextUsage: e.contextUsage }]),
   ...(state.value?.humanAnswers || []).flatMap(a => [{ id: `${a.questionId}-q`, role: 'assistant', content: a.prompt, time: a.answeredAt, planner: true, action: undefined, receipt: undefined, proposalId: '', sourceRunId: a.sourceRunId }, { id: `${a.questionId}-r`, role: 'user', content: a.answer, time: a.answeredAt, planner: true, action: undefined, receipt: undefined, proposalId: '', sourceRunId: a.sourceRunId }])
@@ -516,6 +535,20 @@ async function loadCalls(more = false) {
   finally { if (token === generation) callsLoading.value = false }
 }
 async function send() {
+  if (creating.value) {
+    if (!canSend.value) return
+    const token = generation
+    busy.value = true
+    error.value = ''
+    try {
+      await props.createTask!(draft.value.trim())
+    } catch (cause) {
+      if (token === generation) error.value = cause instanceof Error ? cause.message : '任务创建失败，请重试'
+    } finally {
+      if (token === generation) busy.value = false
+    }
+    return
+  }
   if (!canSend.value || !state.value || !props.runId) return
   const id = props.runId, token = generation, content = draft.value.trim(), question = answering.value && allows('canAnswerPlanner') ? state.value.question : null
   const target = question?.questionId || 'chat'
@@ -618,7 +651,7 @@ watch(() => props.runId, (_next, previous) => {
   validatedRunId = null
   hasPendingToolApproval.value = false
   hasTimelineContent.value = false
-  state.value = null; draft.value = ''; error.value = ''; busy.value = false; requestKey = undefined; answering.value = false
+  state.value = null; draft.value = creating.value ? props.initialDraft || '' : ''; error.value = ''; busy.value = false; requestKey = undefined; answering.value = false
   reviewComment.value = ''; reviewReceipt.value = ''; reviewRequest = undefined
   approvalMode.value = 'ask'; settingPermission.value = false; permissionReceipt.value = ''; permissionRequest = undefined
   selectedModel.value = ''; permission.value = 'task_collaboration'; openMenu.value = null
@@ -631,6 +664,7 @@ watch(() => props.runId, (_next, previous) => {
 }, { immediate: true })
 watch(tab, value => { if (value === 'trace') void loadCalls() })
 watch(reasoningOptions, options => { if (!options.includes(reasoningEffort.value)) reasoningEffort.value = '' })
+watch(draft, value => { if (creating.value) emit('draft-change', value) }, { flush: 'sync' })
 watch(draft, () => void nextTick(() => { const e = composerInput.value; if (e) { e.style.height = 'auto'; e.style.height = `${Math.min(180, Math.max(76, e.scrollHeight))}px` } }))
 function closePickers(e: PointerEvent) { if (!composerRoot.value?.contains(e.target as Node)) openMenu.value = null }
 onMounted(() => { document.addEventListener('pointerdown', closePickers); document.addEventListener('visibilitychange', onVisibilityChange) })
@@ -653,7 +687,7 @@ onBeforeUnmount(() => { saveSession(); generation++; controller?.abort(); stopSc
 .review-actions button { padding: 7px 10px; border: 1px solid var(--cp-border); border-radius: 7px; background: var(--wb-accent-soft); color: var(--wb-accent); cursor: pointer; }
 .review-actions button:disabled { opacity: .45; cursor: not-allowed; }
 .acg-copilot { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; color:var(--wb-text); background:var(--wb-surface-1); font-family:var(--font-sans,sans-serif); --cp-border:var(--wb-border-soft); --cp-prose-size:14px; --cp-prose-line-height:1.75; --cp-paragraph-gap:.45em; --cp-list-item-gap:.2em; }
-.agent-pool ~ .composer, .agent-pool ~ .composer-caption, .agent-pool ~ .error-note, .agent-pool ~ .readonly-note, .agent-pool ~ .wait-note { display:none; }
+.agent-pool ~ .composer, .agent-pool ~ .error-note, .agent-pool ~ .readonly-note, .agent-pool ~ .wait-note { display:none; }
 button { font:inherit; cursor:pointer; }
 button:disabled { cursor:not-allowed; opacity:.4; }
 button:focus-visible, input:focus-visible { outline:2px solid var(--wb-accent); outline-offset:2px; }
@@ -745,7 +779,6 @@ button:focus-visible, input:focus-visible { outline:2px solid var(--wb-accent); 
 .effort-options button[aria-pressed=true] { background:var(--wb-accent-soft); color:var(--wb-accent); }
 .send-button { display:grid; place-items:center; width:30px; height:30px; flex-shrink:0; border:0; border-radius:50%; background:var(--wb-text); color:var(--wb-surface-1); font-size:17px; }
 .send-button:disabled { background:var(--wb-hover); color:var(--wb-text-muted); opacity:.7; }
-.composer-caption { text-align:center; padding:8px 12px 10px; color:var(--wb-text-muted); font-size:9px; }
 .composer-mode { display:flex; gap:5px; margin-bottom:10px; }
 .composer-mode button { border:0; background:transparent; color:var(--wb-text-muted); border-radius:5px; padding:4px 7px; font-size:10px; }
 .composer-mode .selected { color:var(--wb-accent); background:var(--wb-accent-soft); }

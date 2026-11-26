@@ -50,7 +50,7 @@ def _formal_actions(control):
     return []
 
 
-def project_run_capabilities(runtime, run, *, formal_control=None):
+def project_run_capabilities(runtime, run, *, formal_control=None, include_recovery=True):
     """Compute one Run, using its persisted owner, tenant, revision and authorities.
 
     Identity may lag Runtime. It can explain lineage, never overwrite execution
@@ -147,10 +147,12 @@ def project_run_capabilities(runtime, run, *, formal_control=None):
             # prepare_run rechecks the effective Mission semantic basis.
             if run.workflow_id and isinstance(run.input, dict):
                 allow('canRerunSuccessor')
-        if status == 'failed' and not run.execution_state.get('executionPermitId'):
-            for step in run.steps:
-                if step.status.value != 'failed':
-                    continue
+        permit = run.execution_state.get('executionPermitId')
+        if status == 'failed' and not permit:
+            failed_steps = [step for step in run.steps if step.status.value == 'failed']
+            if failed_steps and not include_recovery:
+                reasons['canRetrySuccessor'] = 'RECOVERY_CHECK_PENDING'
+            for step in failed_steps if include_recovery else ():
                 try:
                     # validate_only returns before any writes; the final
                     # revision/scope comparison closes a changing snapshot.
@@ -164,14 +166,19 @@ def project_run_capabilities(runtime, run, *, formal_control=None):
                     break
                 except EVIDENCE_ERRORS:
                     pass
-        elif status in {'failed', 'waiting_review'} and run.execution_state.get('executionPermitId'):
+        elif status in {'failed', 'waiting_review'} and permit:
             reasons['canRetrySuccessor'] = 'PERMIT_RETRY_REQUIRES_INTERNAL_AUTHORITY'
             try:
                 from runtime.orchestration.planning_operations import RuntimeTaskOperations
                 from runtime.orchestration.permit_recovery import interrupted_step_ids
-                operations = RuntimeTaskOperations(runtime)
-                recovery_authorization = operations.assert_current_run_recovery(run)
-                for step_id in interrupted_step_ids(run):
+                interrupted = interrupted_step_ids(run)
+                if interrupted and not include_recovery:
+                    reasons['canRecoverCurrentRun'] = 'RECOVERY_CHECK_PENDING'
+                recovery_authorization = (
+                    RuntimeTaskOperations(runtime).assert_current_run_recovery(run)
+                    if interrupted and include_recovery else None
+                )
+                for step_id in interrupted if include_recovery else ():
                     try:
                         runtime.runtime_recovery_coordinator.prepare_single_step_retry(
                             run.run_id, step_id, expected_runtime_revision=run.runtime_revision,

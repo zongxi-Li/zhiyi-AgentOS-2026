@@ -104,6 +104,23 @@ it('does not resolve same-revision contradictory permissions with array order or
     phase: 'UNKNOWN', capabilities: null, isReadOnly: true })
 })
 
+it('resolves deferred recovery from the same-revision Run without masking other capability conflicts', () => {
+  const summary = capabilitiesFixture('a', 'm', 'failed', 5, {
+    unavailableReasons: [{ action: 'canRecoverCurrentRun', code: 'RECOVERY_CHECK_PENDING' }]
+  })
+  const workspace = { mission: { missionId: 'm' }, entries: [], graphNodes: [], runs: [],
+    activeRun: { runId: 'a', status: 'failed', actionCapabilities: summary } } as unknown as MissionWorkspaceProjection
+  const full = capabilitiesFixture('a', 'm', 'failed', 5, {
+    canRecoverCurrentRun: true, retryMode: 'current_run', retryStepId: 'node'
+  })
+  const run = { runId: 'a', missionId: 'm', runtimeRevision: 5, status: 'failed', actionCapabilities: full } as WorkflowRun
+
+  expect(projectLifecycle({ workspace, selectedRunId: 'a' }).capabilities).toMatchObject({ canRecoverCurrentRun: false })
+  expect(projectLifecycle({ workspace, selectedRunId: 'a', run }).capabilities).toEqual(full)
+  run.actionCapabilities = { ...full, canDelete: !summary.canDelete }
+  expect(projectLifecycle({ workspace, selectedRunId: 'a', run }).capabilities).toBeNull()
+})
+
 it('allows only the offered terminal soft delete on a superseded Run', () => {
   const cap = capabilitiesFixture('a', 'm', 'superseded', 5, { lineage: { supersededByRunId: 'b' } })
   expect(readRunCapabilities(cap, 'm', 'a', 5)?.canDelete).toBe(true)

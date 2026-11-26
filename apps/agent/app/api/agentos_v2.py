@@ -43,6 +43,7 @@ from contracts.resource import (
     NodeProfile,
     NodeSnapshot,
     RuntimeProfile,
+    RuntimeKind,
     RuntimeSnapshot,
 )
 from components.mission.state_machine import InvalidStateTransition
@@ -63,6 +64,8 @@ from runtime.orchestration.binding import queued_step_attempts
 from runtime.orchestration.planning_interaction import RuntimePlanningInteraction, CopilotMessageRequest, PlannerAnswerRequest, CopilotPermissionRequest
 from runtime.orchestration.planning_operations import TaskOperationPreviewRequest, TaskOperationApplyRequest
 from runtime.projections.workspace_review import with_workspace_review
+from runtime.projections.copilot_projection import initial_plan_summary, task_plan_summary
+from contracts.planning import TaskPlan
 from runtime.orchestration.review import ReviewConflictError
 from runtime import IdentityQueryService
 from runtime.projections.workspace import (
@@ -345,7 +348,7 @@ def _state(run: RuntimeRunRecord) -> dict[str, Any]:
         "graphId", "graphVersion", "checkpointId", "outputRefs", "contextRefs",
         "memoryRefs", "phaseCapsuleRefs", "traceRefs", "provenanceRefs", "graphPatchRefs",
         "outputSummaries", "resourceBindings", "bindingHistory",
-        "bindingRequirements", "executionBindings", "schedulingDecisions",
+        "bindingRequirements", "executionBindings", "schedulingDecisions", "schedulingStates", "schedulingFailures",
         "evolutionPolicyVersion", "parentRunId", "sourceRunId", "rerunReason",
         "supersedesRunId", "supersededByRunId", "sourcePatchId",
         "consensusResults", "controlFrames", "loopIterations",
@@ -467,6 +470,7 @@ def _project_runtime_profile(profile: RuntimeProfile, node: NodeProfile | None =
         "resourceId": profile.runtime_id,
         "resourceType": _RUNTIME_KIND_TO_LEGACY_TYPE.get(profile.kind.value, "worker"),
         "runtimeKind": profile.kind.value,
+        "hostRuntimeId": profile.host_runtime_id,
         "displayName": profile.display_name,
         "deploymentTier": profile.placement.value,
         "capabilities": list(profile.capabilities),
@@ -1211,6 +1215,7 @@ def create_router(
             raise HTTPException(status_code=503, detail="resource query source unavailable")
 
         items: list[dict[str, Any]] = []
+        current_agent_refs = {item.ref for item in runtime.agent_registry.registrations()}
         for profile in plane.runtimes():
             versioned = plane.runtime_snapshot(profile.runtime_id)
             health = plane.health_monitor.health(profile.runtime_id)
@@ -1223,6 +1228,12 @@ def create_router(
                 host_node = plane.node(profile.node_id)
             except KeyError:
                 host_node = None
+            # A previous epoch may still await lease/outcome reconciliation.
+            # It cannot be presented as a current callable implementation.
+            historical = (profile.kind is RuntimeKind.AGENT_INSTANCE
+                          and profile.agent_registration not in current_agent_refs)
+            if historical:
+                continue
             items.append({
                 "profile": _project_runtime_profile(profile, host_node),
                 "snapshot": versioned.snapshot.model_dump(by_alias=True, mode="json"),
@@ -1406,10 +1417,21 @@ def create_router(
         if list_for_resource is None:
             raise HTTPException(status_code=503, detail="resource usage source unavailable")
         records = list_for_resource(resource_id, limit=limit)
+        visible_runs: dict[str, bool] = {}
+        visible_records = []
+        for record in records:
+            if record.run_id not in visible_runs:
+                try:
+                    load_content_run(record.run_id)
+                    visible_runs[record.run_id] = True
+                except HTTPException:
+                    visible_runs[record.run_id] = False
+            if visible_runs[record.run_id]:
+                visible_records.append(record)
         return {
             "resourceId": resource_id,
-            "items": [record.model_dump(by_alias=True, mode="json") for record in records],
-            "total": len(records),
+            "items": [record.model_dump(by_alias=True, mode="json") for record in visible_records],
+            "total": len(visible_records),
         }
 
     @router.get("/resources/{resource_id}/health-history")
@@ -1665,7 +1687,18 @@ def create_router(
             page_size=200,
         ).items
         active_by_resource: dict[str, list[dict[str, Any]]] = {}
+        mission_access: dict[str, bool] = {}
         for run in run_items:
+            if run.record_state == RunRecordState.DELETED:
+                continue
+            if run.mission_id not in mission_access:
+                try:
+                    require_current_mission_read(run.mission_id)
+                    mission_access[run.mission_id] = True
+                except HTTPException:
+                    mission_access[run.mission_id] = False
+            if not mission_access[run.mission_id]:
+                continue
             bindings = run.execution_state.get("executionBindings") if isinstance(run.execution_state, dict) else None
             if not isinstance(bindings, dict):
                 continue
@@ -1673,20 +1706,23 @@ def create_router(
                 if step.status is not StepStatus.RUNNING:
                     continue
                 binding = bindings.get(step.step_id)
-                if not isinstance(binding, dict):
+                if not isinstance(binding, dict) or (binding.get("runId"), binding.get("stepId")) != (run.run_id, step.step_id):
                     continue
                 registration = binding.get("agentRegistration")
-                if not isinstance(registration, dict):
-                    continue
-                ref = AgentRegistrationRef.model_validate(registration)
-                active_by_resource.setdefault(ref.resource_id, []).append({
+                step_info = {
                     "runId": run.run_id,
                     "missionId": run.mission_id,
                     "stepId": step.step_id,
                     "stepName": step.name,
                     "status": step.status.value,
                     "startedAt": step.started_at.isoformat() if step.started_at else None,
-                })
+                }
+                host_id = binding.get("resourceId")
+                if isinstance(host_id, str):
+                    active_by_resource.setdefault(host_id, []).append(step_info)
+                if isinstance(registration, dict):
+                    ref = AgentRegistrationRef.model_validate(registration)
+                    active_by_resource.setdefault(ref.resource_id, []).append(step_info)
         items = []
         for instance in pool.instances():
             ref = instance.ref
@@ -1716,7 +1752,25 @@ def create_router(
                 "activeSlots": coordinator.active_slots(ref.resource_id),
                 "activeSteps": active_by_resource.get(ref.resource_id, []),
             })
-        return {"observedAt": datetime.now(timezone.utc).isoformat(), "instances": items, "total": len(items)}
+        hosts = []
+        for profile in pool.resource_plane.runtimes():
+            if profile.kind is not RuntimeKind.EXECUTION_BACKEND:
+                continue
+            resource_id = profile.runtime_id
+            health = pool.resource_plane.health_monitor.health(resource_id)
+            hosts.append({
+                "resourceId": resource_id,
+                "displayName": profile.display_name,
+                "environment": profile.placement.value,
+                "remote": profile.endpoint is not None and profile.endpoint.protocol != "local",
+                "enabled": profile.enabled,
+                "draining": profile.draining,
+                "health": {"healthy": health.healthy, "lastHeartbeat": health.last_heartbeat},
+                "capacity": profile.capacity,
+                "activeSlots": coordinator.active_slots(resource_id),
+                "activeSteps": active_by_resource.get(resource_id, []),
+            })
+        return {"observedAt": datetime.now(timezone.utc).isoformat(), "instances": items, "total": len(items), "hosts": hosts}
 
     @router.post("/resources/register", status_code=status.HTTP_201_CREATED)
     async def register_remote_resource(request: RemoteResourceRegistrationRequest):
@@ -1938,7 +1992,7 @@ def create_router(
         }
 
     @router.get("/missions")
-    async def list_missions(
+    def list_missions(
         status_value: str | None = Query(default=None, alias="status"),
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
@@ -2031,9 +2085,10 @@ def create_router(
             "Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     @router.get("/missions/{mission_id}/workspace")
-    async def get_mission_workspace(
+    def get_mission_workspace(
         mission_id: str,
         run_id: str | None = Query(default=None, alias="runId"),
+        include_recovery: bool = Query(default=True, alias="includeRecovery"),
     ):
         # Capture BEFORE composing: concurrent writes require another refresh.
         projection_revision = workspace_revision(mission_id)
@@ -2045,16 +2100,24 @@ def create_router(
                 semantic_view = MissionSemanticResolver.resolve(snapshot)
             except (ValueError, RuntimeError) as exc:
                 raise HTTPException(status_code=503, detail="mission semantic source unavailable") from exc
-        mission_detail = require_mission_access(mission_id)
+        require_mission_owner_access(mission_id)
+        identity_queries = require_identity_queries()
         actor = current_trusted_user()
+        runtime_runs_by_id: dict[str, RuntimeRunRecord | None] = {}
+        selected_semantic_run = None
+
+        def read_runtime_run(selected_id: str) -> RuntimeRunRecord | None:
+            if selected_id not in runtime_runs_by_id:
+                try:
+                    runtime_runs_by_id[selected_id] = getattr(runtime, "get_status_cached", runtime.get_status)(selected_id)
+                except KeyError:
+                    runtime_runs_by_id[selected_id] = None
+            return runtime_runs_by_id[selected_id]
 
         if run_id:
             # 显式请求的 Run 若已被软删除，工作区按 404 收敛，避免残留投影
             # 让已删 Run 通过直达链接复活动。
-            try:
-                requested_runtime_run = getattr(runtime, "get_status_cached", runtime.get_status)(run_id)
-            except KeyError:
-                requested_runtime_run = None
+            requested_runtime_run = read_runtime_run(run_id)
             if requested_runtime_run is not None and requested_runtime_run.record_state is RunRecordState.DELETED:
                 raise HTTPException(status_code=404, detail="run not found")
 
@@ -2102,7 +2165,7 @@ def create_router(
             # Identity already carries lineage for materialized runs. Only
             # deferred runs without an Identity row need their runtime body.
             if not execution_state and identity_repositories.runs.get(item.run_id) is None:
-                source = getattr(runtime, "get_status_cached", runtime.get_status)(item.run_id)
+                source = read_runtime_run(item.run_id)
                 state = getattr(source, "execution_state", {})
                 execution_state = state if isinstance(state, dict) else {}
             completed_at = (
@@ -2132,20 +2195,20 @@ def create_router(
             if runtime_runs.items:
                 run_id = runtime_runs.items[0].run_id
         try:
-            projection = require_identity_queries().mission_workspace(
+            projection = identity_queries.mission_workspace(
                 mission_id,
                 run_id=run_id,
             )
         except EntityNotFoundError as exc:
             if not run_id:
                 raise HTTPException(status_code=404, detail="workspace source not found") from exc
-            try:
-                runtime_run = getattr(runtime, "get_status_cached", runtime.get_status)(run_id)
-            except KeyError:
+            runtime_run = read_runtime_run(run_id)
+            if runtime_run is None:
                 raise HTTPException(status_code=404, detail="workspace source not found") from exc
             _require_access(runtime_run)
             if runtime_run.mission_id != mission_id:
                 raise HTTPException(status_code=404, detail="workspace source not found") from exc
+            mission_detail = require_mission_access(mission_id)
 
             status_map = {
                 "completed": RunStatus.SUCCEEDED,
@@ -2284,10 +2347,7 @@ def create_router(
         # the workspace can expose a stage result without promoting it to a
         # formal Artifact or embedding the potentially large output body.
         if run_id:
-            try:
-                runtime_run = getattr(runtime, "get_status_cached", runtime.get_status)(run_id)
-            except KeyError:
-                runtime_run = None
+            runtime_run = read_runtime_run(run_id)
             if runtime_run is not None and runtime_run.mission_id == mission_id:
                 # The Execution Runtime is the authoritative source for Run
                 # lifecycle state. Identity projection can lag after a
@@ -2381,6 +2441,7 @@ def create_router(
                     except ValueError as exc:
                         raise HTTPException(status_code=503, detail="run semantic basis unavailable") from exc
                     basis_status = "BOUND" if basis is not None else "UNBOUND"
+                    selected_semantic_run = selected
             try:
                 projection = with_mission_semantics(projection, semantic_view, basis=basis,
                     basis_status=basis_status, legacy_input=semantic_record.input, legacy_title=semantic_record.title)
@@ -2393,10 +2454,7 @@ def create_router(
         )
         selected = payload.get("activeRun")
         if selected and payload.get("activeGraph"):
-            try:
-                source = getattr(runtime, "get_status_cached", runtime.get_status)(selected["runId"])
-            except KeyError:
-                source = None
+            source = read_runtime_run(selected["runId"])
             if source is not None and source.mission_id == mission_id:
                 _require_access(source)
                 payload["activeGraph"] = with_workspace_review(payload["activeGraph"], source)
@@ -2408,12 +2466,14 @@ def create_router(
             selected_id = summary['runId']
             if selected_id not in capabilities:
                 try:
-                    source = runtime.workflow_store.get_run(selected_id)
+                    source = (selected_semantic_run
+                        if selected_semantic_run is not None and selected_semantic_run.run_id == selected_id
+                        else runtime.workflow_store.get_run(selected_id))
                 except (KeyError, AttributeError):
                     capabilities[selected_id] = None
                 else:
                     _require_access(source)
-                    capabilities[selected_id] = (project_run_capabilities(runtime, source)
+                    capabilities[selected_id] = (project_run_capabilities(runtime, source, include_recovery=include_recovery)
                         if source.mission_id == mission_id else None)
             summary['actionCapabilities'] = capabilities[selected_id]
         payload['projectionRevision'] = projection_revision
@@ -3079,7 +3139,7 @@ def create_router(
         }
 
     @router.get("/runs/{run_id}")
-    async def get_run(run_id: str):
+    def get_run(run_id: str):
         # A capability snapshot and its displayed Run must share one authority
         # revision; do not combine a cached status with fresh permission offers.
         try:
@@ -3093,6 +3153,7 @@ def create_router(
         result = project(run)
         if run.execution_state.get("planningCommitRequired"):
             result["formalControl"] = project_initial_control(runtime, run)
+        result["initialPlan"] = initial_plan_summary(runtime, run)
         result['actionCapabilities'] = project_run_capabilities(runtime, run, formal_control=result.get('formalControl'))
         return result
 
@@ -3250,6 +3311,42 @@ def create_router(
         items = calls[start:start + page_size]
         next_cursor = str(start + page_size) if start + page_size < len(calls) else None
         return {"runId": run_id, "items": items, "nextCursor": next_cursor, "total": len(calls)}
+
+    @router.get("/runs/{run_id}/plan")
+    async def get_plan(run_id: str, plan_version: int | None = Query(default=None, alias="planVersion", ge=1)):
+        run = load_content_run(run_id)
+        if identity_repositories is not None and identity_repositories.runs.get(run_id) is not None:
+            require_run_access(run_id)
+        try:
+            initial = initial_plan_summary(runtime, run)
+            raw = run.execution_state.get("taskPlan")
+            current = TaskPlan.model_validate(raw) if raw is not None else None
+            if current is not None:
+                stored_version = run.execution_state.get("taskPlanVersion")
+                if (current.mission_id != run.mission_id
+                        or stored_version is not None and current.plan_version != stored_version):
+                    raise ValueError("TaskPlan does not match the Run")
+                if plan_version is None or plan_version == current.plan_version:
+                    if initial is not None and initial["planVersion"] == current.plan_version:
+                        return {"runId": run_id, "plan": initial}
+                    return {"runId": run_id, "plan": task_plan_summary(run, current)}
+            else:
+                if plan_version is None or initial is not None and plan_version == initial["planVersion"]:
+                    return {"runId": run_id, "plan": initial}
+
+            history = graph_history(runtime, run, identity_repositories).projection
+            if not any(item["taskPlanVersion"] == plan_version for item in history["items"]):
+                raise HTTPException(status_code=404, detail="plan version not found for Run")
+            if initial is not None and initial["planVersion"] == plan_version:
+                return {"runId": run_id, "plan": initial}
+            snapshot = identity_repositories.task_plans.get(run.mission_id, plan_version) if identity_repositories is not None else None
+            if snapshot is None:
+                raise HTTPException(status_code=404, detail="plan snapshot not available")
+            if snapshot.mission_id != run.mission_id or snapshot.plan_version != plan_version:
+                raise ValueError("TaskPlan does not match the requested snapshot")
+            return {"runId": run_id, "plan": task_plan_summary(run, snapshot)}
+        except (ValueError, KeyError, SQLiteError) as exc:
+            raise HTTPException(status_code=409, detail="planning snapshot is temporarily inconsistent") from exc
 
     @router.get("/runs/{run_id}/graph/versions")
     async def get_graph_versions(run_id: str):

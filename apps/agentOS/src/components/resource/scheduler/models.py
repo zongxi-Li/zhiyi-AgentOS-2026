@@ -69,6 +69,7 @@ class ReadyNodeSchedulingResult(BaseModel):
     agent_lease: ResourceLease | None = Field(default=None, alias="agentLease")
     candidates: list[CandidateDecision] = Field(default_factory=list)
     reason: str | None = None
+    capacity_blockers: tuple[str, ...] = Field(default=(), alias="capacityBlockers")
 
 
 class RequirementReadiness(BaseModel):

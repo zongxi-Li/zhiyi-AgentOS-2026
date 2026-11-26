@@ -296,7 +296,7 @@ describe('PR-UI-02B actual Shell / Chat / Workbench continuity', () => {
   })
   beforeEach(() => {
     localStorage.clear(); localStorage.setItem('userId', 'local-owner'); sessionStorage.clear(); observations.instances = []; resetOpenFile(); workspaceDocuments.reset()
-    localStorage.setItem('layout.workspace_mode', 'chat'); localStorage.setItem('layout.chat_nav_open', '1')
+    localStorage.setItem('layout.workspace_mode', 'chat'); localStorage.setItem('layout.chat_nav_open.v2', '1')
     localStorage.setItem('chat.workflow_draft_conversation_id', 'draft:original')
     activeStreams = 0; maximumStreams = 0; newestRun = 'run'; chatTransport = undefined; chatEventTransport = undefined
     vi.stubGlobal('ResizeObserver', class { observe() {}; disconnect() {} })

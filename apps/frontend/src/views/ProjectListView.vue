@@ -1,11 +1,10 @@
 <template>
   <WorkbenchLayout :show-left="false" :show-right="false" storage-key="zhiyi.projects.layout.v1">
     <template #main>
-      <main class="project-list" aria-label="Projects">
+      <main ref="listElement" class="project-list" aria-label="Projects">
         <header class="project-list__header">
           <div>
-            <span class="project-list__eyebrow">PROJECTS</span>
-            <h1>工程项目</h1>
+            <h1>工程</h1>
             <!-- <p>每个项目拥有独立的 Mission、Runs 与只读交付物。</p> -->
           </div>
           <button class="project-list__create" type="button" @click="createMission">
@@ -20,7 +19,7 @@
             <input v-model="searchText" type="search" placeholder="搜索项目名称或 Mission ID" />
           </label>
           <div class="project-list__toolbar-actions">
-            <span class="project-list__count"><strong>{{ filteredMissions.length }}</strong> 个项目</span>
+            <span v-if="!errorMessage && (!loading || missions.length)" class="project-list__count"><strong>{{ filteredMissions.length }}</strong> 个项目</span>
             <button
               class="project-list__export"
               type="button"
@@ -67,21 +66,25 @@
           <span>{{ errorMessage }}</span>
           <button type="button" @click="loadMissions">重新加载</button>
         </section>
-        <section v-else-if="!filteredMissions.length" class="project-list__state" role="status">
-          <strong>{{ searchText ? '没有匹配的项目' : '还没有工程项目' }}</strong>
-          <span>{{ searchText ? '换一个名称或 Mission ID 试试。' : '创建第一个 Mission，开始一次运行。' }}</span>
-          <button v-if="!searchText" type="button" @click="createMission">新建工程</button>
+        <section v-else-if="!filteredMissions.length && searchText" class="project-list__state" role="status">
+          <strong>没有匹配的项目</strong>
+          <span>换一个名称或 Mission ID 试试。</span>
+        </section>
+        <section v-else-if="!filteredMissions.length" class="project-list__state project-list__state--first" role="status">
+          <BrandEmpty text="创建第一个工程项目" :size="140" />
         </section>
         <section v-else class="project-list__rows" :class="{ 'is-grid': viewMode === 'grid' }" aria-label="Mission Projects">
           <div
             v-for="mission in filteredMissions"
             :key="mission.missionId"
             class="project-row"
-            :class="{ 'is-grid': viewMode === 'grid' }"
+            :class="{ 'is-grid': viewMode === 'grid', 'is-last-opened': mission.missionId === lastOpenedId }"
+            :data-mission-id="mission.missionId"
+            :aria-busy="openingMissionId === mission.missionId || undefined"
             role="button"
             tabindex="0"
             :aria-label="`打开项目：${mission.title || '未命名工程'}`"
-            @click="openMission(mission)"
+            @click="openMission(mission, $event.detail === 0)"
             @keydown.enter="handleProjectRowKeydown($event, mission)"
             @keydown.space="handleProjectRowKeydown($event, mission)"
             @contextmenu.prevent="openActionMenu($event, mission)"
@@ -89,7 +92,7 @@
             <span class="project-row__icon" aria-hidden="true"><el-icon><FolderOpened /></el-icon></span>
             <span class="project-row__copy">
               <strong :title="missionDisplayTitle(mission)">{{ missionDisplayTitle(mission) }}</strong>
-              <span>{{ mission.missionId }}</span>
+              <span>{{ openingMissionId === mission.missionId ? '正在打开…' : mission.missionId }}</span>
             </span>
             <span class="project-row__meta">
               <span class="project-row__status" :class="`is-${statusTone(mission)}`">
@@ -188,11 +191,25 @@
   </Teleport>
 </template>
 
+<script lang="ts">
+import type { Router } from 'vue-router'
+
+interface ProjectListPosition {
+  search: string
+  scrollTop: number
+  missionId: string
+  restoreFocus: boolean
+}
+
+const projectListPositions = new WeakMap<Router, ProjectListPosition>()
+</script>
+
 <script setup lang="ts">
 import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { CopyDocument, Delete as DeleteIcon, Document, Download, FolderAdd, FolderOpened, Grid, List, Memo, MoreFilled, Plus, Search, Tickets, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import BrandEmpty from '@/components/common/BrandEmpty.vue'
 import BrandLoader from '@/components/common/BrandLoader.vue'
 import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
 import { agentosApi, type MissionListItem, type WorkflowRunSummary } from '@/services/api/agentos'
@@ -201,8 +218,23 @@ import { plainMissionTitle } from '@/utils/missionTitle'
 
 const router = useRouter()
 const missions = ref<MissionListItem[]>([])
-const searchText = ref('')
-const loading = ref(false)
+const savedPosition = projectListPositions.get(router)
+const listElement = ref<HTMLElement | null>(null)
+const searchText = ref(savedPosition?.search ?? '')
+const lastOpenedId = ref(savedPosition?.missionId ?? '')
+const openingMissionId = ref('')
+let restorePosition = savedPosition
+let restoreFocus = false
+
+onBeforeRouteLeave(() => {
+  projectListPositions.set(router, {
+    search: searchText.value,
+    scrollTop: restorePosition?.scrollTop ?? listElement.value?.scrollTop ?? 0,
+    missionId: lastOpenedId.value,
+    restoreFocus
+  })
+})
+const loading = ref(true)
 const errorMessage = ref('')
 let controller: AbortController | null = null
 const actionMenu = reactive<{ mission: MissionListItem | null; x: number; y: number }>({ mission: null, x: 0, y: 0 })
@@ -277,23 +309,47 @@ const loadMissions = async () => {
     if (requestController.signal.aborted || error?.name === 'CanceledError' || error?.name === 'AbortError') return
     errorMessage.value = error?.response?.data?.detail || error?.message || '请稍后重试。'
   } finally {
-    if (controller === requestController && !requestController.signal.aborted) loading.value = false
+    if (controller === requestController && !requestController.signal.aborted) {
+      loading.value = false
+      if (restorePosition && !errorMessage.value) {
+        await nextTick()
+        if (requestController.signal.aborted || !listElement.value) return
+        const { scrollTop, missionId, restoreFocus: shouldFocus } = restorePosition
+        listElement.value.scrollTop = scrollTop
+        if (shouldFocus) {
+          const row = [...listElement.value.querySelectorAll<HTMLElement>('[data-mission-id]')]
+            .find(element => element.dataset.missionId === missionId)
+          row?.focus({ preventScroll: true })
+        }
+        restorePosition = undefined
+      }
+    }
   }
 }
 
-const openMission = (mission: MissionListItem) => {
+const openMission = async (mission: MissionListItem, keyboard = false) => {
+  if (openingMissionId.value) return
   closeActionMenu()
-  void router.push({
-    name: 'MissionWorkspace',
-    params: { missionId: mission.missionId },
-    query: mission.latestRunId ? { runId: mission.latestRunId } : undefined
-  })
+  lastOpenedId.value = mission.missionId
+  restoreFocus = keyboard
+  openingMissionId.value = mission.missionId
+  try {
+    await router.push({
+      name: 'MissionWorkspace',
+      params: { missionId: mission.missionId },
+      query: mission.latestRunId ? { runId: mission.latestRunId } : undefined
+    })
+  } catch {
+    ElMessage.error('工作台暂时无法打开，请重试。')
+  } finally {
+    openingMissionId.value = ''
+  }
 }
 
 const handleProjectRowKeydown = (event: KeyboardEvent, mission: MissionListItem) => {
   if (event.target !== event.currentTarget) return
   event.preventDefault()
-  openMission(mission)
+  void openMission(mission, true)
 }
 
 const createMission = () => {
@@ -589,12 +645,11 @@ onBeforeUnmount(() => {
 <style scoped>
 .project-list { display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 34px clamp(24px, 5vw, 76px) 56px; color: var(--text-primary); background: var(--bg-app); }
 .project-list__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; max-width: 1040px; width: 100%; margin: 0 auto; padding-bottom: 28px; }
-.project-list__eyebrow { color: var(--primary-color); font: 10px var(--font-mono, monospace); letter-spacing: .14em; }
 .project-list h1 { margin: 8px 0 5px; font-size: 25px; line-height: 1.2; }
 .project-list__header p { margin: 0; color: var(--text-secondary); font-size: 12px; }
-/* 按钮配色取自首页花环：白花 #E2E1DA / 松果褐 #482E19 */
-.project-list__create, .project-list__state button { display: inline-flex; align-items: center; gap: 7px; border: 1px solid transparent; border-radius: 7px; padding: 10px 15px; color: #482E19; background: #E2E1DA; cursor: pointer; font-size: 12px; }
-.project-list__create:hover, .project-list__state button:hover, .project-list__create:focus-visible, .project-list__state button:focus-visible { background: #EFEEE6; }
+/* 主操作按钮：主题深蓝→亮蓝渐变，贴合暗色底（原花环奶油配色只适合浅色主题） */
+.project-list__create, .project-list__state button { display: inline-flex; align-items: center; gap: 7px; border: 1px solid color-mix(in srgb, var(--accent-color) 34%, transparent); border-radius: 7px; padding: 10px 15px; color: #F2F8FF; background: linear-gradient(135deg, color-mix(in srgb, var(--accent-color) 52%, var(--primary-color)) 0%, var(--primary-color) 100%); box-shadow: 0 2px 12px color-mix(in srgb, var(--primary-color) 32%, transparent); cursor: pointer; font-size: 12px; font-weight: 600; }
+.project-list__create:hover, .project-list__state button:hover, .project-list__create:focus-visible, .project-list__state button:focus-visible { border-color: color-mix(in srgb, var(--accent-color) 62%, transparent); background: linear-gradient(135deg, color-mix(in srgb, var(--accent-color) 70%, var(--primary-color)) 0%, color-mix(in srgb, var(--accent-color) 24%, var(--primary-color)) 100%); box-shadow: 0 3px 16px color-mix(in srgb, var(--accent-color) 30%, transparent); }
 .project-list__toolbar, .project-list__rows, .project-list__state { max-width: 1040px; width: 100%; margin: 0 auto; }
 .project-list__toolbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0; }
 .project-list__search { display: flex; align-items: center; gap: 10px; box-sizing: border-box; width: min(460px, 100%); min-height: 38px; padding: 0 12px; border: 1px solid var(--border-light); border-radius: 9px; color: var(--text-muted); background: color-mix(in srgb, var(--surface-subtle) 82%, transparent); transition: border-color 160ms var(--ease-out), background-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out); }
@@ -639,17 +694,26 @@ onBeforeUnmount(() => {
 .project-row.is-grid + .project-row.is-grid { margin-top: 0; }
 .project-row.is-grid:hover, .project-row.is-grid:focus-visible { border-color: var(--primary-line); box-shadow: var(--shadow-md); }
 .project-row.is-grid .project-row__copy strong { font-size: 13px; line-height: 1.5; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; text-wrap: pretty; }
-.project-row.is-grid .project-row__meta { grid-column: 1 / -1; gap: 12px; justify-content: space-between; width: 100%; padding-top: 10px; border-top: 1px solid var(--border-light); font-size: 10px; }
+.project-row.is-grid .project-row__meta { grid-column: 1 / -1; gap: 12px; justify-content: space-between; width: 100%; padding-top: 10px; font-size: 10px; }
 .project-row.is-grid .project-row__meta time { margin-left: auto; }
 .project-row.is-grid .project-row__actions { grid-column: 3; grid-row: 1; }
 .project-row.is-grid .project-row__arrow { grid-column: 4; grid-row: 1; }
 .project-list__state { display: grid; justify-items: center; gap: 8px; padding: 100px 20px; color: var(--text-secondary); text-align: center; }
+/* 首启空态：固定上边距居中偏上（比原 100px 低、比垂直居中高），花环还原原色不做灰化压暗 */
+.project-list__state--first { padding: 180px 20px 40px; }
+.project-list__state--first :deep(.brand-empty) { gap: 16px; padding: 0; }
+.project-list__state--first :deep(.brand-empty__mark) { opacity: 1; filter: none; }
+.project-list__state--first :deep(.brand-empty__text) { margin: 0; color: var(--text-primary); font-family: var(--font-serif); font-size: 17px; font-weight: 600; letter-spacing: .02em; }
 .project-list__state strong { color: var(--text-primary); font-size: 15px; }
 .project-list__state span { font-size: 12px; }
 .project-list__state button { margin-top: 8px; }
 .project-list__state--error strong { color: var(--danger); }
 @media (max-width: 960px) { .project-list__rows.is-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 720px) { .project-list { padding: 24px 18px 40px; } .project-list__header { display: block; } .project-list__create { margin-top: 18px; } .project-list__toolbar { align-items: stretch; flex-direction: column; gap: 12px; padding: 12px 0; } .project-list__search { width: 100%; } .project-list__toolbar-actions { justify-content: flex-end; gap: 8px; flex-wrap: wrap; } .project-view-toggle button { min-width: 30px; padding: 0 7px; } .project-view-toggle button span { display: none; } .project-row { grid-template-columns: 40px minmax(0, 1fr) 32px 20px; gap: 12px; min-height: 76px; padding: 12px; } .project-row__meta { grid-column: 2 / 3; gap: 12px; margin-top: -8px; font-size: 10px; } .project-row__actions { grid-column: 3; grid-row: 1 / 3; } .project-row__arrow { grid-column: 4; grid-row: 1 / 3; } .project-list__rows.is-grid { grid-template-columns: 1fr; } .project-row.is-grid { grid-template-columns: 40px minmax(0, 1fr) 32px 20px; } .project-row.is-grid .project-row__meta { grid-column: 1 / -1; margin-top: 0; } }
+.project-row.is-last-opened {
+  box-shadow: inset 2px 0 0 var(--primary-color);
+  background: color-mix(in srgb, var(--primary-color) 6%, var(--bg-card));
+}
 </style>
 
 <style>
@@ -660,7 +724,7 @@ onBeforeUnmount(() => {
 .project-action-menu button:disabled { color: var(--text-disabled); cursor: not-allowed; }
 .project-action-menu__separator { height: 1px; margin: 4px 6px; background: var(--border-light); }
 .project-export-menu { width: 216px; }
-.project-export-menu__context { padding: 4px 9px 5px; border-bottom: 1px solid var(--border-light); margin-bottom: 4px; color: var(--text-muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-export-menu__context { padding: 4px 9px 5px; margin-bottom: 4px; color: var(--text-muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @keyframes project-action-menu-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @media (prefers-reduced-motion: reduce) { .project-action-menu { animation: none; } }
 </style>

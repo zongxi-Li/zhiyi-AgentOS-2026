@@ -109,7 +109,7 @@ describe('Workbench / OScode shell', () => {
     chatStoreState.contextId = null
     clearMessages.mockClear()
     localStorage.setItem('layout.workspace_mode', 'agent')
-    localStorage.setItem('layout.chat_nav_open', '1')
+    localStorage.setItem('layout.chat_nav_open.v2', '1')
     Object.defineProperty(window, 'matchMedia', {
       configurable: true,
       value: vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })
@@ -224,7 +224,7 @@ describe('Workbench / OScode shell', () => {
 
   it.each(['chat', 'agent'] as const)('Shell starts a fresh %s conversation without clearing chat state itself', async mode => {
     localStorage.setItem('layout.workspace_mode', mode)
-    localStorage.setItem('layout.chat_nav_open', '1')
+    localStorage.setItem('layout.chat_nav_open.v2', '1')
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -274,7 +274,7 @@ describe('Workbench / OScode shell', () => {
 
   it('switches Workbench and OScode without clearing the conversation, while activity buttons only switch the left view', async () => {
     localStorage.setItem('layout.workspace_mode', 'agent')
-    localStorage.setItem('layout.chat_nav_open', '1')
+    localStorage.setItem('layout.chat_nav_open.v2', '1')
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -331,7 +331,7 @@ describe('Workbench / OScode shell', () => {
   it.each(['chat', 'agent'] as const)('runs the %s Shell new-chat intent through the actual ChatView and allocates an isolated draft', async (mode) => {
     const { default: ChatView } = await import('@/views/ChatView.vue')
     localStorage.setItem('layout.workspace_mode', mode)
-    localStorage.setItem('layout.chat_nav_open', '1')
+    localStorage.setItem('layout.chat_nav_open.v2', '1')
     localStorage.setItem('chat.workflow_draft_conversation_id', 'draft:old')
     chatStoreState.contextId = 'ctx-old'
     chatStoreState.messages = [{ id: 'old-message', role: 'assistant', content: 'old' }]

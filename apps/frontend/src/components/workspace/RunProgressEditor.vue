@@ -85,13 +85,26 @@
                 @keydown="handleDetailResizeKeydown"
               ></div>
               <div v-if="column.graph" class="run-progress__graph-preview">
+                <div class="run-progress__graph-modes" role="group" aria-label="图视图">
+                  <button type="button" :aria-pressed="graphMode === 'plan'" @click="graphMode = 'plan'">规划图 ACG</button>
+                  <button type="button" :aria-pressed="graphMode === 'runtime'" @click="graphMode = 'runtime'">执行图 RGraph</button>
+                </div>
+                <GraphVersionToolbar :mode="graphMode" @locate-node="locateRuntimeFromPlan" />
+                <PlanningGraphPanel v-if="graphMode === 'plan'"
+                  :initial-plan-version="graphObservedRun?.initialPlan?.planVersion"
+                  :run-id="resolvedRunId" :graph="selectedRuntimeGraph" :graph-nodes="graphNodes"
+                  :task-key="selectedSemanticTaskKey" @locate-runtime="locateRuntimeFromPlan" />
                 <AcgTopologyGraph
-                  :blueprint="projection.activeGraph || null"
+                  v-else
+                  ref="runtimeTopology"
+                  :blueprint="displayRuntimeGraph"
                   :focus-node-id="graphFocusNodeId"
-                  :runtime-phases="graphRuntimePhases"
+                  :runtime-phases="graphObservationMatches ? graphRuntimePhases : {}"
                   :step-states="graphStepStates"
                   :completed-step-ids="graphCompletedStepIds"
-                  :run-id="resolvedRunId"
+                  :run-id="historicalGraph ? null : resolvedRunId"
+                  :historical="historicalGraph"
+                  :difference="graphVersions?.difference.value"
                   workbench
                   @node-selected="selectGraphNode"
                   @node-double-clicked="openGraphNode"
@@ -185,13 +198,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, ref, watch } from 'vue'
+import { computed, inject, nextTick, onActivated, onBeforeUnmount, onDeactivated, ref, watch } from 'vue'
 import { runDisplayObjective, missionDocumentContent } from './missionSemanticDisplay'
 import type { MissionWorkspaceProjection, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
 import { stepStatesFromRun } from '@/services/api/agentos/api/acg'
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
 import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
 import AcgTopologyGraph from '@/components/agentos/AcgTopologyGraph.vue'
+import PlanningGraphPanel from './PlanningGraphPanel.vue'
+import GraphVersionToolbar from './GraphVersionToolbar.vue'
+import { graphVersionsKey } from './graphVersions'
 import IntentProfileArtifact from './IntentProfileArtifact.vue'
 import PlanningStageArtifact from './PlanningStageArtifact.vue'
 import RunBreadcrumb from './RunBreadcrumb.vue'
@@ -213,6 +229,18 @@ const props = defineProps<{
   runtimeObservation: RuntimeObservation | null
   runtimeStore?: RuntimeEventStore | null
 }>()
+const graphVersions = inject(graphVersionsKey, null)
+const selectedRuntimeGraph = computed(() => graphVersions ? graphVersions.displayGraph.value : props.projection.activeGraph || null)
+const historicalGraph = computed(() => graphVersions?.historical.value || false)
+const displayRuntimeGraph = computed(() => {
+  const graph = selectedRuntimeGraph.value
+  const before = graphVersions?.previousGraph.value
+  const diff = graphVersions?.difference.value
+  if (!graph || !before || !diff) return graph
+  return { ...graph,
+    nodes: [...graph.nodes, ...before.nodes.filter(node => diff.removedNodeIds.includes(node.nodeId))],
+    edges: [...graph.edges, ...before.edges.filter(edge => diff.removedEdgeIds.includes(edge.edgeId))] }
+})
 
 const emit = defineEmits<{
   selectSemanticTask: [semanticTaskKey: string | null]
@@ -505,18 +533,33 @@ const workObjective = (symbol: RunDocumentSymbol) => props.projection.entries.fi
 const graphObservedRun = computed(() => (
   props.runtimeObservation?.runId === resolvedRunId.value ? props.runtimeObservation.run : null
 ))
-const graphStepStates = computed(() => graphObservedRun.value
+const graphObservationMatches = computed(() => !historicalGraph.value && (!graphObservedRun.value?.graphVersion
+  || graphObservedRun.value.graphVersion === selectedRuntimeGraph.value?.graphVersion))
+const graphStepStates = computed(() => graphObservedRun.value && graphObservationMatches.value
   ? stepStatesFromRun(graphObservedRun.value, props.runtimeObservation?.executionTree, props.runtimeObservation?.lifecycles)
   : [])
-const graphCompletedStepIds = computed(() => graphObservedRun.value?.completedStepIds || [])
+const graphCompletedStepIds = computed(() => graphObservationMatches.value ? graphObservedRun.value?.completedStepIds || [] : [])
+const graphMode = ref<'plan' | 'runtime'>('plan')
+const runtimeTopology = ref<InstanceType<typeof AcgTopologyGraph>[] | null>(null)
+const linkedGraphNode = ref<string | null>(null)
+watch(resolvedRunId, () => { graphMode.value = 'plan'; linkedGraphNode.value = null })
+watch(() => graphVersions?.selectedKey.value, () => { linkedGraphNode.value = null })
 const graphFocusNodeId = computed(() => (
-  props.graphNodes.find(node => node.semanticTaskKey === props.selectedSemanticTaskKey)?.acgNodeId || null
+  linkedGraphNode.value || props.graphNodes.find(node => node.semanticTaskKey === props.selectedSemanticTaskKey)?.acgNodeId || null
 ))
+const locateRuntimeFromPlan = async (nodeId: string) => {
+  linkedGraphNode.value = nodeId
+  graphMode.value = 'runtime'
+  await nextTick()
+  void runtimeTopology.value?.[0]?.focusNode(nodeId)
+}
 const selectGraphNode = (nodeId: string) => {
+  if (historicalGraph.value) return
   const node = props.graphNodes.find(item => item.acgNodeId === nodeId)
   if (node?.semanticTaskKey) emit('selectSemanticTask', node.semanticTaskKey)
 }
 const openGraphNode = (nodeId: string) => {
+  if (historicalGraph.value) return
   const node = props.graphNodes.find(item => item.acgNodeId === nodeId)
   emit('openSemanticTask', node?.semanticTaskKey || null)
 }
@@ -796,7 +839,10 @@ watch(documentModel, async () => {
 .run-progress__column-body.is-terminal-body :deep(.run-symbol:first-of-type) { border-top: 1px solid var(--wb-border-soft); }
 .run-progress__column-body.is-terminal-body :deep(.run-symbol + .run-symbol) { margin-top: 0; }
 .run-progress__column-body.is-terminal-body :deep(.editor-object-row) { min-height: 42px; }
-.run-progress__graph-preview { display: flex; flex: 1 1 auto; height: auto; min-height: 540px; overflow: hidden; }
+.run-progress__graph-preview { display: flex; flex-direction: column; flex: 1 1 auto; height: auto; min-height: 540px; overflow: hidden; }
+.run-progress__graph-modes { display: flex; gap: 6px; padding: 6px 10px; flex-shrink: 0; }
+.run-progress__graph-modes button { padding: 4px 10px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--wb-text-secondary); font: inherit; cursor: pointer; }
+.run-progress__graph-modes button[aria-pressed="true"] { border-color: var(--wb-border-soft); background: var(--wb-surface-inset); color: var(--wb-accent); }
 .run-progress__body.is-graph-mode .run-progress__graph-preview { min-height: 0; height: auto; }
 .run-progress__graph-preview :deep(.acg-topology) { height: 100%; min-height: 0; border: 0; border-radius: 0; box-shadow: none; }
 .run-progress__detail { padding: 14px 16px 24px; }

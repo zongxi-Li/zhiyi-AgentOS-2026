@@ -9,14 +9,14 @@ import type { GraphProjection, GraphVersionEntry, GraphVersionHistory, MissionWo
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
 import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
 
-const graph = (version: number, graphId = 'graph'): GraphProjection => ({ graphId, graphVersion: version,
-  nodes: [{ nodeId: 'read', nodeType: 'step', name: '读取证据' },
-    version === 1 ? { nodeId: 'removed', nodeType: 'step', name: '旧分析' }
-      : { nodeId: 'review', nodeType: 'step', name: '复核证据' }],
+const graph = (version: number, graphId = 'graph'): GraphProjection => ({ graphId, graphVersion: version, taskPlanVersion: version,
+  nodes: [{ nodeId: 'read', nodeType: 'step', name: '读取证据', display: { semanticTaskKey: 'task:read' } },
+    version === 1 ? { nodeId: 'removed', nodeType: 'step', name: '旧分析', display: { semanticTaskKey: 'task:removed' } }
+      : { nodeId: 'review', nodeType: 'step', name: '复核证据', display: { semanticTaskKey: 'task:review' } }],
   edges: [{ edgeId: version === 1 ? 'old-edge' : 'new-edge', sourceId: 'read',
     targetId: version === 1 ? 'removed' : 'review', edgeType: 'dependency' }] })
 const entry = (version: number, current = false, graphId = 'graph'): GraphVersionEntry => ({
-  blueprintId: `${graphId}-bp${version}`, graphId, graphVersion: version, current,
+  blueprintId: `${graphId}-bp${version}`, graphId, graphVersion: version, taskPlanVersion: version, current,
   status: current ? 'active' : 'historical', createdAt: '2026-11-17T03:10:00Z',
   predecessorBlueprintId: version === 1 ? null : `${graphId}-bp${version - 1}`,
   reason: version === 1 ? '初始审查计划' : '补充读取后再次复核', patch: null,
@@ -84,12 +84,54 @@ const setup = async () => {
   }
 }
 
-beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); vi.spyOn(agentosApi, 'listWorkspaceFiles').mockRejectedValue(new Error('no workspace')) })
+beforeEach(() => {
+  vi.clearAllMocks()
+  localStorage.clear()
+  vi.spyOn(agentosApi, 'listWorkspaceFiles').mockRejectedValue(new Error('no workspace'))
+  vi.spyOn(agentosApi, 'getPlanSnapshot').mockImplementation(async (runId, version) => ({
+    runId, plan: {
+      planVersion: version || 2, commitId: version === 1 ? 'initial' : null, commitmentRevision: version === 1 ? 1 : null,
+      objective: '审查仓库', constraints: [], expectedArtifacts: ['report'],
+      tasks: graph(version || 2).nodes.map(node => ({ key: node.display!.semanticTaskKey!, title: node.name!,
+        objective: '核对来源', rationale: '', acceptanceCriteria: [], sourceRefs: [] })),
+      relations: graph(version || 2).edges.map(edge => ({
+        sourceKey: `task:${edge.sourceId}`, targetKey: `task:${edge.targetId}`, relationType: 'depends_on' as const,
+      })),
+    },
+  }))
+})
 afterEach(() => { cleanups.splice(0).forEach(cleanup => cleanup()); vi.restoreAllMocks(); localStorage.clear() })
+const showRuntime = async (state: Awaited<ReturnType<typeof setup>>) => {
+  await state.editor().findAll('.graph-editor__modes button')[1].trigger('click')
+  await settle()
+}
 
 describe('graph version browsing across Explorer and editor', () => {
+  it('defaults to the current ACG and keeps a historical ACG paired with its RGraph when locating a node', async () => {
+    const state = await setup()
+    expect(state.editor().get('.graph-editor__modes button[aria-pressed="true"]').text()).toBe('规划图 ACG')
+    expect(state.wrapper.find('select').text()).toContain('ACG v2 · RGraph v2')
+    expect(state.topology().props('blueprint').nodes.map((node: { nodeId: string }) => node.nodeId))
+      .toEqual(['task:read', 'task:review'])
+    expect(state.topology().props('stepStates')).toBeUndefined()
+    await state.wrapper.find('select').setValue('graph-bp1')
+    await settle()
+    expect(agentosApi.getPlanSnapshot).toHaveBeenCalledWith('run', 1, expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(state.topology().props('blueprint').nodes.map((node: { nodeId: string }) => node.nodeId))
+      .toEqual(['task:read', 'task:removed'])
+    expect(state.wrapper.find('.version-history-notice').text()).toContain('ACG v1 · RGraph v1')
+    await state.wrapper.find('[data-node="task:removed"]').trigger('click')
+    await state.wrapper.find('.planning-graph__links button').trigger('click')
+    await settle()
+    expect(state.versions.selectedKey.value).toBe('graph-bp1')
+    expect(state.topology().props('blueprint').graphVersion).toBe(1)
+    expect(state.topology().props('historical')).toBe(true)
+    expect(topologyCalls.focusNode).toHaveBeenCalledWith('removed')
+  })
+
   it('keeps historical snapshots separate from live runtime state and current semantic task navigation', async () => {
     const state = await setup()
+    await showRuntime(state)
     expect(state.topology().props('runtimePhases')).toEqual({ read: 'completed', review: 'running' })
     expect(state.topology().props('completedStepIds')).toEqual(['read'])
     await state.wrapper.find('select[aria-label="选择图版本"]').setValue('graph-bp1')
@@ -134,6 +176,7 @@ describe('graph version browsing across Explorer and editor', () => {
 
   it('shows removed nodes as comparison evidence without navigating to a current semantic task', async () => {
     const state = await setup()
+    await showRuntime(state)
     await state.wrapper.find('.version-toolbar__compare').trigger('click')
     await settle()
     expect(state.topology().props('difference').removedNodeIds).toEqual(['removed'])
@@ -155,6 +198,7 @@ describe('graph version browsing across Explorer and editor', () => {
     const state = await setup()
     state.runId.value = 'new-run'
     await settle()
+    await showRuntime(state)
     expect(state.topology().props('stepStates')).toEqual([])
     expect(state.topology().props('completedStepIds')).toEqual([])
     expect(state.topology().props('runtimePhases')).toEqual({})
@@ -162,6 +206,7 @@ describe('graph version browsing across Explorer and editor', () => {
 
   it('ignores a delayed historical snapshot after the user returns to the current graph', async () => {
     const state = await setup()
+    await showRuntime(state)
     let resolveOld!: (snapshot: GraphProjection) => void
     state.api.getGraphSnapshot.mockReturnValueOnce(new Promise(resolve => { resolveOld = resolve }))
     await state.wrapper.find('select').setValue('graph-bp1')
@@ -184,6 +229,7 @@ describe('graph version browsing across Explorer and editor', () => {
     state.api.getGraphSnapshot.mockReturnValue(new Promise(() => {}))
     state.runId.value = 'new-run'
     await settle()
+    await showRuntime(state)
     expect(state.versions.displayGraph.value).toBeNull()
     expect(state.topology().exists()).toBe(false)
     expect(state.editor().get('.graph-editor__empty').text()).toContain('正在加载图快照')

@@ -2,7 +2,6 @@
   <div class="history-view">
     <header class="history-header">
       <div>
-        <span class="history-eyebrow">HISTORY</span>
         <h1>历史记录</h1>
       </div>
     </header>
@@ -175,12 +174,6 @@ const clearAll = async () => {
   padding-bottom: 28px;
 }
 
-.history-eyebrow {
-  color: var(--primary-color);
-  font: 10px var(--font-mono, monospace);
-  letter-spacing: .14em;
-}
-
 .history-header h1 {
   margin: 8px 0 5px;
   font-size: 25px;
@@ -292,7 +285,6 @@ const clearAll = async () => {
   width: 100%;
   margin: 0 auto;
   padding: 3px 6px 0;
-  border-bottom: 1px solid var(--wb-border-soft);
   background: color-mix(in srgb, var(--wb-surface-pane) 58%, transparent);
 }
 

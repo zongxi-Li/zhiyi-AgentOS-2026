@@ -364,7 +364,6 @@ const handleSave = async () => {
   :deep(.el-drawer__header) {
     margin-bottom: 0;
     padding: 24px 24px 16px;
-    border-bottom: 1px solid var(--border-light);
   }
 
   :deep(.el-drawer__body) {
@@ -486,12 +485,11 @@ const handleSave = async () => {
 }
 
 .settings-actions {
-  display: flex;
-  gap: 12px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border-light);
-  margin-top: 8px;
-}
+ display: flex;
+ gap: 12px;
+ padding-top: 16px;
+ 
+ margin-top: 8px; }
 
 .empty-state {
   display: flex;

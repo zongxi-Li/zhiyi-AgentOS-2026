@@ -26,6 +26,50 @@ const execute = (wrapper: ReturnType<typeof render>) => wrapper.findAll('button'
 beforeEach(() => { localStorage.clear(); vi.restoreAllMocks(); vi.stubGlobal('crypto', webcrypto) })
 
 describe('formal Workbench controls', () => {
+  it.each([true, false])('launches with one confirmation only while each fresh snapshot authorizes it (allow permit: %s)', async allowPermit => {
+    const steps = ['materialize', 'activate', 'handoff', 'permit', 'dispatch'] as const
+    const receipts = ['MATERIALIZED_INACTIVE', 'ACTIVATED_PAUSED', 'STATE_PREPARED', 'ISSUED', 'ACCEPTED']
+    const ready = permitted()
+    const base = ready.formalControl!
+    const states = [
+      { ...base, status: 'PLANNING_ACCEPTED', graphId: null, graphVersion: null, materializationId: null },
+      { ...base, status: 'MATERIALIZED_INACTIVE' },
+      { ...base, status: 'ACTIVATED_PAUSED', handoffId: null },
+      { ...base, status: 'ACTIVATED_PAUSED', permitIssued: false },
+      base,
+    ]
+    const snapshots = states.map((formalControl, index) => {
+      const allowed = allowPermit || index !== 3
+      const runtimeRevision = index + 7
+      return { ...ready, formalControl, runtimeRevision, actionCapabilities: capabilitiesFixture('run', 'mission', 'pending', runtimeRevision,
+        { canExecuteFormalAction: allowed, formalActions: allowed ? [steps[index]] : [] }) }
+    })
+    const get = vi.spyOn(agentosApi, 'getWorkflowRun')
+    for (const snapshot of snapshots.slice(1)) get.mockResolvedValueOnce(snapshot)
+    const post = vi.spyOn(agentosApi, 'submitFormalControl').mockImplementation(async (_mission, _run, step, command) => ({
+      operationId: command.operationId, status: receipts[steps.indexOf(step)], dispatchId: step === 'dispatch' ? 'dispatch' : undefined,
+    }))
+    const w = render(snapshots[0], { launchInOneClick: true, requirePlanReview: true,
+      reviewedPlan: { commitId: 'commit', commitmentRevision: 1 } })
+    const button = w.get('.formal-control__primary')
+    expect(button.text()).toBe('确认规划并执行')
+    await button.trigger('click')
+    await flushPromises()
+    expect(post.mock.calls.map(call => call[2])).toEqual(allowPermit ? steps : steps.slice(0, 3))
+    expect(get).toHaveBeenCalledTimes(allowPermit ? 4 : 3)
+    expect(w.emitted('refresh')).toHaveLength(1)
+    if (allowPermit) {
+      expect(post.mock.calls[4][3]).toMatchObject({ expectedRuntimeRevision: 11 })
+      expect(w.emitted('succeeded')?.[0][0]).toMatchObject({ action: 'dispatch', dispatchId: 'dispatch' })
+      await button.trigger('click')
+      expect(post).toHaveBeenCalledTimes(5)
+    } else {
+      expect(w.get('[role="alert"]').text()).toContain('权限已变化')
+      expect(w.emitted('succeeded')).toBeUndefined()
+    }
+    w.unmount()
+  })
+
   it('allows confirmation with schema-v1 planning offers that omit additive recovery fields', async () => {
     const run = permitted()
     run.status = 'planning'; run.runtimeRevision = 0

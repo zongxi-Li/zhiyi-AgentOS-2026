@@ -37,12 +37,12 @@
       </label>
       <div class="resource-toolbar__meta">
         <span class="resource-toolbar__count"><b>{{ filteredResources.length }}</b> / {{ resources.length }} 个资源</span>
-        <span class="resource-toolbar__mode"><i aria-hidden="true"></i> 已连接资源</span>
+        <span class="resource-toolbar__mode"><i aria-hidden="true"></i> 当前登记资源</span>
       </div>
     </div>
 
     <div class="resource-catalog-filters" aria-label="资源目录筛选">
-      <label><span>类型</span><select v-model="selectedType"><option value="">全部</option><option value="device">设备</option><option value="model">模型</option><option value="tool">工具</option></select></label>
+      <label><span>类型</span><select v-model="selectedType"><option value="">全部</option><option value="device">执行服务</option><option value="agent">Agent 能力</option><option value="model">模型</option><option value="tool">工具</option></select></label>
       <label><span>位置</span><select v-model="selectedTier"><option value="">全部位置</option><option value="device">本地</option><option value="edge">边缘</option><option value="cloud">云端</option><option v-for="tier in otherTierOptions" :key="tier" :value="tier">{{ tier }}</option></select></label>
       <label><span>状态</span><select v-model="selectedHealth"><option value="">全部状态</option><option value="online">可用</option><option value="degraded">需关注</option><option value="offline">离线</option><option value="unknown">待检测</option></select></label>
       <label><span>数据区域</span><select v-model="selectedDataZone"><option value="">全部区域</option><option v-for="zone in dataZoneOptions" :key="zone" :value="zone">{{ zone }}</option></select></label>
@@ -61,23 +61,28 @@
       >{{ domain.name }}<small>{{ domain.count }}</small></button>
     </div>
 
-    <ResourceTopologyPanel :items="filteredResources" :nodes="filteredNodes" :nodes-error="nodesError" :pending-nodes="pendingNodes" @open="openDetail" @toggle-node="toggleNode" />
+    <ResourceTopologyPanel :items="filteredResources" :context-items="resources" :provider-models="filteredProviderModels" :model-catalog-error="modelCatalogError" :model-catalog-loading="modelCatalogLoading" :nodes="filteredNodes" :nodes-error="nodesError" :pending-nodes="pendingNodes" @open="openDetail" @toggle-node="toggleNode" />
     <section v-if="loading && !resources.length" class="resource-state" role="status">
-      <BrandLoader title="正在读取 ResourceService" subtitle="只读加载系统 Resource profile…" />
+      <BrandLoader title="正在读取 ResourceService" />
     </section>
     <section v-else-if="errorMessage" class="resource-state resource-state--error" role="alert">
       <strong>资源中心暂时不可用</strong>
       <span>{{ errorMessage }}</span>
       <button type="button" @click="loadResources">重新加载</button>
     </section>
-    <section v-else-if="!filteredResources.length" class="resource-state" role="status">
+    <section v-else-if="!filteredResources.length && !filteredProviderModels.length && !filteredNodes.length && !modelCatalogLoading" class="resource-state" role="status">
       <strong>{{ hasFilters ? '没有匹配的资源' : '还没有接入资源' }}</strong>
       <span>{{ hasFilters ? '调整筛选条件，或清除筛选查看全部资源。' : '接入设备、模型或工具后，它们会显示在这里。' }}</span>
     </section>
-    <div v-else class="resource-groups" aria-label="系统资源">
-      <section v-for="group in groupedResources" :key="group.tier" class="resource-tier-group" :class="`is-tier-${group.tier}`">
+    <details v-else-if="filteredResources.length" class="resource-groups" aria-label="资源明细">
+      <summary class="resource-groups__summary">
+        <strong>资源明细</strong>
+        <span class="resource-groups__count">{{ filteredResources.length }} 项</span>
+        <span class="resource-groups__expand" aria-hidden="true">展开</span>
+        <span class="resource-groups__collapse" aria-hidden="true">收起</span>
+      </summary>
+      <section v-for="group in groupedResources" :key="group.tier" class="resource-tier-group">
         <header class="resource-tier-group__header">
-          <span class="resource-tier-group__dot" aria-hidden="true"></span>
           <strong>{{ group.label }}</strong>
           <span class="resource-tier-group__count">{{ group.items.length }} 个资源</span>
         </header>
@@ -89,12 +94,16 @@
                 <i :class="`resource-row__health-dot is-${item.snapshot.healthStatus}`"></i>
               </span>
               <div>
-                <strong>{{ item.profile.displayName || item.profile.resourceId }}</strong>
+                <strong>{{ resourceDisplayName(item) }}</strong>
               <span class="resource-row__meta">{{ customerResourceType(item.profile.runtimeKind || item.profile.resourceType) }}<template v-if="item.profile.provider"> · {{ item.profile.provider }}</template><template v-if="item.profile.sourceType"> · {{ item.profile.sourceType }}</template></span>
               </div>
             </div>
             <div class="resource-row__capabilities">
-              <span v-for="capability in item.profile.capabilities" :key="capability">{{ capability }}</span>
+              <span v-for="capability in item.profile.capabilities.slice(0, capabilityPreviewLimit)" :key="capability" class="resource-row__capability" :title="capability">{{ capability }}</span>
+              <button v-if="item.profile.capabilities.length > capabilityPreviewLimit" type="button" class="resource-row__more"
+                :aria-label="`查看 ${resourceDisplayName(item)} 的全部 ${item.profile.capabilities.length} 项能力`" @click.stop="openDetail(item)">
+                +{{ item.profile.capabilities.length - capabilityPreviewLimit }} 项
+              </button>
             </div>
             <dl class="resource-row__facts">
               <div><dt>连接状态</dt><dd :class="`is-${item.snapshot.healthStatus}`"><i class="resource-status-dot" aria-hidden="true"></i>{{ customerHealthLabel(item.snapshot.healthStatus) }}</dd></div>
@@ -110,27 +119,49 @@
           </article>
         </div>
       </section>
-    </div>
+    </details>
   </section>
 
-  <el-drawer v-model="drawerOpen" :title="selectedResource ? selectedResource.profile.resourceId : '资源详情'" size="440px" append-to-body class="resource-detail-drawer">
-    <ResourceDetailPanel v-if="selectedResource" :item="selectedResource" @enabled-changed="handleEnabledChanged" />
+  <el-drawer v-model="drawerOpen" :title="selectedResource?.profile.resourceId || resourceId || '资源详情'" size="440px" append-to-body class="resource-detail-drawer" @close="emit('close-resource')">
+    <ResourceDetailPanel v-if="drawerOpen && selectedResource" :item="selectedResource" @enabled-changed="handleEnabledChanged" />
+    <p v-else-if="resourceId" class="resource-empty">{{ loading ? '正在读取资源…' : errorMessage || '该资源已离线、移除或当前不可见。任务中的历史绑定仍可查看。' }}</p>
   </el-drawer>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { agentosApi, type RuntimeResourceItem, type NodeCatalogItem } from '@/services/api/agentos'
 import ResourceDetailPanel from './ResourceDetailPanel.vue'
 import ResourceTopologyPanel from './ResourceTopologyPanel.vue'
+import { apiUrl, localFetch } from '@/platform'
 import BrandLoader from '@/components/common/BrandLoader.vue'
 import { formatCapacity, formatMetric, formatPercent, healthLabel, resourceTypeMeta, resourcePlacement, tierLabel } from '@/utils/resourceFormat'
 import { resourceTypeIcon } from '@/utils/resourceTypeIcons'
-import { customerHealthLabel, customerPrivacyLabel, customerResourceType } from './resourceCenterPresentation'
+import { customerHealthLabel, customerPrivacyLabel, customerResourceType, resourceDisplayName, mergeProviderModels, providerModelKey, type ProviderModelProfile, type DiscoveredModels } from './resourceCenterPresentation'
 
+const props = defineProps<{ resourceId?: string }>()
+const emit = defineEmits<{ 'close-resource': [] }>()
+const capabilityPreviewLimit = 3
 const resources = ref<RuntimeResourceItem[]>([])
+const providerProfiles = ref<ProviderModelProfile[]>([])
+const discoveredModels = ref<DiscoveredModels[]>([])
+const modelCatalogLoading = ref(false)
+const modelCatalogError = ref('')
+const providerModels = computed(() => mergeProviderModels(providerProfiles.value, discoveredModels.value))
+const filteredProviderModels = computed(() => {
+  if ((selectedType.value && selectedType.value !== 'model') ||
+      (selectedTier.value && selectedTier.value !== 'cloud') ||
+      selectedHealth.value || selectedDataZone.value || selectedSource.value || selectedDomain.value) return []
+  const registered = new Set(resources.value.filter(item => item.profile.runtimeKind === 'model_endpoint')
+    .map(item => providerModelKey(item.profile.provider || '', item.profile.model || resourceDisplayName(item))))
+  const query = searchText.value.trim().toLowerCase()
+  return providerModels.value.filter(item =>
+    !registered.has(providerModelKey(item.provider, item.model)) &&
+    (!selectedProvider.value || item.provider === selectedProvider.value) &&
+    (!query || `${item.provider} ${item.model}`.toLowerCase().includes(query)))
+})
 const nodes = ref<NodeCatalogItem[]>([])
 const nodesError = ref('')
 const pendingNodes = ref<string[]>([])
@@ -200,7 +231,7 @@ const domainOptions = computed(() => {
 
 const dataZoneOptions = computed(() => [...new Set(resources.value.map(item => item.profile.dataZone).filter((zone): zone is string => Boolean(zone)))].sort())
 const sourceOptions = computed(() => [...new Set(resources.value.map(item => item.profile.sourceType).filter((value): value is string => Boolean(value)))].sort())
-const providerOptions = computed(() => [...new Set(resources.value.map(item => item.profile.provider).filter((value): value is string => Boolean(value)))].sort())
+const providerOptions = computed(() => [...new Set([...resources.value.map(item => item.profile.provider), ...providerModels.value.map(item => item.provider)].filter((value): value is string => Boolean(value)))].sort())
 const otherTierOptions = computed(() => [...new Set(resources.value.map(item => resourcePlacement(item.profile.deploymentTier)))].filter(tier => !['device', 'edge', 'cloud'].includes(tier)).sort())
 const hasFilters = computed(() => Boolean(searchText.value || selectedDomain.value || selectedType.value || selectedTier.value || selectedHealth.value || selectedDataZone.value || selectedSource.value || selectedProvider.value))
 const filteredNodes = computed(() => nodes.value.filter(node => {
@@ -217,7 +248,7 @@ const filteredResources = computed(() => {
   const domain = selectedDomain.value
   return resources.value.filter(item => {
     const runtimeKind = item.profile.runtimeKind || item.profile.resourceType
-    const type = runtimeKind === 'model_endpoint' || runtimeKind === 'model_server' || item.profile.resourceType === 'model' ? 'model'
+    const type = runtimeKind === 'agent_instance' ? 'agent' : runtimeKind === 'model_endpoint' || runtimeKind === 'model_server' || item.profile.resourceType === 'model' ? 'model'
       : runtimeKind === 'tool_service' || item.profile.resourceType === 'tool' || item.profile.resourceType === 'mcp' ? 'tool' : 'device'
     if (selectedType.value && type !== selectedType.value) return false
     if (selectedTier.value && resourcePlacement(item.profile.deploymentTier) !== selectedTier.value) return false
@@ -303,6 +334,41 @@ const toggleNode = async (payload: { nodeId: string; enabled: boolean }) => {
   }
 }
 
+async function readModelCatalog<T>(path: string, signal: AbortSignal): Promise<T> {
+  const request = new AbortController()
+  const abort = () => request.abort()
+  if (signal.aborted) abort()
+  signal.addEventListener('abort', abort, { once: true })
+  const timeout = window.setTimeout(abort, 15000)
+  try {
+    const response = await localFetch(apiUrl(path), { signal: request.signal })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    return await response.json()
+  } finally {
+    signal.removeEventListener('abort', abort)
+    window.clearTimeout(timeout)
+  }
+}
+
+async function loadModelCatalog(signal: AbortSignal) {
+  modelCatalogLoading.value = true
+  modelCatalogError.value = ''
+  const [profiles, catalog] = await Promise.allSettled([
+    readModelCatalog<{ profiles: ProviderModelProfile[] }>('/ai/llm/profiles', signal),
+    readModelCatalog<{ catalogs: DiscoveredModels[] }>('/ai/llm/provider-models', signal)
+  ])
+  if (signal.aborted) return
+  providerProfiles.value = profiles.status === 'fulfilled' ? profiles.value.profiles || [] : []
+  discoveredModels.value = catalog.status === 'fulfilled' ? catalog.value.catalogs || [] : []
+  const unavailable = [...new Set(discoveredModels.value.filter(item => item.status === 'unavailable').map(item => item.provider))]
+  if (profiles.status === 'rejected' || catalog.status === 'rejected') {
+    modelCatalogError.value = '部分提供商档案或模型清单暂时无法读取。'
+  } else if (unavailable.length) {
+    modelCatalogError.value = `无法读取模型清单：${unavailable.join('、')}。仍可查看已保存的模型档案。`
+  }
+  modelCatalogLoading.value = false
+}
+
 const loadResources = async () => {
   controller?.abort()
   controller = new AbortController()
@@ -310,6 +376,7 @@ const loadResources = async () => {
   loading.value = true
   errorMessage.value = ''
   nodesError.value = ''
+  void loadModelCatalog(requestController.signal)
   void agentosApi.listNodes({ signal: requestController.signal }).then(response => {
     if (!requestController.signal.aborted && controller === requestController) nodes.value = response.items
   }).catch(() => {
@@ -328,6 +395,12 @@ const loadResources = async () => {
 }
 
 defineExpose({ loadResources })
+
+watch(() => [props.resourceId, resources.value] as const, ([resourceId]) => {
+  if (!resourceId) return
+  selectedResource.value = resources.value.find(item => item.profile.resourceId === resourceId) || null
+  drawerOpen.value = true
+}, { immediate: true })
 
 const focusSearch = (event: KeyboardEvent) => {
   if (event.key !== '/') return
@@ -400,19 +473,35 @@ onBeforeUnmount(() => { controller?.abort(); window.removeEventListener('keydown
 .resource-toolbar__count b { color: var(--text-primary); font: 650 12px var(--font-mono, monospace); }
 .resource-toolbar__mode { display: inline-flex; align-items: center; gap: 5px; color: var(--text-muted); font: 9px var(--font-mono, monospace); text-transform: uppercase; letter-spacing: .05em; }
 .resource-toolbar__mode i { width: 5px; height: 5px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px var(--success-fade); }
-.resource-groups { display: grid; gap: 16px; }
-.resource-tier-group { display: grid; gap: 8px; }
-.resource-tier-group__header { display: flex; align-items: center; gap: 8px; padding: 2px 2px 6px; color: var(--text-secondary); }
+.resource-groups__summary {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  list-style: none;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 12px;
+}
+.resource-groups__summary::marker { content: ''; }
+.resource-groups__summary::-webkit-details-marker { display: none; }
+.resource-groups__summary:hover { background: var(--surface-hover); }
+.resource-groups__summary:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+.resource-groups__count { color: var(--text-muted); font-size: 11px; }
+.resource-groups__expand, .resource-groups__collapse { margin-inline-start: auto; color: var(--text-secondary); }
+.resource-groups__collapse, .resource-groups[open] .resource-groups__expand { display: none; }
+.resource-groups[open] .resource-groups__collapse { display: inline; }
+.resource-tier-group { display: grid; gap: 8px; margin-block-start: 14px; }
+.resource-tier-group__header { display: flex; align-items: center; gap: 8px; padding: 2px 0 4px; color: var(--text-secondary); }
 .resource-tier-group__header strong { font-size: 12px; font-weight: 650; }
-.resource-tier-group__count { margin-left: auto; color: var(--text-muted); font: 10px var(--font-mono, monospace); }
-.resource-tier-group__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--primary-color); }
-.is-tier-device .resource-tier-group__dot { background: var(--text-secondary); }
-.is-tier-edge .resource-tier-group__dot { background: var(--success); }
-.is-tier-cloud .resource-tier-group__dot { background: var(--primary-color); }
+.resource-tier-group__count { margin-inline-start: auto; color: var(--text-muted); font-size: 10px; }
 .resource-list { overflow: hidden; border: 1px solid var(--border-light); border-radius: var(--radius-card, 9px); background: var(--resource-surface); box-shadow: var(--shadow-sm); }
-.resource-row { display: grid; grid-template-columns: var(--resource-grid); align-items: center; gap: 24px; min-height: 88px; padding: 15px 16px; border-bottom: 1px solid var(--border-light); background: var(--resource-surface); transition: var(--transition); cursor: pointer; }
+.resource-row { display: grid; grid-template-columns: var(--resource-grid); align-items: center; gap: 24px; min-height: 88px; padding: 15px 16px; background: var(--resource-surface); transition: background-color 140ms ease, box-shadow 140ms ease; cursor: pointer; }
 .resource-row:last-child { border-bottom: 0; }
-.resource-row:hover { background: var(--surface-hover); box-shadow: inset 2px 0 0 var(--primary-color); }
+.resource-row:hover, .resource-row:focus-within { background: var(--surface-hover); box-shadow: inset 2px 0 0 var(--primary-color); }
 .resource-row__identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .resource-row__icon { position: relative; display: inline-grid; place-items: center; flex: 0 0 auto; width: 36px; height: 36px; border-radius: 10px; color: color-mix(in srgb, var(--tile-tone, var(--primary-color)) 40%, #e9f5ff); background: linear-gradient(145deg, color-mix(in srgb, var(--tile-tone, var(--primary-color)) 34%, transparent), color-mix(in srgb, var(--tile-tone, var(--primary-color)) 10%, transparent) 55%, color-mix(in srgb, var(--tile-tone, var(--primary-color)) 24%, transparent)), var(--bg-input); border: 1px solid color-mix(in srgb, var(--tile-tone, var(--primary-color)) 46%, transparent); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 0 12px color-mix(in srgb, var(--tile-tone, var(--primary-color)) 16%, transparent); transition: box-shadow var(--transition), border-color var(--transition); }
 .resource-row__icon .el-icon { font-size: 18px; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35)); }
@@ -427,7 +516,13 @@ onBeforeUnmount(() => { controller?.abort(); window.removeEventListener('keydown
 .resource-row__identity span:not(.resource-row__icon) { margin-top: 4px; color: var(--text-muted); font: 10px var(--font-mono, monospace); }
 .resource-row__identity .resource-row__meta { display: inline-flex; align-items: center; gap: 5px; }
 .resource-row__capabilities { display: flex; gap: 5px; min-width: 0; flex-wrap: wrap; }
-.resource-row__capabilities span { padding: 4px 7px; border: 1px solid color-mix(in srgb, var(--border-light) 82%, var(--primary-color)); border-radius: 4px; color: var(--text-secondary); background: color-mix(in srgb, var(--bg-input) 76%, transparent); font: 10px var(--font-mono, monospace); }
+.resource-row__capability { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 7px; border: 1px solid color-mix(in srgb, var(--border-light) 82%, var(--primary-color)); border-radius: 4px; color: var(--text-secondary); background: color-mix(in srgb, var(--bg-input) 76%, transparent); font: 10px var(--font-mono, monospace); }
+.resource-row__more { padding: 4px 7px; border: 1px solid var(--border-light); border-radius: 4px; color: var(--primary-color); background: transparent; cursor: pointer; font: inherit; font-size: 10px; transition: background-color 140ms ease; }
+.resource-row__more:hover { background: var(--primary-fade); }
+.resource-row__more:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .resource-row, .resource-row__more, .resource-row__icon { transition: none; }
+}
 .resource-row__facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0; }
 .resource-row__facts div { min-width: 0; }
 .resource-row__facts dt { display: none; color: var(--text-muted); font-size: 10px; }

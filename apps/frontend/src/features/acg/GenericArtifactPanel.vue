@@ -635,7 +635,6 @@ const downloadDelivery = () => {
   justify-content: space-between;
   gap: 24px;
   padding-bottom: 16px;
-  border-bottom: 1px solid var(--border-light);
 }
 
 .eyebrow {
@@ -746,7 +745,7 @@ summary:focus-visible { outline: 2px solid var(--primary-color); outline-offset:
 .section-fallback { margin: 6px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.75; white-space: pre-wrap; }
 .section-summary { margin: 6px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.75; white-space: pre-wrap; }
 .structured-fields { display: grid; gap: 14px; margin-top: 12px; }
-.structured-field + .structured-field { padding-top: 14px; border-top: 1px solid var(--border-light); }
+.structured-field + .structured-field { padding-top: 14px; }
 .field-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
 .field-head strong { color: var(--text-primary); font-size: 12px; font-weight: 700; }
 .field-head code {
@@ -764,7 +763,7 @@ summary:focus-visible { outline: 2px solid var(--primary-color); outline-offset:
 .field-properties dd { margin: 0; color: var(--text-primary); line-height: 1.6; }
 .record-list { margin: 0; padding: 0; list-style: none; }
 .record-list > li { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; padding: 10px 0; }
-.record-list > li + li { border-top: 1px solid var(--border-light); }
+.record-list > li + li { }
 .record-index { padding-top: 2px; color: var(--primary-color); font: 700 10px/1.5 var(--font-mono, monospace); }
 .record-content > p { margin: 0; color: var(--text-primary); font-size: 12px; line-height: 1.65; text-wrap: pretty; }
 .record-content dl { display: flex; flex-wrap: wrap; gap: 5px 12px; margin: 6px 0 0; }
@@ -827,7 +826,7 @@ summary:focus-visible { outline: 2px solid var(--primary-color); outline-offset:
 .markdown-body :deep(a:hover) { text-decoration: underline; }
 /* Markdown 表格样式收敛到 global.css 的全局三线表 */
 
-.step-output-section { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-light); }
+.step-output-section { margin-top: 20px; padding-top: 16px; }
 .step-output-section > header { justify-content: space-between; margin-bottom: 9px; }
 .step-output-section h5 { margin: 0; font-size: 14px; }
 .step-output-section > header > span { color: var(--text-secondary); font-size: 12px; }
@@ -835,11 +834,11 @@ summary:focus-visible { outline: 2px solid var(--primary-color); outline-offset:
 details { border: 1px solid var(--border-light); border-radius: 8px; background: var(--bg-panel); }
 summary { display: flex; justify-content: space-between; gap: 16px; padding: 10px 12px; cursor: pointer; font-size: 12px; font-weight: 650; }
 summary small { color: var(--text-secondary); font-weight: 500; }
-details pre { max-height: 360px; margin: 0; padding: 12px; overflow: auto; border-top: 1px solid var(--border-light); background: var(--bg-input); white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.6 var(--font-mono, monospace); }
+details pre { max-height: 360px; margin: 0; padding: 12px; overflow: auto; background: var(--bg-input); white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.6 var(--font-mono, monospace); }
 .step-output-card--running summary small,
 .step-output-card--retrying summary small { color: var(--primary-color); }
 .step-output-card--failed summary small { color: var(--danger, #b54747); }
-.step-state-copy { margin: 0; padding: 12px; border-top: 1px solid var(--border-light); color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
+.step-state-copy { margin: 0; padding: 12px; color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
 
 @container (max-width: 760px) {
   .delivery-head { align-items: flex-start; flex-direction: column; }
@@ -847,7 +846,7 @@ details pre { max-height: 360px; margin: 0; padding: 12px; overflow: auto; borde
   .delivery-actions button { flex: 1; }
   .delivery-facts { grid-template-columns: repeat(2, 1fr); }
   .delivery-facts div:nth-child(2) { border-right: 0; }
-  .delivery-facts div:nth-child(-n+2) { border-bottom: 1px solid var(--border-light); }
+  .delivery-facts div:nth-child(-n+2) {}
   .calculation-list,
   .decision-grid { grid-template-columns: 1fr; }
   .decision-grid footer { grid-column: 1; }

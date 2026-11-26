@@ -1,6 +1,6 @@
 import type { MissionWorkspaceProjection, WorkflowRun, WorkspaceEntry, RunActionCapabilities } from '@/services/api/agentos'
 import { isRunDeliverableEntry } from './deliverableIdentity'
-import { readRunCapabilities, runCapabilities, runCapabilityActions } from './runCapabilities'
+import { readRunCapabilities, recoveryCheckPending, runCapabilities, runCapabilityActions } from './runCapabilities'
 
 export type { LifecyclePhase } from '@/features/workspace/runLifecycle'
 import { mapRunPhase, type LifecyclePhase } from '@/features/workspace/runLifecycle'
@@ -37,12 +37,19 @@ export function projectLifecycle(input: {
   const detail = input.run?.runId === selectedRunId && input.run.missionId === workspace?.mission.missionId ? input.run : null
   const summary = workspace?.activeRun?.runId === selectedRunId ? workspace.activeRun
     : workspace?.runs.find(item => item.runId === selectedRunId) || null
-  const offers = [runCapabilities(detail), readRunCapabilities(summary?.actionCapabilities,
-    workspace?.mission.missionId || '', selectedRunId)].filter((value): value is RunActionCapabilities => Boolean(value))
+  const summaryOffers = readRunCapabilities(summary?.actionCapabilities, workspace?.mission.missionId || '', selectedRunId)
+  const offers = [runCapabilities(detail), summaryOffers].filter((value): value is RunActionCapabilities => Boolean(value))
   offers.sort((a, b) => b.runtimeRevision - a.runtimeRevision)
+  // The full Run read supplies the recovery fields omitted from the first paint.
+  // Other capabilities must still agree when both sources have the same revision.
+  const awaitingRecovery = recoveryCheckPending(summaryOffers)
+  const comparableActions = awaitingRecovery
+    ? runCapabilityActions.filter(action => action !== 'canRecoverCurrentRun' && action !== 'canRetrySuccessor')
+    : runCapabilityActions
   const signature = (value: RunActionCapabilities) => JSON.stringify([value.status, value.isSuperseded,
-    value.lineage.supersededByRunId, value.formalActions, value.retryMode, value.retryStepId,
-    ...runCapabilityActions.map(action => value[action])])
+    value.lineage.supersededByRunId, value.formalActions,
+    ...(awaitingRecovery ? [] : [value.retryMode, value.retryStepId]),
+    ...comparableActions.map(action => value[action])])
   const conflict = offers.some(value => value.runtimeRevision === offers[0].runtimeRevision && signature(value) !== signature(offers[0]))
   const capabilities = conflict ? null : offers[0] || null
   const run = !conflict && detail && (!capabilities || detail.runtimeRevision === capabilities.runtimeRevision) ? detail : null

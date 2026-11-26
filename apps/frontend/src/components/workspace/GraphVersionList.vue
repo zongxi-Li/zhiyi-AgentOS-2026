@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, inject } from 'vue'
 import { RefreshRight, Share } from '@element-plus/icons-vue'
-import { graphVersionKey, graphVersionTime, graphVersionsKey } from './graphVersions'
+import { graphVersionKey, graphVersionTime, graphVersionPair, graphVersionsKey } from './graphVersions'
 
 const versions = inject(graphVersionsKey, null)
 const emit = defineEmits<{ openGraph: [] }>()
@@ -21,18 +21,19 @@ const follow = () => { versions?.follow(); emit('openGraph') }
     <div v-if="versions.error.value" class="version-list-state" role="status">
       <span>{{ versions.error.value }}</span><button type="button" @click="versions.refresh()">重试</button>
     </div>
-    <p v-else-if="!entries.length" class="version-list-state" role="status">{{ versions.loading.value ? '正在加载图版本…' : '尚无执行图版本' }}</p>
-    <ol v-if="entries.length" aria-label="执行图版本">
+    <p v-else-if="!entries.length" class="version-list-state" role="status">{{ versions.loading.value ? '正在加载图版本…' : '尚无规划与执行版本' }}</p>
+    <ol v-if="entries.length" aria-label="规划与执行版本">
       <li v-for="entry in entries" :key="graphVersionKey(entry)">
         <button class="version-row" :class="{ 'is-selected': versions.selectedKey.value === graphVersionKey(entry) }"
           type="button" :aria-pressed="versions.selectedKey.value === graphVersionKey(entry)"
-          :title="entry.reason || `执行图 v${entry.graphVersion}`" @click="select(graphVersionKey(entry))">
+          :title="graphVersionPair(entry)" @click="select(graphVersionKey(entry))">
           <span class="version-row__rail" aria-hidden="true"><el-icon><Share /></el-icon></span>
           <span class="version-row__body">
-            <span class="version-row__heading"><strong>v{{ entry.graphVersion }}</strong><span class="version-row__badge" :class="{ 'is-current': entry.current }">{{ entry.current ? '当前' : '历史' }}</span><time>{{ graphVersionTime(entry) }}</time></span>
+            <span class="version-row__heading"><strong>ACG {{ entry.taskPlanVersion == null ? '—' : `v${entry.taskPlanVersion}` }}</strong><span class="version-row__badge" :class="{ 'is-current': entry.current }">{{ entry.current ? '当前' : '历史' }}</span><time>{{ graphVersionTime(entry) }}</time></span>
+            <span class="version-row__reuse">对应 RGraph v{{ entry.graphVersion }}</span>
             <span class="version-row__reason">{{ entry.reason || (entry.predecessorBlueprintId ? '执行图修订' : '初始执行图') }}</span>
-            <span v-if="entry.patch" class="version-row__changes"><span>+{{ entry.patch.addedNodeIds.length }} 新增</span><span v-if="entry.patch.updatedNodeIds.length">{{ entry.patch.updatedNodeIds.length }} 调整</span><span v-if="entry.patch.removedNodeIds.length">−{{ entry.patch.removedNodeIds.length }} 移除</span></span>
-            <span v-if="entry.inherited.completedStepIds.length" class="version-row__reuse">复用 {{ entry.inherited.completedStepIds.length }} 个已完成节点</span>
+            <span v-if="entry.patch" class="version-row__changes"><span>RGraph +{{ entry.patch.addedNodeIds.length }} 新增</span><span v-if="entry.patch.updatedNodeIds.length">{{ entry.patch.updatedNodeIds.length }} 调整</span><span v-if="entry.patch.removedNodeIds.length">−{{ entry.patch.removedNodeIds.length }} 移除</span></span>
+            <span v-if="entry.inherited.completedStepIds.length" class="version-row__reuse">RGraph 复用 {{ entry.inherited.completedStepIds.length }} 个已完成节点</span>
           </span>
         </button>
       </li>

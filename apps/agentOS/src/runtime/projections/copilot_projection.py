@@ -135,9 +135,9 @@ def initial_plan_summary(runtime, run):
     """Project frozen, explicit plan fields; never expose provider reasoning buffers."""
     plan = run.execution_state.get("taskPlan")
     record = None
-    authority = getattr(runtime, "planning_commit_authority", None)
-    if authority is not None:
-        record = authority.store.get_by_idempotency_key("initial-planning:" + run.run_id)
+    store = getattr(getattr(runtime, "planning_commit_authority", None), "store", None)
+    if store is not None:
+        record = store.get_by_idempotency_key("initial-planning:" + run.run_id)
         if record is not None:
             if (record.mission_id != run.mission_id or record.proposal_type != "initial_plan"
                     or getattr(record.source_provenance, "source_run_id", None) != run.run_id):
@@ -149,6 +149,15 @@ def initial_plan_summary(runtime, run):
         plan = TaskPlan.model_validate(plan)
     except ValueError:
         return None
+    return task_plan_summary(
+        run, plan,
+        commit_id=record.commit_id if record else None,
+        commitment_revision=record.commitment_revision if record else None,
+    )
+
+
+def task_plan_summary(run, plan: TaskPlan, *, commit_id=None, commitment_revision=None):
+    """Project a Run's validated planning snapshot without internal metadata."""
     if plan.mission_id != run.mission_id:
         return None
     basis = run.execution_state.get("missionIntentBasis") or {}
@@ -160,12 +169,14 @@ def initial_plan_summary(runtime, run):
                 constraints.append(text)
     return {
         "planVersion": plan.plan_version,
-        "commitId": record.commit_id if record else None,
-        "commitmentRevision": record.commitment_revision if record else None,
+        "commitId": commit_id,
+        "commitmentRevision": commitment_revision,
         "objective": basis.get("objective") or run.input.get("taskGoal") or "",
         "constraints": constraints,
         "expectedArtifacts": list(plan.expected_artifacts),
+        "relations": [relation.model_dump(by_alias=True, mode="json") for relation in plan.relations],
         "tasks": [{"key": node.key, "title": node.title, "objective": node.objective,
+                   "capabilities": list(node.capability_requirements),
                    "rationale": node.decomposition_rationale,
                    "acceptanceCriteria": list(node.acceptance_criteria),
                    "sourceRefs": list(node.source_refs)} for node in plan.nodes],

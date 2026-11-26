@@ -1,16 +1,19 @@
 <template>
   <section class="graph-editor" aria-label="graph.acg">
     <header class="graph-editor__overview">
-    <GraphVersionToolbar @locate-node="topology?.focusNode($event)">
+    <div class="graph-editor__modes" role="group" aria-label="图视图">
+      <button type="button" :aria-pressed="mode === 'plan'" @click="mode = 'plan'">规划图 ACG</button>
+      <button type="button" :aria-pressed="mode === 'runtime'" @click="mode = 'runtime'">执行图 RGraph</button>
+    </div>
+    <GraphVersionToolbar :mode="mode" @locate-node="topology?.focusNode($event)">
       <template #heading>
       <div class="graph-editor__title">
         <svg class="graph-editor__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m8 7 8 5-8 5" stroke="currentColor" stroke-width="1.6"/><circle cx="6" cy="6" r="3" fill="currentColor"/><circle cx="18" cy="12" r="3" fill="currentColor"/><circle cx="6" cy="18" r="3" fill="currentColor"/></svg>
-        <strong>graph.acg</strong>
-        <small v-if="displayGraph" :title="displayGraph.graphId">v{{ graphVersion || '—' }}</small>
+        <strong>{{ mode === 'plan' ? 'ACG' : 'RGraph' }}</strong>
       </div>
       </template>
       <template #status>
-    <div v-if="!historical && executionFocus" class="graph-editor__runtime" :class="{ 'is-failed': executionFocus.blocked }" role="status">
+    <div v-if="mode === 'runtime' && !historical && executionFocus" class="graph-editor__runtime" :class="{ 'is-failed': executionFocus.blocked }" role="status">
       <span class="graph-editor__runtime-dot" aria-hidden="true" />
       <span :title="executionFocus.message || executionFocus.name">{{ executionFocus.message || (executionFocus.blocked ? '执行受阻' : '当前执行') }} · {{ executionFocus.name }}</span>
       <button type="button" @click="locateExecution">{{ executionFocus.message ? '定位当前节点' : executionFocus.blocked ? '定位失败节点' : '定位执行中节点' }}</button>
@@ -19,13 +22,16 @@
       </template>
     </GraphVersionToolbar>
     </header>
-    <div class="graph-editor__canvas">
+    <PlanningGraphPanel v-if="mode === 'plan'" :run-id="runId || null"
+      :initial-plan-version="runtimeObservation && runtimeObservation.runId === runId ? runtimeObservation.run?.initialPlan?.planVersion : null"
+      :graph="selectedGraph" :graph-nodes="graphNodes" :task-key="linkedTaskKey || selectedSemanticTaskKey" @locate-runtime="locateFromPlan" />
+    <div v-else class="graph-editor__canvas">
       <AcgTopologyGraph
         v-if="displayGraph"
         ref="topology"
         :key="versions?.selectedKey.value || 'live'"
         :blueprint="displayGraph"
-        :focus-node-id="historical ? null : focusNodeId"
+        :focus-node-id="historical ? null : linkedNodeId || focusNodeId"
         :runtime-phases="runtimePhases"
         :step-states="stepStates"
         :completed-step-ids="completedStepIds"
@@ -46,8 +52,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, ref, watch } from 'vue'
+import { computed, inject, nextTick, ref, watch } from 'vue'
 import GraphVersionToolbar from './GraphVersionToolbar.vue'
+import PlanningGraphPanel from './PlanningGraphPanel.vue'
 import { graphVersionsKey } from './graphVersions'
 import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
@@ -66,8 +73,13 @@ const props = defineProps<{
   runtimeObservation?: RuntimeObservation | null
 }>()
 const versions = inject(graphVersionsKey, null)
+const mode = ref<'plan' | 'runtime'>('plan')
+const linkedNodeId = ref<string | null>(null)
+const linkedTaskKey = ref<string | null>(null)
+watch(() => props.runId, () => { mode.value = 'plan'; linkedNodeId.value = null; linkedTaskKey.value = null })
 const topology = ref<InstanceType<typeof AcgTopologyGraph> | null>(null)
 const historical = computed(() => versions?.historical.value || false)
+const selectedGraph = computed(() => versions ? versions.displayGraph.value : props.graph)
 const displayGraph = computed(() => {
   const graph = versions ? versions.displayGraph.value : props.graph
   const diff = versions?.difference.value
@@ -110,27 +122,36 @@ const locateExecution = () => {
   if (current?.blocked) return topology.value?.focusNode(current.id)
   return topology.value?.locateCurrentTask()
 }
+const locateFromPlan = async (nodeId: string) => {
+  linkedNodeId.value = nodeId
+  mode.value = 'runtime'
+  await nextTick()
+  topology.value?.focusNode(nodeId)
+}
 
 const emit = defineEmits<{
   selectSemanticTask: [semanticTaskKey: string | null]
   openSemanticTask: [semanticTaskKey: string | null]
 }>()
 
-const graphVersion = computed(() => {
-  const snapshot = displayGraph.value
-  return snapshot?.graphVersion
-})
-
-const resolveSemanticKey = (nodeId: string) => props.graphNodes.find(node => node.acgNodeId === nodeId)?.semanticTaskKey || null
+const resolveSemanticKey = (nodeId: string) => selectedGraph.value?.nodes.find(node => node.nodeId === nodeId)?.display?.semanticTaskKey
+  || (!historical.value ? props.graphNodes.find(node => node.acgNodeId === nodeId)?.semanticTaskKey : null) || null
 const isRemoved = (nodeId: string) => versions?.difference.value?.removedNodeIds.includes(nodeId)
-const handleNodeSelected = (nodeId: string) => { if (!historical.value && !isRemoved(nodeId)) emit('selectSemanticTask', resolveSemanticKey(nodeId)) }
+const handleNodeSelected = (nodeId: string) => {
+  if (isRemoved(nodeId)) return
+  linkedTaskKey.value = resolveSemanticKey(nodeId)
+  if (!historical.value) emit('selectSemanticTask', linkedTaskKey.value)
+}
 const handleNodeDoubleClicked = (nodeId: string) => { if (!historical.value && !isRemoved(nodeId)) emit('openSemanticTask', resolveSemanticKey(nodeId)) }
-watch(() => versions?.selectedKey.value, () => { emit('selectSemanticTask', null) })
+watch(() => versions?.selectedKey.value, () => { linkedNodeId.value = null; linkedTaskKey.value = null; emit('selectSemanticTask', null) })
 </script>
 
 <style scoped>
 .graph-editor { display: flex; flex: 1 1 auto; flex-direction: column; width: 100%; min-width: 0; height: 100%; min-height: 0; overflow: hidden; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-section); background: var(--wb-surface-section); color: var(--wb-text); box-shadow: var(--wb-shadow-section); }
 .graph-editor__overview { flex-shrink: 0; min-width: 0; border-bottom: 1px solid var(--wb-border-soft); background: var(--wb-surface-section); }
+.graph-editor__modes { display: flex; gap: 4px; padding: 6px 10px; }
+.graph-editor__modes button { padding: 4px 10px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--wb-text-secondary); font: inherit; font-size: 12px; cursor: pointer; }
+.graph-editor__modes button[aria-pressed="true"] { border-color: var(--wb-border-soft); background: var(--wb-surface-inset); color: var(--wb-accent); }
 .graph-editor__title { display: flex; flex-shrink: 0; align-items: center; gap: 7px; min-width: 0; padding-right: 12px; margin-right: 2px; border-right: 1px solid var(--wb-border-soft); }
 .graph-editor__icon { width: 15px; height: 15px; flex-shrink: 0; color: var(--wb-accent); }
 .graph-editor__title strong { color: var(--wb-text); font-size: 12px; font-weight: 650; letter-spacing: -.01em; }

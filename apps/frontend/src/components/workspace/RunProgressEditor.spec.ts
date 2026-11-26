@@ -1,7 +1,7 @@
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import RunProgressEditor from './RunProgressEditor.vue'
-import type { MissionWorkspaceProjection, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
+import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry, type WorkspaceGraphNode } from '@/services/api/agentos'
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
 import { RunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
 
@@ -112,6 +112,11 @@ const runtimeEvent = (sequence: number, eventType: string) => ({
   timestamp: new Date(sequence * 1000).toISOString(),
   payload: {}
 })
+
+beforeEach(() => {
+  vi.spyOn(agentosApi, 'getPlanSnapshot').mockResolvedValue({ runId: 'run_1', plan: null })
+})
+afterEach(() => vi.restoreAllMocks())
 
 describe('RunProgressEditor', () => {
   it('shows the selected task approach and model activity before any output arrives', async () => {
@@ -489,6 +494,8 @@ describe('RunProgressEditor', () => {
 
     const acg = wrapper.get('[data-symbol-type="acg"]')
     await acg.find('.run-symbol__main').trigger('click')
+    expect(wrapper.get('.run-progress__graph-modes button[aria-pressed="true"]').text()).toBe('规划图 ACG')
+    await wrapper.findAll('.run-progress__graph-modes button')[1].trigger('click')
     expect(wrapper.find('[data-testid="acg-preview"]').exists()).toBe(true)
     expect(wrapper.find('.run-progress-result__action').exists()).toBe(false)
     expect(wrapper.emitted('locateGraph')).toBeUndefined()
@@ -514,6 +521,7 @@ describe('RunProgressEditor', () => {
 
     const acg = wrapper.get('[data-symbol-type="acg"]')
     await acg.find('.run-symbol__main').trigger('click')
+    await wrapper.findAll('.run-progress__graph-modes button')[1].trigger('click')
     const stub = wrapper.findComponent(topologyStub)
     expect(stub.props('stepStates').map((state: { stepId: string; status: string }) => [state.stepId, state.status]))
       .toEqual([['node_a', 'completed'], ['node_b', 'waiting_review']])

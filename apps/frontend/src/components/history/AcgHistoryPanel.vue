@@ -862,7 +862,7 @@ select:focus, input:focus { border-color: var(--primary-line); box-shadow: 0 0 0
 .sync-warning, .error-message { margin: 0; padding: 8px 10px; border-radius: 6px; font-size: 12px; overflow-wrap: anywhere; }
 .sync-warning { background: var(--warning-fade); color: var(--warning); }
 .error-message { background: var(--danger-fade); color: var(--danger); }
-.run-list-head { justify-content: space-between; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-light); font-size: 13px; }
+.run-list-head { justify-content: space-between; margin-top: 12px; padding-top: 12px; font-size: 13px; }
 .run-list-head span, .empty { color: var(--text-secondary); font-size: 12px; }
 .empty { padding: 14px 0; }
 .run-groups { display: grid; gap: 14px; margin-top: 10px; }

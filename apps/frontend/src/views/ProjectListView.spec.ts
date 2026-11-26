@@ -73,6 +73,33 @@ describe('ProjectListView', () => {
     expect(wrapper.find('.project-row').text()).toContain('医院门诊优化')
   })
 
+  it('restores the search, scroll and keyboard focus when returning from a project', async () => {
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: '/agentos/acg', name: 'AcgVisualization', component: ProjectListView },
+      { path: '/agentos/missions/:missionId/workspace', name: 'MissionWorkspace', component: { template: '<div />' } }
+    ] })
+    await router.push('/agentos/acg')
+    vi.spyOn(agentosApi, 'listMissions').mockResolvedValue({ items: missions, total: 2, page: 1, pageSize: 100 })
+    const wrapper = mount({ template: '<RouterView />' }, { attachTo: document.body,
+      global: { plugins: [router], stubs: { WorkbenchLayout: layoutStub, 'el-icon': true } }
+    })
+    mountedWrappers.push(wrapper)
+    await flushPromises()
+    await wrapper.get('input[type="search"]').setValue('mission_2')
+    wrapper.get('.project-list').element.scrollTop = 120
+    await wrapper.get('.project-row').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('MissionWorkspace')
+    expect(wrapper.find('.project-list').exists()).toBe(false)
+    await router.push({ name: 'AcgVisualization' })
+    await flushPromises()
+    expect((wrapper.get('input[type="search"]').element as HTMLInputElement).value).toBe('mission_2')
+    expect(wrapper.get('.project-list').element.scrollTop).toBe(120)
+    const row = wrapper.get('.project-row.is-last-opened')
+    expect(row.attributes('data-mission-id')).toBe('mission_2')
+    expect(document.activeElement).toBe(row.element)
+  })
+
   it('switches between the reference list view and a card grid and remembers the choice', async () => {
     const { wrapper } = await mountPage()
 

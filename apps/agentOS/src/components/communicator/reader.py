@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 
-from .broker import CommunicationAccessError, CommunicationBroker
+from .broker import CommunicationAccessError, CommunicationBroker, EntropyBudgetExceededError
 from .contracts import ContextPack
 from contracts.request_budget import SupplementalReadBudget
 
@@ -33,10 +33,35 @@ class CommunicationReader:
         self._on_read = on_read
         self._completed_operations: set[str] = set()
         self._evidence_refs: list[str] = []
+        self._receipt_evidence_refs: set[str] = set()
 
     @property
     def evidence_refs(self) -> tuple[str, ...]:
         return tuple(self._evidence_refs)
+
+    @property
+    def receipt_evidence_refs(self) -> frozenset[str]:
+        return frozenset(self._receipt_evidence_refs)
+
+    def admit_receipt_reference(self, reference: str) -> None:
+        self._receipt_evidence_refs.add(reference)
+        if reference not in self._evidence_refs:
+            self._evidence_refs.append(reference)
+
+    def committed_receipt_refs(self, producers: set[str]) -> set[tuple[str, str]]:
+        """Find receipts published by the committed outputs delivered to this reader."""
+        delivered = {self._output_refs[step]: step for step in producers if step in self._output_refs}
+        if not delivered or self.operation_store is None:
+            return set()
+        references = set()
+        for commit in self.operation_store.list_node_commits(run_id=self._run_id):
+            producer = delivered.get(commit.get("outputRef"))
+            if not producer or commit.get("stage") != "committed" or commit.get("auditOutcome") != "allow":
+                continue
+            for record in (*(commit.get("toolCalls") or ()), *(commit.get("historicalToolEvidence") or ())):
+                if record.get("runId") == self._run_id and record.get("stepId") == producer and record.get("receiptRef"):
+                    references.add((producer, record["receiptRef"]))
+        return references
 
     def describe_sources(self) -> list[dict]:
         return [self._broker.describe_reference(run_id=self._run_id,
@@ -121,7 +146,6 @@ class CommunicationReader:
         if ((self.model_budget is not None and self.model_budget.max_read_tokens is not None
                 and page_tokens > self.model_budget.max_read_tokens)
                 or (self._max_tokens is not None and page_tokens > self._max_tokens)):
-            from .broker import EntropyBudgetExceededError
             raise EntropyBudgetExceededError("requested page exceeds frozen read budget")
         pack, next_cursor = await self._broker.read_reference_page(
             run_id=self._run_id, consumer_step_id=self._consumer_step_id,
@@ -132,6 +156,21 @@ class CommunicationReader:
             supplemental_limit=self.model_budget.total_tokens if self.model_budget else None,
             supplemental_read=True,
             value_path=value_path,
+        )
+        self._record(pack, operation_id)
+        return pack, next_cursor
+
+    def read_evidence_page(self, *, reference: str, producer_step_id: str, field: str,
+                           value, cursor: str | None, page_tokens: int, operation_id: str):
+        """Account for a page of a receipt already admitted by the tool session."""
+        limit = self.model_budget or SupplementalReadBudget()
+        caps = [value for value in (limit.max_read_tokens or limit.page_tokens, self._max_tokens) if value is not None]
+        if not 1 <= page_tokens <= min(caps):
+            raise EntropyBudgetExceededError("requested page exceeds frozen read budget")
+        pack, next_cursor = self._broker.read_evidence_page(
+            consumer_step_id=self._consumer_step_id, producer_step_id=producer_step_id,
+            reference=reference, field=field, value=value, cursor=cursor, page_tokens=page_tokens,
+            operation_id=operation_id, supplemental_limit=limit.total_tokens,
         )
         self._record(pack, operation_id)
         return pack, next_cursor

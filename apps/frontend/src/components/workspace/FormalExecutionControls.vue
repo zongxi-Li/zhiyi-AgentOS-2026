@@ -1,5 +1,5 @@
 <template>
-  <section v-if="visible" class="formal-control" :class="{ 'is-embedded': embedded, 'is-conversational': conversational, 'is-actionable': conversational && !!action }" aria-label="正式运行控制">
+  <section v-if="visible" class="formal-control" :class="{ 'is-embedded': embedded, 'is-conversational': conversational, 'is-actionable': conversational && (!!action || launching) }" aria-label="正式运行控制">
     <header v-if="!conversational"><strong>{{ embedded ? '任务进展' : '运行控制' }}</strong><button type="button" :disabled="pending" @click="emit('refresh')">刷新</button></header>
     <LifecycleProgress v-if="embedded && !conversational" :phase="lifecycle.phase" />
     <dl v-if="!embedded && !conversational" aria-live="polite">
@@ -8,11 +8,11 @@
       <div><dt>许可</dt><dd>{{ control?.permitStatus || '尚未签发' }}</dd></div>
       <div><dt>执行命令</dt><dd>{{ control?.dispatch?.status || '尚未提交' }}</dd></div>
     </dl>
-    <p v-if="!conversational || action || waitingForApproval || !control" class="formal-control__hint">{{ explanation }}</p>
+    <p v-if="!conversational || (action && !oneClick) || launching || waitingForApproval || !control" class="formal-control__hint" role="status">{{ explanation }}</p>
     <p v-if="!conversational && (run?.failureCode || run?.error?.code)" role="status" class="formal-control__error">{{ run.failureCode || run.error?.code }}</p>
     <div class="formal-control__actions">
-      <button v-if="action" type="button" class="formal-control__primary" :disabled="disabled" @click="submit">
-        {{ pending ? '正在提交…' : error && !blocked ? '重试原操作' : reviewedPlan && action === 'materialize' ? '确认规划并继续' : formalActionLabels[action] }}
+      <button v-if="action || launching" type="button" class="formal-control__primary" :disabled="disabled" @click="submit">
+        {{ primaryLabel }}
       </button>
       <button v-if="canCancel && !historical && capabilities?.canCancel" type="button" :disabled="readonly || pending || cancelPending || !run" @click="emit('cancel')">
         {{ cancelPending ? '正在取消…' : '取消任务' }}
@@ -42,31 +42,52 @@
 <script setup lang="ts">
 import LifecycleProgress from './LifecycleProgress.vue'
 import { projectRunLifecycle, lifecycleDescriptions } from '@/features/workspace/runLifecycle'
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onDeactivated, ref, watch } from 'vue'
 import { agentosApi, type WorkflowRun, type RunActionCapabilities } from '@/services/api/agentos'
-import { readRunCapabilities } from '@/workbench/runtime/runCapabilities'
+import type { FormalAction } from '@/services/api/agentos/api/c2'
+import { readRunCapabilities, runCapabilities } from '@/workbench/runtime/runCapabilities'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
 import { formalActionLabels, formalSource, nextFormalAction, prepareFormalCommand, validFormalReceipt, type FormalOperationSuccess } from '@/features/acg/formalControl'
 
-const props = withDefaults(defineProps<{ run: WorkflowRun | null; runId: string | null; missionId: string; historical: boolean; canCancel: boolean; cancelPending: boolean; embedded?: boolean; conversational?: boolean; readonly?: boolean; executionReadonly?: boolean; showReview?: boolean; actionCapabilities?: RunActionCapabilities | null; reviewedPlan?: { commitId: string | null; commitmentRevision: number | null } | null; requirePlanReview?: boolean; waitingForApproval?: boolean }>(), { embedded: false, conversational: false, readonly: false, executionReadonly: false, showReview: true, reviewedPlan: null, requirePlanReview: false, waitingForApproval: false })
+const props = withDefaults(defineProps<{ run: WorkflowRun | null; runId: string | null; missionId: string; historical: boolean; canCancel: boolean; cancelPending: boolean; embedded?: boolean; conversational?: boolean; readonly?: boolean; executionReadonly?: boolean; showReview?: boolean; actionCapabilities?: RunActionCapabilities | null; reviewedPlan?: { commitId: string | null; commitmentRevision: number | null } | null; requirePlanReview?: boolean; waitingForApproval?: boolean; launchInOneClick?: boolean }>(), { embedded: false, conversational: false, readonly: false, executionReadonly: false, showReview: true, reviewedPlan: null, requirePlanReview: false, waitingForApproval: false })
 const capabilities = computed(() => !Number.isInteger(props.run?.runtimeRevision) ? null :
   readRunCapabilities(props.actionCapabilities === undefined ? props.run?.actionCapabilities : props.actionCapabilities,
     props.missionId, props.runId, props.run?.runtimeRevision, props.run?.status))
 const emit = defineEmits<{ refresh: []; cancel: []; succeeded: [event: FormalOperationSuccess] }>()
-const pending = ref(false)
+const submitting = ref(false)
+const launching = ref(false)
+const pending = computed(() => submitting.value || launching.value)
 const error = ref('')
 const blocked = ref(false)
 const acknowledged = ref('')
+const acceptedLaunch = ref('')
 const seenFormal = ref(false)
 let generation = 0
-onBeforeUnmount(() => { generation++ })
-watch(() => [props.missionId, props.runId], () => { generation++; pending.value = false; error.value = ''; blocked.value = false; acknowledged.value = ''; seenFormal.value = false })
+let launchController: AbortController | undefined
+const stopLaunch = () => {
+  launchController?.abort()
+  launchController = undefined
+  launching.value = false
+}
+onBeforeUnmount(() => { generation++; stopLaunch() })
+onDeactivated(stopLaunch)
+watch(() => [props.missionId, props.runId], () => {
+  generation++
+  submitting.value = false
+  error.value = ''
+  blocked.value = false
+  acknowledged.value = ''
+  acceptedLaunch.value = ''
+  seenFormal.value = false
+})
 watch(() => props.run?.formalControl, c => { if (c) seenFormal.value = true }, { immediate: true })
 const control = computed(() => props.run?.formalControl)
 const visible = computed(() => seenFormal.value || Boolean(control.value) || props.run?.executionState?.planningCommitRequired
   || props.canCancel && capabilities.value?.canCancel === true)
 const action = computed(() => props.run?.runId === props.runId && props.run?.missionId === props.missionId ? nextFormalAction(props.run) : null)
-const reviewedPlanMatches = computed(() => action.value !== 'materialize' || (!props.reviewedPlan ? !props.requirePlanReview
+const oneClick = computed(() => props.launchInOneClick && control.value?.dispatchEnabled === true)
+const planKey = computed(() => JSON.stringify([props.missionId, props.runId, control.value?.commitId, control.value?.commitmentRevision]))
+const reviewedPlanMatches = computed(() => (!action.value || action.value !== 'materialize' && !oneClick.value) || (!props.reviewedPlan ? !props.requirePlanReview
   : Boolean(props.reviewedPlan.commitId && props.reviewedPlan.commitId === control.value?.commitId
     && props.reviewedPlan.commitmentRevision === control.value?.commitmentRevision)))
 const source = computed(() => action.value && props.run ? formalSource(props.run, action.value) : '')
@@ -76,15 +97,31 @@ const authority = computed(() => JSON.stringify([props.missionId, props.runId,
   props.run?.missionId, props.run?.runId, props.run?.status, props.run?.runtimeRevision,
   props.run?.formalControl, capabilities.value, props.historical,
   props.readonly, props.executionReadonly]))
-watch(authority, () => { generation++; pending.value = false }, { flush: 'sync' })
+watch(authority, () => { generation++; submitting.value = false }, { flush: 'sync' })
+
+// Normal control transitions can update the Run while a launch is in progress.
+// Changes to the user's context or the reviewed plan end that launch instead.
+watch(() => [props.missionId, props.runId, props.historical, props.readonly, props.executionReadonly,
+  props.cancelPending, props.waitingForApproval, props.reviewedPlan?.commitId, props.reviewedPlan?.commitmentRevision],
+  (next, previous) => { if (next.some((value, index) => value !== previous[index])) stopLaunch() }, { flush: 'sync' })
 
 const disabled = computed(() => props.readonly || props.executionReadonly || pending.value || blocked.value || props.historical || acknowledged.value === source.value
+  || props.cancelPending || props.waitingForApproval || acceptedLaunch.value === planKey.value
   || !reviewedPlanMatches.value || !capabilities.value?.canExecuteFormalAction || !action.value || !capabilities.value.formalActions.includes(action.value))
+const primaryLabel = computed(() => {
+  if (launching.value) return '正在启动任务…'
+  if (submitting.value) return '正在提交…'
+  if (!action.value) return ''
+  if (oneClick.value) return error.value && !blocked.value ? '重试启动任务' : action.value === 'materialize' ? '确认规划并执行' : '执行任务'
+  if (error.value && !blocked.value) return '重试原操作'
+  return props.reviewedPlan && action.value === 'materialize' ? '确认规划并继续' : formalActionLabels[action.value]
+})
 const reviewRun = computed(() => props.run ? { ...props.run, review: props.run.review || props.run.executionState?.reviewPayload } : null)
 const references = computed(() => ({ Commit: control.value?.commitId, Graph: control.value?.graphId, Version: control.value?.graphVersion,
   Activation: control.value?.activationId, Handoff: control.value?.handoffId, Permit: control.value?.permitId, Dispatch: control.value?.dispatch?.dispatchId }))
 const lifecycle = computed(() => projectRunLifecycle({ missionId: props.missionId, runId: props.runId || '', run: props.run }))
 const explanation = computed(() => {
+  if (launching.value) return '正在准备并启动任务，请稍候。'
   if (props.waitingForApproval) return '等待你确认工具操作，审批通过后继续执行。'
   if (!props.run) return '无法验证正式状态，控制操作已禁用。'
   if (!control.value) return capabilities.value?.canCancel
@@ -105,13 +142,66 @@ const explanation = computed(() => {
   if (action.value === 'activate') return '任务图已物化，尚未激活。'
   return '等待正式规划或可验证状态；未识别的状态禁止控制操作。'
 })
+const launchSteps: FormalAction[] = ['materialize', 'activate', 'handoff', 'permit', 'dispatch']
+const launch = async (initial: WorkflowRun, first: FormalAction) => {
+  const controller = new AbortController()
+  launchController = controller
+  launching.value = true
+  error.value = ''
+  const { missionId, runId } = initial
+  const { commitId, commitmentRevision } = initial.formalControl!
+  const confirmedPlan = planKey.value
+  let graphId = initial.formalControl!.graphId
+  let graphVersion = initial.formalControl!.graphVersion
+  let run = initial
+  try {
+    for (const step of launchSteps.slice(launchSteps.indexOf(first))) {
+      const c = run.formalControl
+      const offers = step === first ? capabilities.value : runCapabilities(run)
+      if (run.missionId !== missionId || run.runId !== runId || !c?.dispatchEnabled
+        || c.commitId !== commitId || c.commitmentRevision !== commitmentRevision
+        || graphId && (c.graphId !== graphId || c.graphVersion !== graphVersion)
+        || nextFormalAction(run) !== step || !offers?.formalActions.includes(step)) {
+        error.value = '任务状态或权限已变化。请查看最新状态后再继续。'
+        return
+      }
+      graphId = c.graphId
+      graphVersion = c.graphVersion
+      const command = prepareFormalCommand(run, step, localStorage)
+      const receipt = await agentosApi.submitFormalControl(missionId, runId, step, command)
+      if (controller.signal.aborted) return
+      if (!validFormalReceipt(step, command.operationId, receipt)) throw new Error('Unconfirmed formal receipt')
+      if (step === 'dispatch') {
+        acceptedLaunch.value = confirmedPlan
+        emit('succeeded', { action: step, operationId: command.operationId, status: receipt.status,
+          dispatchId: receipt.dispatchId, missionId, runId })
+        return
+      }
+      run = await agentosApi.getWorkflowRun(runId, { signal: controller.signal })
+      if (controller.signal.aborted) return
+    }
+  } catch (failure: unknown) {
+    if (controller.signal.aborted) return
+    const status = (failure as { response?: { status?: number } }).response?.status
+    error.value = [401, 403, 409, 422].includes(status || 0)
+      ? '任务启动被拒绝。请查看最新状态后再继续。'
+      : '任务启动尚未确认。请查看当前状态，或点击重试。'
+  } finally {
+    if (launchController === controller) {
+      stopLaunch()
+      emit('refresh')
+    }
+  }
+}
+
 const submit = async () => {
   if (!action.value || !props.run || disabled.value) return
+  if (oneClick.value && action.value !== 'dispatch') return launch(props.run, action.value)
   const current = generation
   const run = props.run
   const requestedAction = action.value
   const requestedSource = source.value
-  pending.value = true
+  submitting.value = true
   error.value = ''
   let prepared = false
   try {
@@ -133,7 +223,7 @@ const submit = async () => {
       : '提交结果未确认。可重试原操作；不会生成新的 operationId。'
     emit('refresh')
   } finally {
-    if (current === generation) pending.value = false
+    if (current === generation) submitting.value = false
   }
 }
 </script>

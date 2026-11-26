@@ -1,4 +1,6 @@
 import type { GraphProjection } from './graph'
+import type { CopilotInitialPlan } from '../api/copilot'
+import type { StepResourceBinding } from './agentPool'
 
 export type WorkflowStatus =
   | 'pending'
@@ -168,11 +170,20 @@ export interface TraceEvent {
   createdAt?: string
 }
 export interface WorkflowRun {
+  initialPlan?: CopilotInitialPlan | null
   actionCapabilities?: RunActionCapabilities | null
   formalControl?: FormalControl | null
   error?: { code?: string } | null
   failureCode?: string | null
-  executionState?: { reviewPayload?: WorkflowRun['review']; planningCommitRequired?: boolean }
+  executionState?: {
+    reviewPayload?: WorkflowRun['review']
+    planningCommitRequired?: boolean
+    bindingRequirements?: Record<string, { requiredCapabilities?: string[]; preferences?: { agentRole?: string } }>
+    executionBindings?: Record<string, StepResourceBinding>
+    schedulingStates?: Record<string, { status: string; reason?: string; capacityBlockers?: string[] }>
+    schedulingFailures?: Record<string, { status: string; reason?: string; capacityBlockers?: string[] }>
+    schedulingDecisions?: Array<{ stepId: string; attemptId: string; binding: StepResourceBinding }>
+  }
   runId: string
   missionId: string
   title?: string | null

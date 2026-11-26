@@ -437,6 +437,37 @@ class CommunicationBroker:
             raise CommunicationAccessError("CURSOR_INVALID", "scalar fields do not support a nonzero offset")
         return value, None
 
+    def read_evidence_page(self, *, consumer_step_id: str, producer_step_id: str,
+                           reference: str, field: str, value: Any, cursor: str | None,
+                           page_tokens: int, operation_id: str, supplemental_limit: int | None):
+        """Page an admitted receipt using the same slicing and supplemental ledger as field reads."""
+        scope = input_revision([self.manifest.run_id, consumer_step_id, reference, field]) + ":"
+        if cursor is not None and (not cursor.startswith(scope) or not cursor[len(scope):].isdigit()):
+            raise CommunicationAccessError("CURSOR_INVALID", "cursor does not address this evidence field")
+        offset = int(cursor[len(scope):]) if cursor else 0
+        overhead = estimate_tokens({field: None}) + 2
+        if page_tokens <= overhead:
+            raise EntropyBudgetExceededError("page budget cannot hold the field envelope")
+        body, following = self._slice_value(value, offset=offset, page_tokens=page_tokens - overhead)
+        data = {field: body}
+        tokens = estimate_tokens(data)
+        if tokens > page_tokens:
+            raise EntropyBudgetExceededError("evidence page exceeds the read budget")
+        revision = input_revision([reference, field, offset, page_tokens, data, supplemental_limit])
+        self._reserve(consumer_step_id=consumer_step_id, channel="evidence", tokens=tokens,
+                      operation_id=operation_id, supplemental_limit=supplemental_limit,
+                      supplemental_read=True, fingerprint=revision)
+        pack = ContextPack(runId=self.manifest.run_id, stepId=consumer_step_id, data=data,
+                           sourceData={producer_step_id: data}, evidenceRefs=[reference],
+                           tokensDelivered=tokens, tokensAvailable=tokens,
+                           sourceStepIds=[producer_step_id], inputRevision=revision)
+        self._append_event({"type": "communication_page_read", "runId": self.manifest.run_id,
+                            "consumerStepId": consumer_step_id, "producerStepId": producer_step_id,
+                            "outputRef": reference, "fields": [field], "tokens": tokens, "channel": "evidence",
+                            "operationId": operation_id, "readKind": "page", "readPhase": "supplemental"},
+                           operation_id=operation_id)
+        return pack, scope + str(following) if following is not None else None
+
     def drain_events(self, *, consumer_step_id: str | None = None) -> list[dict[str, Any]]:
         """领取无正文读取审计事件；返回后清空私有缓冲避免后续步骤重复投影。"""
         events = [

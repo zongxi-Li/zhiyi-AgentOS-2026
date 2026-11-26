@@ -43,6 +43,21 @@ describe('SettingsView shell integration', () => {
   })
 })
 
+describe('SettingsView header', () => {
+  it('keeps only the page title in the header (no eyebrow, no subtitle)', () => {
+    // 页头只留页名：PERSONAL SETTINGS 眉题与 description 副标题都已移除，
+    // 标题与右侧保存操作同排，避免每页顶部堆两行小字。
+    const headerBlock = settingsViewSource.slice(
+      settingsViewSource.indexOf('class="settings-header"'),
+      settingsViewSource.indexOf('class="settings-header-actions"')
+    )
+    expect(headerBlock).toContain('<h1>{{ currentTab.label }}</h1>')
+    expect(headerBlock).not.toContain('PERSONAL SETTINGS')
+    expect(headerBlock).not.toContain('currentTab.description')
+    expect(settingsViewSource).not.toContain('settings-eyebrow')
+  })
+})
+
 describe('SettingsView brand picker', () => {
   it('offers the three brand packs in the appearance tab and applies on click', () => {
     // Logo 三选卡与主题卡片同构：点击即预览生效（主题变体 + favicon），保存设置统一落盘。

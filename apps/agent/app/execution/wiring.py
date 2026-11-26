@@ -317,6 +317,7 @@ def _configure_agent_provisioning(runtime: ExecutionRuntime, jobs) -> None:
         constructors[WorkspaceDeveloper] = WorkspaceDeveloper
     runtime.agent_pool = runtime.runtime_binding_service.agent_pool
     runtime.agent_pool.synchronize()
+    runtime.agent_pool.prune_previous_registries(runtime.resource_binder.coordinator)
     runtime.agent_provisioner = AgentProvisioner(
         pool=runtime.agent_pool, jobs=jobs,
         coordinator=runtime.resource_binder.coordinator,

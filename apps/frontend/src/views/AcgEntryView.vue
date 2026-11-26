@@ -1,13 +1,11 @@
 <template>
   <section v-if="runId" class="acg-entry-bridge" aria-live="polite">
     <div v-if="loading" class="acg-entry-bridge__card">
-      <span class="acg-entry-bridge__eyebrow">MISSION PROJECT WORKSPACE</span>
       <h1>正在打开任务工作区</h1>
       <p>正在解析运行所属的 Mission…</p>
     </div>
 
     <div v-else class="acg-entry-bridge__card acg-entry-bridge__card--error" role="alert">
-      <span class="acg-entry-bridge__eyebrow">WORKSPACE UNAVAILABLE</span>
       <h1>无法打开任务工作区</h1>
       <p>{{ errorMessage }}</p>
       <button type="button" @click="returnToProjectList">返回项目列表</button>
@@ -101,13 +99,6 @@ onBeforeUnmount(() => {
 
 .acg-entry-bridge__card--error {
   border-color: #f1d3d3;
-}
-
-.acg-entry-bridge__eyebrow {
-  color: #6065d8;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .12em;
 }
 
 h1 {

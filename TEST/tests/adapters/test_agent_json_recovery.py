@@ -50,6 +50,8 @@ class RawModelHTTP:
         value = next(self.replies)
         if isinstance(value, BaseException):
             raise value
+        if callable(value):
+            value = value(payload)
         return copy.deepcopy(value)
 
     async def stream(self, *, payload, **kwargs):
@@ -124,6 +126,77 @@ async def test_node_repairs_final_json_in_place_without_repeating_completed_read
 
     await runner(step.step_id, state)
     assert len(http.requests) == 3 and len(stack.service.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_large_workspace_receipt_is_paged_by_the_node_and_its_next_attempt(stack, monkeypatch):
+    from components.communicator.reader import CommunicationReader
+
+    agent = GeneralAgent()
+    runner, state, step, _ = node(stack, agent)
+    body = "private source line\n" * 220_000
+    stack.service.files[("one", "note.txt")] = body
+    step.input["contextPolicy"] = {"requestBudget": {"totalTokens": 16000, "outputReserveTokens": 500}}
+    observed_refs = []
+
+    def page_call(reference):
+        return reply(None, finish_reason="tool_calls", tool_calls=[{
+            "id": "page", "type": "function", "function": {"name": "context__read_page",
+                "arguments": json.dumps({"producerStepId": reference, "fields": ["content"]})}}])
+
+    def read_page_after_tool(payload):
+        response = json.loads(next(message["content"] for message in payload["messages"] if message["role"] == "tool"))
+        output = response["output"]
+        assert output["scope"] == "evidence_reference" and "content" not in output
+        observed_refs.append(output["receiptRef"])
+        return page_call(observed_refs[0])
+
+    def finish_after_page(payload):
+        response = json.loads([message["content"] for message in payload["messages"] if message["role"] == "tool"][-1])
+        output = response["output"]
+        assert output["data"]["content"].startswith("private source line")
+        assert output["estimatedTokens"] <= 1024 and output["hasMore"]
+        assert output["evidenceRefs"] == observed_refs
+        return reply('{"answer":"scoped finding"}')
+
+    initial = bind_raw_model(runner, [read_reply(), read_page_after_tool, finish_after_page])
+    result = await runner(step.step_id, state)
+    reference = observed_refs[0]
+    receipt = runner.value_store.get_output(run_id=runner.run.run_id, output_ref=reference)
+    assert receipt["output"]["text"] == body
+    assert stack.service.execution_count == 1
+    assert len(initial.requests) == 3
+    assert len(json.dumps(initial.requests[-1])) < 40_000
+    assert result["evidenceRefs"] == [reference]
+    assert result["communicationReads"][-1]["outputRef"] == reference
+    assert "private source line" not in json.dumps(result)
+
+    def start_recovery(payload):
+        assert reference in json.dumps(payload)
+        assert "private source line" not in json.dumps(payload)
+        return page_call(reference)
+
+    recovered_model = bind_raw_model(runner, [start_recovery, finish_after_page])
+    context = context_for(runner, step)
+    context.commit_id, context.attempt_id = "recovery-commit", "recovery-attempt"
+    context.capability_descriptor = runner.capability_descriptors[step.capability]
+    context.tool_runtime = runner.tool_runtime.bind_context(context, lambda: None)
+    context.communication_reader = CommunicationReader(broker=runner.communication_broker, run_id=runner.run.run_id,
+        consumer_step_id=step.step_id, output_refs={}, max_tokens=None)
+    record = next(item for item in result["toolCalls"] if item.get("receiptRef") == reference)
+    history = [{"kind": "previous_attempt_tool_observation", "receiptRef": reference,
+                "record": record, "result": {"path": "note.txt", "content": body}}]
+    context.run.execution_state.update(retryEvidenceContextVersion=1,
+        readOnlyRetryProofs={"earlier-operation": {"stepId": step.step_id}})
+
+    async def collect(_context):
+        return history
+
+    monkeypatch.setattr(context.tool_runtime, "previous_attempt_observations", collect)
+    recovered = await agent.run(context)
+    assert recovered.output == {"answer": "scoped finding"}
+    assert stack.service.execution_count == 1
+    assert len(recovered_model.requests) == 2
 
 
 @pytest.mark.asyncio

@@ -136,3 +136,39 @@ def test_profile_api_roundtrip(profile_env):
     deleted = client.delete("/llm/profiles/relay")
     assert deleted.status_code == 200
     assert all(p["name"] != "relay" for p in deleted.json()["profiles"])
+
+
+def test_model_catalog_reads_each_configured_connection_without_switching(profile_env, monkeypatch):
+    from types import SimpleNamespace
+    from app.api import llm_admin
+
+    calls = []
+
+    class Client:
+        def __init__(self, *, api_key, base_url, **kwargs):
+            self.key = api_key
+            calls.append((api_key, base_url))
+            self.models = self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def list(self):
+            ids = ['deepseek-chat', 'deepseek-v4-pro'] if self.key == 'key-deepseek' else ['glm-5.3-flash', 'glm-example']
+            return SimpleNamespace(data=[SimpleNamespace(id=name) for name in ids])
+
+    monkeypatch.setattr('openai.AsyncOpenAI', Client)
+    app = FastAPI()
+    app.include_router(llm_admin.router)
+    with TestClient(app) as client:
+        response = client.get('/llm/provider-models')
+    assert response.status_code == 200
+    models = {entry['provider']: entry['models'] for entry in response.json()['catalogs']}
+    assert models['deepseek'] == ['deepseek-flash', 'deepseek-v4-pro']
+    assert models['glm'] == ['glm-5.3-flash', 'glm-example']
+    assert {key for key, _ in calls} == {'key-deepseek', 'key-glm'}
+    assert 'key-deepseek' not in response.text and 'key-glm' not in response.text
+    assert get_profile_store().active_name() == 'glm'

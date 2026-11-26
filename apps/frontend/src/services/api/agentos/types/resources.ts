@@ -9,6 +9,7 @@ export interface RuntimeResourceEndpoint {
 }
 /** Resource catalog read projection; command contracts are declared separately. */
 export interface RuntimeResourceItem {
+  health?: { healthy: boolean; status: string; lastHeartbeat?: string | null }
   profile: RuntimeResourceCatalogProfile
   snapshot: RuntimeResourceCatalogSnapshot
   snapshotVersion: number

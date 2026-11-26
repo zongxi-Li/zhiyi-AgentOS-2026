@@ -194,8 +194,14 @@ def sql(info, creds, text, *, timeout=None):
 
 def redis_client(creds, db=0, *, port=16379):
     import redis
+    from redis.backoff import NoBackoff
+    from redis.retry import Retry
+    # Readiness is retried by wait_until. SHUTDOWN intentionally disconnects;
+    # redis-py's default retries otherwise reconnect to a stopped server and
+    # add exponential backoff to every recovery.
     return redis.Redis(host='127.0.0.1', port=port, password=creds['redis'],
-                       db=db, socket_timeout=3, socket_connect_timeout=3)
+                       db=db, socket_timeout=3, socket_connect_timeout=3,
+                       retry=Retry(NoBackoff(), 0))
 
 
 def alive(record):

@@ -283,7 +283,8 @@ async def test_model_tool_call_result_and_final_agent_output_through_acg_node(st
     assert stack.runtime.execution_value_store.get_output(run_id=runner.run.run_id,
         output_ref=result['outputRef']) == {'answer': 'file evidence'}
     assert len(http.requests) == 2
-    assert {entry['function']['name'] for entry in http.requests[0]['tools']} == {name.replace('.', '__') for name in NAMES}
+    assert {entry['function']['name'] for entry in http.requests[0]['tools']} == (
+        {name.replace('.', '__') for name in NAMES} | {'context__list_sources', 'context__read_page'})
     messages = http.requests[1]['messages']
     assert messages[-1]['role'] == 'tool'
     assert json.loads(messages[-1]['content'])['output']['content'] == 'file evidence'
@@ -561,7 +562,8 @@ async def test_workspace_semantic_stages_enforce_read_only_tools_at_node_boundar
     await runner(step.step_id, state)
     assert {item['capabilityId'] for item in stack.service.requests} == {'fs.read', 'fs.list'}
     assert len(stack.service.requests) == 2
-    assert {entry['function']['name'] for entry in http.requests[0]['tools']} == {'fs__read', 'fs__list'}
+    assert {entry['function']['name'] for entry in http.requests[0]['tools']} == {
+        'fs__read', 'fs__list', 'context__list_sources', 'context__read_page'}
     failures = [json.loads(item['content']) for item in http.requests[1]['messages'] if item['role'] == 'tool']
     assert len(failures) == 2 and all(item['status'] == 'failed' for item in failures)
 
@@ -584,7 +586,8 @@ async def test_frozen_workspace_semantics_restrict_legacy_steps_without_role(sta
     runner.run.execution_state.update(taskPlan=plan.model_dump(by_alias=True, mode='json'),
         taskBindings=[{'planNodeKey': task.key, 'acgNodeId': step.step_id}])
     await runner(step.step_id, state)
-    assert {entry['function']['name'] for entry in http.requests[0]['tools']} == {'fs__read', 'fs__list'}
+    assert {entry['function']['name'] for entry in http.requests[0]['tools']} == {
+        'fs__read', 'fs__list', 'context__list_sources', 'context__read_page'}
     assert [request['capabilityId'] for request in stack.service.requests] == ['fs.read']
 
 
@@ -599,7 +602,8 @@ async def test_ordinary_verification_keeps_shell_and_managed_tests(stack, monkey
     step.capability = 'verification'
     runner.capability_descriptors['verification'] = agent.capability_catalog.get('verification')
     await runner(step.step_id, state)
-    assert {entry['function']['name'] for entry in http.requests[0]['tools']} == {name.replace('.', '__') for name in NAMES}
+    assert {entry['function']['name'] for entry in http.requests[0]['tools']} == (
+        {name.replace('.', '__') for name in NAMES} | {'context__list_sources', 'context__read_page'})
     assert [request['capabilityId'] for request in stack.service.requests] == ['shell.exec', 'shell.exec']
 
 

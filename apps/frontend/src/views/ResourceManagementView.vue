@@ -3,7 +3,7 @@
     <WorkbenchLayout :show-left="false" :show-right="false" storage-key="zhiyi.resources.manage.v2">
       <template #main>
         <main class="resource-page__main" aria-label="资源管理">
-          <WorkspacePageHero eyebrow="RESOURCE PLANE / 02" title="资源管理">
+          <WorkspacePageHero title="资源管理">
             <template #actions>
               <RouterLink class="resource-manage-action" to="/agentos/resources/store">添加资源</RouterLink>
             </template>

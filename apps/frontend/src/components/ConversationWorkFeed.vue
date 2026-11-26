@@ -370,7 +370,6 @@ const resolveApproval = async (item: WorkFeedItem, decision: ChatApprovalDecisio
 .terminal-work__header {
   justify-content: space-between;
   padding: 8px 11px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border-light) 78%, transparent);
   color: var(--text-secondary);
   font-size: 12px;
 }
@@ -382,7 +381,6 @@ const resolveApproval = async (item: WorkFeedItem, decision: ChatApprovalDecisio
 
 .terminal-work__item {
   padding: 9px 11px 10px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border-light) 62%, transparent);
 }
 
 .terminal-work__item:last-child { border-bottom: 0; }
@@ -458,7 +456,6 @@ const resolveApproval = async (item: WorkFeedItem, decision: ChatApprovalDecisio
 .file-work__header {
   justify-content: space-between;
   padding: 8px 11px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border-light) 78%, transparent);
   color: var(--text-secondary);
   font-size: 12px;
 }
@@ -466,7 +463,7 @@ const resolveApproval = async (item: WorkFeedItem, decision: ChatApprovalDecisio
 .file-work__title { color: var(--text-primary); font-weight: 600; }
 .file-work__count,
 .file-work__count-detail { color: var(--text-muted); font-size: 11px; }
-.file-work__item { padding: 9px 11px 10px; border-bottom: 1px solid color-mix(in srgb, var(--border-light) 62%, transparent); }
+.file-work__item { padding: 9px 11px 10px; }
 .file-work__item:last-child { border-bottom: 0; }
 .file-work__item.is-failed { background: color-mix(in srgb, var(--danger) 5%, transparent); }
 .file-work__item.is-running { background: color-mix(in srgb, var(--primary-color) 4%, transparent); }

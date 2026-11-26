@@ -3,7 +3,7 @@ import { inject } from 'vue'
 import InspectorFrame from '@/components/workbench/InspectorFrame.vue'
 import InspectorSection from '@/components/workbench/InspectorSection.vue'
 import InspectorPropertyList from '@/components/workbench/InspectorPropertyList.vue'
-import { graphVersionTime, graphVersionsKey } from './graphVersions'
+import { graphVersionTime, graphVersionPair, graphVersionsKey } from './graphVersions'
 
 defineProps<{ fullscreen?: boolean }>()
 const emit = defineEmits<{ close: []; toggleFullscreen: [] }>()
@@ -11,9 +11,9 @@ const versions = inject(graphVersionsKey, null)
 </script>
 
 <template>
-  <InspectorFrame v-if="versions?.selected.value" :title="`图版本 v${versions.selected.value.graphVersion}`" historical
+  <InspectorFrame v-if="versions?.selected.value" :title="graphVersionPair(versions.selected.value)" historical
     :fullscreen="fullscreen" @close="emit('close')" @toggle-fullscreen="emit('toggleFullscreen')">
-    <InspectorSection title="历史图快照" badge="只读">
+    <InspectorSection title="RGraph 执行结构快照" badge="只读">
       <p>{{ versions.selected.value.reason || (versions.previous.value ? '执行图修订' : '初始执行图') }}</p>
       <InspectorPropertyList :rows="[
         { label: '记录时间', value: graphVersionTime(versions.selected.value) },
