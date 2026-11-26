@@ -68,6 +68,84 @@ from storage import SQLiteV2Repositories, SQLiteV2Storage
 _SECRET = "REFERENCE-ONLY-OUTPUT-BODY"
 
 
+async def test_execution_storage_lifecycle_protects_recovery_memory_and_tool_evidence(tmp_path):
+    from components.executor.value_store import SQLiteExecutionValueStore
+    from contracts.memory import MemoryRecord, MemoryType
+
+    runtime = _runtime(tmp_path)
+    store = SQLiteExecutionValueStore(db_path=tmp_path / "values.sqlite3")
+    runtime.execution_value_store = store
+    mission = runtime.create_mission("Storage lifecycle", workflow_id="api-workflow")
+    _, run = runtime.prepare_run(mission.mission_id)
+    refs = [store.put_output(run_id=run.run_id, step_id="step", payload={"body": "x"*300000}) for _ in range(4)]
+    tool = store.put_tool_value(run_id=run.run_id, step_id="step", key="receipt", payload={"body": "tool evidence"})
+    run.execution_state["outputRefs"] = {"step": refs[0]}
+    runtime.memory_store.put(MemoryRecord(memoryId="memory", memoryType=MemoryType.EVIDENCE,
+        content={"sources": [{"evidence": refs[1]}]}))
+    store.pin_body(run_id=run.run_id, reference=refs[2], owner="memory:future")
+    cutoff = datetime.now(timezone.utc) + timedelta(days=1)
+    try:
+        run.status = WorkflowStatus.WAITING_REVIEW
+        run.steps[0].status = StepStatus.WAITING_REVIEW
+        run.current_step_id = run.steps[0].step_id
+        run.execution_state.update({"checkpointId": "storage-review-checkpoint",
+            "reviewPayload": {"stepId": run.current_step_id}})
+        runtime.workflow_store.save_run(run)
+        with pytest.raises(ValueError, match="waiting-review"):
+            runtime.maintain_execution_storage(run_id=run.run_id, older_than=cutoff)
+        run.status = WorkflowStatus.CANCELLED
+        run.steps[0].status = StepStatus.CANCELLED
+        runtime.workflow_store.save_run(run)
+        assert runtime.maintain_execution_storage(run_id=run.run_id, older_than=cutoff)["changed"] == 4
+        result = runtime.maintain_execution_storage(run_id=run.run_id, older_than=cutoff, action="eligible")
+        assert result["changed"] == 1
+        assert result["usage"]["states"] == {"online": 1, "archived": 3, "deletable": 1}
+        assert store.get_output(run_id=run.run_id, output_ref=refs[0])["body"] == "x"*300000
+        assert store.get_tool_value(run_id=run.run_id, key="receipt") == {"body": "tool evidence"}
+        # Deletion eligibility does not delete either the receipt or its body.
+        assert store.get_output(run_id=run.run_id, output_ref=refs[3])
+    finally:
+        store.close()
+
+
+async def test_execution_storage_api_is_owned_aggregate_only_and_has_no_purge(tmp_path):
+    from components.executor.value_store import SQLiteExecutionValueStore
+
+    runtime = _runtime(tmp_path)
+    store = SQLiteExecutionValueStore(db_path=tmp_path / "values.sqlite3")
+    runtime.execution_value_store = store
+    mission = runtime.create_mission("Private storage", workflow_id="api-workflow", input={
+        "authenticatedUserId": "owner", "authenticatedTenantId": "tenant"})
+    _, run = runtime.prepare_run(mission.mission_id)
+    store.put_output(run_id=run.run_id, step_id="step", payload={"body": _SECRET*20000})
+    coordinator = RunExecutionCoordinator(runtime)
+    app = FastAPI()
+    app.include_router(create_router(runtime, coordinator))
+    token = _trusted_user_context.set(TrustedUserContext(user_id="owner", subject="owner", role="operator", tenant_id="tenant"))
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            path = f"/agentos/v2/runs/{run.run_id}/storage"
+            report = await client.get(path)
+            assert report.status_code == 200, report.text
+            assert report.json()["records"] == 1
+            assert _SECRET not in report.text and "content_ref" not in report.text
+            assert (await client.get(path, params={"since": "2026-01-01T00:00:00"})).status_code == 422
+            body = {"action": "purge", "olderThan": datetime.now(timezone.utc).isoformat()}
+            assert (await client.post(path + "/maintenance", json=body)).status_code == 422
+            body["action"] = "archive"
+            assert (await client.post(path + "/maintenance", json=body)).status_code == 409
+            other = _trusted_user_context.set(TrustedUserContext(user_id="other", subject="other", role="operator", tenant_id="tenant"))
+            try:
+                assert (await client.get(path)).status_code == 404
+                assert (await client.post(path + "/maintenance", json=body)).status_code == 404
+            finally:
+                _trusted_user_context.reset(other)
+    finally:
+        _trusted_user_context.reset(token)
+        await coordinator.shutdown()
+        store.close()
+
+
 class _ApiAgent(BaseAgent):
     def __init__(self) -> None:
         super().__init__(AgentProfile(agentName="api-agent", domain="general"))

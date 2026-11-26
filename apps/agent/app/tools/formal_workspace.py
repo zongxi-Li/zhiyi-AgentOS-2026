@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import json
+from components.executor.value_storage import decode_body
 import os
 from pathlib import Path
 import re
@@ -113,7 +114,9 @@ class FormalWorkspaceTools:
                     continue
                 if is_planning_context_snapshot(run_id=run.run_id, reference=reference,
                         step_id=owner, kind=kind, operation_id=operation_id,
-                        payload=json.loads(snapshot_body) if snapshot_body is not None else None):
+                        payload=decode_body(
+                            connection, run_id=run.run_id, reference=reference, encoded=snapshot_body)
+                            if snapshot_body is not None else None):
                     # A sealed diagnostic copy of an internal input is not a
                     # second model/tool admission. Original WALs remain visible.
                     continue

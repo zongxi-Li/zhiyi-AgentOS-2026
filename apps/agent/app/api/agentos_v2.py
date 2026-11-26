@@ -93,6 +93,13 @@ from components.resource.catalog.contracts import CustomResourceRequest
 logger = logging.getLogger(__name__)
 
 
+class ExecutionStorageRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    action: str
+    older_than: datetime = Field(alias="olderThan")
+    limit: int = Field(default=100, ge=1, le=10000)
+
+
 class RunCancelRequest(BaseModel):
     model_config = ConfigDict(extra='forbid', populate_by_name=True)
     expected_runtime_revision: int | None = Field(default=None, alias='expectedRuntimeRevision', strict=True, ge=0)
@@ -3311,6 +3318,25 @@ def create_router(
         items = calls[start:start + page_size]
         next_cursor = str(start + page_size) if start + page_size < len(calls) else None
         return {"runId": run_id, "items": items, "nextCursor": next_cursor, "total": len(calls)}
+
+    @router.get("/runs/{run_id}/storage")
+    def get_execution_storage(run_id: str, since: datetime | None = Query(default=None)):
+        run = load_content_run(run_id)
+        if since is not None and since.utcoffset() is None:
+            raise HTTPException(422, "since must include a timezone")
+        return runtime.execution_value_store.storage_usage(run_id=run.run_id, since=since)
+
+    @router.post("/runs/{run_id}/storage/maintenance")
+    def maintain_execution_storage(run_id: str, request: ExecutionStorageRequest):
+        load_run(run_id, readonly=True, write=True)
+        # Physical purge is deliberately not a public maintenance operation.
+        if request.action not in {"migrate", "archive", "eligible"}:
+            raise HTTPException(422, "action must be migrate, archive or eligible")
+        try:
+            return runtime.maintain_execution_storage(run_id=run_id, older_than=request.older_than,
+                action=request.action, limit=request.limit)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     @router.get("/runs/{run_id}/plan")
     async def get_plan(run_id: str, plan_version: int | None = Query(default=None, alias="planVersion", ge=1)):

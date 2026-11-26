@@ -6,6 +6,18 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PythonGateway, registerGateway } from '../src/gateway.js';
 import { projectAgentOsResponse } from '../src/gateway-projections.js';
 
+it('projects storage statistics without bodies or private metadata', () => {
+  const projected = projectAgentOsResponse('/ai/agentos/v2/runs/run/storage', {
+    runId: 'run', records: 2, logicalBytes: 123, growthBytes: null,
+    states: { online: 2, payload: 'private' },
+    largestRecord: { reference: 'output:ref', bytes: 100, contentType: 'application/json', body: 'secret' },
+    body: 'secret', content_ref: 'private/path', pins: ['private-memory'],
+  });
+  expect(projected).toMatchObject({ runId: 'run', records: 2, logicalBytes: 123, growthBytes: null,
+    states: { online: 2 }, largestRecord: { reference: 'output:ref', bytes: 100, contentType: 'application/json' } });
+  expect(JSON.stringify(projected)).not.toMatch(/secret|private/u);
+});
+
 const identity = { actorId: '11111111-1111-4111-8111-111111111111', tenantId: null } as const;
 const token = 'gateway-test-service-authentication-token';
 const capabilityModes = ['planning', 'current_run', 'successor_run', 'denied'] as const;

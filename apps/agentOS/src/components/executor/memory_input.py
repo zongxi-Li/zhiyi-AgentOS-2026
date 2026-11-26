@@ -139,7 +139,8 @@ def read_frozen_memory_retrieval(connection, *, run, execution, policy=None):
         return None
     if tuple(row[:4]) != (run.run_id, execution.step_id, "output", None):
         raise ValueError("memory retrieval snapshot has a different ledger owner or kind")
-    snapshot = json.loads(row[4])
+    from .value_storage import decode_body
+    snapshot = decode_body(connection, run_id=run.run_id, reference=reference, encoded=row[4])
     if policy is None:
         policy = effective_memory_policy(execution.step_id, run.get_step(execution.step_id).input,
                                          projected_memory_manifest(run))

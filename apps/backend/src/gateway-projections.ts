@@ -282,6 +282,11 @@ export function projectAgentOsResponse(path: string, value: unknown): unknown {
   if (suffix === '/runs') return { ...pick(source, 'total page pageSize'), items: rows(source.items, run) };
   if (/^\/runs\/[^/]+$/u.test(suffix)) return { ...run(source), initialPlan: copilotInitialPlan(source.initialPlan) };
   if (/^\/runs\/[^/]+\/plan$/u.test(suffix)) return { runId: stringOrNull(source.runId), plan: copilotInitialPlan(source.plan) };
+  if (/^\/runs\/[^/]+\/storage$/u.test(suffix)) return {
+    ...pick(source, 'runId records measuredRecords unmeasuredRecords logicalBytes largestBytes encodedBinaryBytes encodedBinaryRatio uniquePayloadBytes duplicatePayloadBytes growthBytes externalStoredBytes externalFiles duplicateBodyBytes'),
+    states: pick(source.states, 'online archived deletable'),
+    largestRecord: source.largestRecord == null ? null : pick(source.largestRecord, 'reference bytes contentType'),
+  };
   if (/\/execution-tree$/u.test(suffix)) return executionTree(source);
   if (/\/workspace$/u.test(suffix)) return workspace(source);
   if (/^\/runs\/[^/]+\/graph\/versions$/u.test(suffix)) return graphVersions(source);

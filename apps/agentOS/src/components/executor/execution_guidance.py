@@ -107,7 +107,8 @@ def read_undispatched_guidance_inputs(connection, *, run, node):
             continue
         if tuple(row[:4]) != (run.run_id, node.step_id, "output", None):
             raise ValueError("execution guidance input has another ledger owner or kind")
-        payload = json.loads(row[4])
+        from .value_storage import decode_body
+        payload = decode_body(connection, run_id=run.run_id, reference=reference, encoded=row[4])
         if key == initial_key:
             validate_initial_guidance_record(payload, reference=reference,
                 run_id=run.run_id, step_id=node.step_id, commit_id=node.operation_id)

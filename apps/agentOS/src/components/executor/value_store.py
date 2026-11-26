@@ -25,6 +25,7 @@ from uuid import uuid4
 from contracts.execution import NodeExecutionPhase, NodeExecutionRecord
 from contracts.execution_evidence import WORKSPACE_MUTATION_TOOLS
 from support.sqlite_connections import ThreadLocalSQLiteConnections
+from .value_storage import initialize as initialize_value_storage, store_body, decode_body, migrate, usage, transition, pin, collect_files
 
 
 _NODE_PHASE_ORDER = {
@@ -543,6 +544,7 @@ class SQLiteExecutionValueStore:
         self._connection.execute("CREATE INDEX IF NOT EXISTS acg_workspace_mutation_requests "
             "ON execution_values(run_id) WHERE " + _MUTATION_WAL_FILTER)
         self._connection.commit()
+        initialize_value_storage(self._connection)
 
     @property
     def _connection(self) -> sqlite3.Connection:
@@ -578,7 +580,7 @@ class SQLiteExecutionValueStore:
             return None
         if row[0] != run_id:
             raise ExecutionValueAccessError(reference)
-        return json.loads(row[1])
+        return decode_body(self._connection, run_id=run_id, reference=reference, encoded=row[1])
 
     def put_tool_value(self, *, run_id: str, step_id: str, key: str, payload: dict[str, Any]) -> str:
         # An immutable operation value, not a second task/Run state machine.
@@ -589,9 +591,15 @@ class SQLiteExecutionValueStore:
                 raise ValueError("immutable tool operation conflict")
             return reference
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        self._connection.execute("INSERT INTO execution_values(reference,run_id,step_id,kind,payload_json,created_at,operation_id) VALUES(?,?,?,?,?,?,NULL)",
-                                 (reference,run_id,step_id,"output",encoded,time()))
-        self._connection.commit()
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            encoded = store_body(self._connection, reference=reference, run_id=run_id, encoded=encoded)
+            self._connection.execute("INSERT INTO execution_values(reference,run_id,step_id,kind,payload_json,created_at,operation_id) VALUES(?,?,?,?,?,?,NULL)",
+                                     (reference,run_id,step_id,"output",encoded,time()))
+            self._connection.commit()
+        except BaseException:
+            self._connection.rollback()
+            raise
         return reference
 
     def list_workspace_mutations(self, *, run_id: str) -> list[dict[str, Any]]:
@@ -599,7 +607,8 @@ class SQLiteExecutionValueStore:
             "WHERE run_id=? AND " + _MUTATION_WAL_FILTER, (run_id,)).fetchall()
         return [record for reference, step_id, body in rows
                 if (record := _workspace_mutation_record(self, run_id=run_id, reference=reference,
-                    step_id=step_id, payload=json.loads(body))) is not None]
+                    step_id=step_id, payload=decode_body(self._connection, run_id=run_id,
+                        reference=reference, encoded=body))) is not None]
 
     def put_output(self, *, run_id: str, step_id: str, payload: dict[str, Any], operation_id: str | None = None) -> str:
         """持久化通过输出合同的节点正文，并返回稳定输出引用。"""
@@ -632,7 +641,8 @@ class SQLiteExecutionValueStore:
         if value is None:
             raise ExecutionValueAccessError(reference or operation_id)
         return _node_input_context_payload(run_id=run_id, operation_id=operation_id, execution=execution,
-            value=(str(value[0]), str(value[1]), value[2], json.loads(value[3])))
+            value=(str(value[0]), str(value[1]), value[2],
+                decode_body(self._connection, run_id=run_id, reference=reference, encoded=value[3])))
 
     def put_graph_patch(self, *, run_id: str, payload: dict[str, Any]) -> str:
         return self._put("graph-patch", run_id=run_id, step_id="__graph__", payload=payload)
@@ -826,11 +836,20 @@ class SQLiteExecutionValueStore:
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             for reference in unique:
+                pinned = self._connection.execute(
+                    "SELECT pins_json FROM execution_value_storage WHERE reference=? AND run_id=?",
+                    (reference, run_id)).fetchone()
+                if pinned and json.loads(pinned[0]):
+                    continue
                 cursor = self._connection.execute(
                     "DELETE FROM execution_values WHERE reference = ? AND run_id = ?",
                     (reference, run_id),
                 )
                 deleted += max(0, int(cursor.rowcount))
+                if cursor.rowcount:
+                    self._connection.execute("DELETE FROM execution_value_files WHERE reference=?", (reference,))
+                    self._connection.execute("DELETE FROM execution_value_storage WHERE reference=? AND run_id=?",
+                        (reference, run_id))
             self._connection.commit()
         except Exception:
             self._connection.rollback()
@@ -841,16 +860,40 @@ class SQLiteExecutionValueStore:
         """工作线程结清后关闭全部 SQLite 连接；运行时装配层负责调用。"""
         self._connections.close()
 
+    def migrate_bodies(self, *, run_id: str, limit: int = 100) -> int:
+        return migrate(self._connection, run_id=run_id, limit=limit)
+
+    def storage_usage(self, *, run_id: str, since: datetime | None = None) -> dict:
+        if since is not None and since.utcoffset() is None:
+            raise ValueError("since must include timezone")
+        return usage(self._connection, run_id=run_id, since=since)
+
+    def transition_storage(self, *, run_id, references, state, protected_refs=(), terminal=False):
+        return transition(self._connection, run_id=run_id, references=references,
+            state=state, protected_refs=protected_refs, terminal=terminal)
+
+    def pin_body(self, *, run_id, reference, owner, enabled=True):
+        return pin(self._connection, run_id=run_id, reference=reference, owner=owner, enabled=enabled)
+
+    def collect_body_files(self):
+        return collect_files(self._connection)
+
     def _put(self, kind: str, *, run_id: str, step_id: str, payload: dict[str, Any], operation_id: str | None = None) -> str:
         reference = self._new_reference(kind, run_id, step_id)
         encoded = json.dumps(deepcopy(dict(payload)), ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
-        self._connection.execute(
-            """INSERT INTO execution_values
-               (reference, run_id, step_id, kind, payload_json, created_at, operation_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (reference, run_id, step_id, kind, encoded, time(), operation_id),
-        )
-        self._connection.commit()
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            encoded = store_body(self._connection, reference=reference, run_id=run_id, encoded=encoded)
+            self._connection.execute(
+                """INSERT INTO execution_values
+                   (reference, run_id, step_id, kind, payload_json, created_at, operation_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (reference, run_id, step_id, kind, encoded, time(), operation_id),
+            )
+            self._connection.commit()
+        except BaseException:
+            self._connection.rollback()
+            raise
         return reference
 
     def _get(self, kind: str, *, run_id: str, reference: str) -> dict[str, Any]:
@@ -870,7 +913,7 @@ class SQLiteExecutionValueStore:
             operation_id=str(operation_id) if operation_id is not None else None,
             reference=reference,
         )
-        payload = json.loads(payload_json)
+        payload = decode_body(self._connection, run_id=run_id, reference=reference, encoded=payload_json)
         return deepcopy(payload)
 
     def _assert_committed_operation(

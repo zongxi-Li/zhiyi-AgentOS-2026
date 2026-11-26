@@ -2343,6 +2343,15 @@ class RuntimeApplication(CollaboratorAccess):
         with self.run_lock_manager.lock_for(run_id):
             run = self.workflow_store.get_run(run_id)
             protected_refs = self._protected_execution_references(run)
+            self._protect_memory_body_references(protected_refs)
+            if isinstance(self.execution_value_store, SQLiteExecutionValueStore):
+                if run.status not in _TERMINAL_RUN_STATUSES:
+                    raise ValueError("active or waiting-review Run cannot enter retention maintenance")
+                # Legacy orphan cleanup must obey the same retention gates.
+                rows = self.execution_value_store._connection.execute("""SELECT v.reference FROM execution_values v
+                    LEFT JOIN execution_value_storage s USING(reference)
+                    WHERE v.run_id=? AND (s.state IS NULL OR s.state!='deletable')""", (run_id,))
+                protected_refs.update(row[0] for row in rows)
             stats = self.orphan_cleaner.clean(
                 run_id=run_id,
                 protected_refs=protected_refs,
@@ -2361,6 +2370,65 @@ class RuntimeApplication(CollaboratorAccess):
             )
             self.workflow_store.save_run(run)
             return stats
+
+    def maintain_execution_storage(self, *, run_id: str, older_than: datetime,
+                                   action: str = "archive", limit: int = 100):
+        """Bounded maintenance under the same lock as Run recovery and review.
+
+        Archive changes location/state, never evidence identity. Eligibility and
+        purge remain restricted to terminal Runs and unreferenced orphan bodies.
+        """
+        if action not in {"migrate", "archive", "eligible", "purge"}:
+            raise ValueError("unknown execution storage action")
+        if older_than.utcoffset() is None or not 1 <= limit <= 10000:
+            raise ValueError("bounded maintenance requires an aware cutoff")
+        with self.run_lock_manager.lock_for(run_id):
+            run = self.workflow_store.get_run(run_id)
+            store = self.execution_value_store
+            if action == "migrate":
+                count = store.migrate_bodies(run_id=run_id, limit=limit)
+                return {"action": action, "changed": count, "usage": store.storage_usage(run_id=run_id)}
+            terminal = run.status in _TERMINAL_RUN_STATUSES
+            if not terminal:
+                raise ValueError("active or waiting-review Run cannot enter retention maintenance")
+            protected = self._protected_execution_references(run)
+            # Tool operations remain evidence even after cancellation.
+            protected.update(item.reference for item in store.list_tool_references(run_id=run_id))
+            for execution in store.list_node_executions(run_id=run_id):
+                protected.update(value for value in execution.artifact_refs.values() if isinstance(value, str))
+            # A memory may outlive the Run that supplied its evidence.
+            self._protect_memory_body_references(protected)
+            candidates = store.list_references(run_id=run_id, older_than=older_than)
+            connection = store._connection
+            rows = connection.execute("""SELECT reference,state,pins_json FROM execution_value_storage
+                WHERE run_id=?""", (run_id,)).fetchall()
+            states = {reference: (state, pins) for reference, state, pins in rows}
+            wanted = "online" if action == "archive" else "archived" if action == "eligible" else "deletable"
+            refs = [item.reference for item in candidates if item.reference in states
+                and states[item.reference][0] == wanted
+                and (action == "archive" or item.reference not in protected)
+                and states[item.reference][1] == "[]"][:limit]
+            if action == "purge":
+                count = store.delete_references(run_id=run_id, references=refs)
+            else:
+                store.transition_storage(run_id=run_id, references=refs,
+                    state="archived" if action == "archive" else "deletable",
+                    protected_refs=protected, terminal=terminal)
+                count = len(refs)
+            return {"action": action, "changed": count, "usage": store.storage_usage(run_id=run_id)}
+
+    def _protect_memory_body_references(self, protected: set[str]) -> None:
+        def protect_strings(value):
+            if isinstance(value, str):
+                protected.add(value)
+            elif isinstance(value, dict):
+                for child in value.values():
+                    protect_strings(child)
+            elif isinstance(value, (list, tuple)):
+                for child in value:
+                    protect_strings(child)
+        for memory in self.memory_store.values():
+            protect_strings(memory.content)
 
     def _protected_execution_references(self, run: RuntimeRunRecord) -> set[str]:
         """从所有可恢复入口提取已知正文引用，不递归读取或复制任何正文。"""

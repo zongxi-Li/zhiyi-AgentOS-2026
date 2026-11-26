@@ -8,6 +8,7 @@ from datetime import datetime
 import hashlib
 import json
 import sqlite3
+from components.executor.value_storage import decode_body
 from uuid import NAMESPACE_URL, uuid5
 
 from components.executor import ACGExecutionState
@@ -318,7 +319,7 @@ def _native_session_proof(run, node, workspace, conn, *, non_invocation_prover=N
                                (reference,)).fetchone()
             if row and tuple(row[1:]) != (run.run_id, node.step_id, "output", None):
                 raise ValueError("tool evidence belongs to another node or kind")
-            payload = json.loads(row[0]) if row else None
+            payload = decode_body(conn, run_id=run.run_id, reference=reference, encoded=row[0]) if row else None
             if payload is not None and not isinstance(payload, dict):
                 raise ValueError("read-only retry has malformed tool activity")
             values[reference] = payload
@@ -354,7 +355,7 @@ def _native_session_proof(run, node, workspace, conn, *, non_invocation_prover=N
             "AND reference LIKE 'tool:%' AND json_type(payload_json,'$.requestHash') IS NOT NULL",
             (run.run_id, node.step_id)).fetchall()
         for reference, payload_json in turn_rows:
-            payload = json.loads(payload_json)
+            payload = decode_body(conn, run_id=run.run_id, reference=reference, encoded=payload_json)
             turn_id = (payload.get("response") or {}).get("requestId")
             if not isinstance(turn_id, str) or reference != _tool_reference(run.run_id, turn_id + ":model-turn"):
                 raise ValueError("native retry has a hidden or misaddressed frozen model turn")
@@ -374,7 +375,8 @@ def _native_session_proof(run, node, workspace, conn, *, non_invocation_prover=N
     for reference, invocation, owner, kind, operation_id, snapshot_body in activity_rows:
         if owner == PLANNING_CONTEXT_OWNER and is_planning_context_snapshot(
                 run_id=run.run_id, reference=reference, step_id=owner, kind=kind,
-                operation_id=operation_id, payload=json.loads(snapshot_body)):
+                operation_id=operation_id, payload=decode_body(
+                        conn, run_id=run.run_id, reference=reference, encoded=snapshot_body)):
             # Reading a prior request creates a derived Planner snapshot, never
             # another dispatch. Keep it outside the original execution closure.
             continue

@@ -130,6 +130,10 @@ def test_context_snapshot_and_nested_pages_survive_restart_and_ignore_later_or_o
     runtime.workflow_store.save_run(final)
     orphan = runtime.execution_value_store.put_context_pack(run_id=run.run_id, step_id="orphan",
         payload={"unowned": "remove this context"})
+    cutoff = utc_now() + timedelta(seconds=1)
+    assert runtime.clean_execution_orphans(run_id=run.run_id, older_than=cutoff).deleted == 0
+    runtime.maintain_execution_storage(run_id=run.run_id, older_than=cutoff, action="archive")
+    runtime.maintain_execution_storage(run_id=run.run_id, older_than=cutoff, action="eligible")
     stats = runtime.clean_execution_orphans(run_id=run.run_id, older_than=utc_now() + timedelta(seconds=1))
     assert stats.deleted == 1
     with pytest.raises(ValueError):

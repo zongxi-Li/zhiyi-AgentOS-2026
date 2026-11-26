@@ -85,7 +85,12 @@ def runner(values, memory, model, reader):
 
 
 @pytest.mark.asyncio
-async def test_sqlite_restart_replays_admitted_memory_after_a_parallel_node_commits(tmp_path):
+@pytest.mark.parametrize("external", [False, True])
+async def test_sqlite_restart_replays_admitted_memory_after_a_parallel_node_commits(tmp_path, monkeypatch, external):
+    if external:
+        from components.executor import value_store, value_storage
+        monkeypatch.setattr(value_store, "store_body", lambda connection, **kwargs:
+            value_storage.store_body(connection, threshold=1, **kwargs))
     values = SQLiteExecutionValueStore(db_path=tmp_path / 'values.sqlite3')
     memory_store = SQLiteMemoryStore(db_path=tmp_path / 'memory.sqlite3')
     memory = MemoryService(store=memory_store)
