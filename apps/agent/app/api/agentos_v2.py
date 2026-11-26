@@ -1947,7 +1947,7 @@ def create_router(
         }
 
     @router.get("/missions")
-    async def list_missions(
+    def list_missions(
         status_value: str | None = Query(default=None, alias="status"),
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
@@ -2040,9 +2040,10 @@ def create_router(
             "Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     @router.get("/missions/{mission_id}/workspace")
-    async def get_mission_workspace(
+    def get_mission_workspace(
         mission_id: str,
         run_id: str | None = Query(default=None, alias="runId"),
+        include_recovery: bool = Query(default=True, alias="includeRecovery"),
     ):
         # Capture BEFORE composing: concurrent writes require another refresh.
         projection_revision = workspace_revision(mission_id)
@@ -2054,16 +2055,24 @@ def create_router(
                 semantic_view = MissionSemanticResolver.resolve(snapshot)
             except (ValueError, RuntimeError) as exc:
                 raise HTTPException(status_code=503, detail="mission semantic source unavailable") from exc
-        mission_detail = require_mission_access(mission_id)
+        require_mission_owner_access(mission_id)
+        identity_queries = require_identity_queries()
         actor = current_trusted_user()
+        runtime_runs_by_id: dict[str, RuntimeRunRecord | None] = {}
+        selected_semantic_run = None
+
+        def read_runtime_run(selected_id: str) -> RuntimeRunRecord | None:
+            if selected_id not in runtime_runs_by_id:
+                try:
+                    runtime_runs_by_id[selected_id] = getattr(runtime, "get_status_cached", runtime.get_status)(selected_id)
+                except KeyError:
+                    runtime_runs_by_id[selected_id] = None
+            return runtime_runs_by_id[selected_id]
 
         if run_id:
             # 显式请求的 Run 若已被软删除，工作区按 404 收敛，避免残留投影
             # 让已删 Run 通过直达链接复活动。
-            try:
-                requested_runtime_run = getattr(runtime, "get_status_cached", runtime.get_status)(run_id)
-            except KeyError:
-                requested_runtime_run = None
+            requested_runtime_run = read_runtime_run(run_id)
             if requested_runtime_run is not None and requested_runtime_run.record_state is RunRecordState.DELETED:
                 raise HTTPException(status_code=404, detail="run not found")
 
@@ -2111,7 +2120,7 @@ def create_router(
             # Identity already carries lineage for materialized runs. Only
             # deferred runs without an Identity row need their runtime body.
             if not execution_state and identity_repositories.runs.get(item.run_id) is None:
-                source = getattr(runtime, "get_status_cached", runtime.get_status)(item.run_id)
+                source = read_runtime_run(item.run_id)
                 state = getattr(source, "execution_state", {})
                 execution_state = state if isinstance(state, dict) else {}
             completed_at = (
@@ -2141,20 +2150,20 @@ def create_router(
             if runtime_runs.items:
                 run_id = runtime_runs.items[0].run_id
         try:
-            projection = require_identity_queries().mission_workspace(
+            projection = identity_queries.mission_workspace(
                 mission_id,
                 run_id=run_id,
             )
         except EntityNotFoundError as exc:
             if not run_id:
                 raise HTTPException(status_code=404, detail="workspace source not found") from exc
-            try:
-                runtime_run = getattr(runtime, "get_status_cached", runtime.get_status)(run_id)
-            except KeyError:
+            runtime_run = read_runtime_run(run_id)
+            if runtime_run is None:
                 raise HTTPException(status_code=404, detail="workspace source not found") from exc
             _require_access(runtime_run)
             if runtime_run.mission_id != mission_id:
                 raise HTTPException(status_code=404, detail="workspace source not found") from exc
+            mission_detail = require_mission_access(mission_id)
 
             status_map = {
                 "completed": RunStatus.SUCCEEDED,
@@ -2293,10 +2302,7 @@ def create_router(
         # the workspace can expose a stage result without promoting it to a
         # formal Artifact or embedding the potentially large output body.
         if run_id:
-            try:
-                runtime_run = getattr(runtime, "get_status_cached", runtime.get_status)(run_id)
-            except KeyError:
-                runtime_run = None
+            runtime_run = read_runtime_run(run_id)
             if runtime_run is not None and runtime_run.mission_id == mission_id:
                 # The Execution Runtime is the authoritative source for Run
                 # lifecycle state. Identity projection can lag after a
@@ -2390,6 +2396,7 @@ def create_router(
                     except ValueError as exc:
                         raise HTTPException(status_code=503, detail="run semantic basis unavailable") from exc
                     basis_status = "BOUND" if basis is not None else "UNBOUND"
+                    selected_semantic_run = selected
             try:
                 projection = with_mission_semantics(projection, semantic_view, basis=basis,
                     basis_status=basis_status, legacy_input=semantic_record.input, legacy_title=semantic_record.title)
@@ -2402,10 +2409,7 @@ def create_router(
         )
         selected = payload.get("activeRun")
         if selected and payload.get("activeGraph"):
-            try:
-                source = getattr(runtime, "get_status_cached", runtime.get_status)(selected["runId"])
-            except KeyError:
-                source = None
+            source = read_runtime_run(selected["runId"])
             if source is not None and source.mission_id == mission_id:
                 _require_access(source)
                 payload["activeGraph"] = with_workspace_review(payload["activeGraph"], source)
@@ -2417,12 +2421,14 @@ def create_router(
             selected_id = summary['runId']
             if selected_id not in capabilities:
                 try:
-                    source = runtime.workflow_store.get_run(selected_id)
+                    source = (selected_semantic_run
+                        if selected_semantic_run is not None and selected_semantic_run.run_id == selected_id
+                        else runtime.workflow_store.get_run(selected_id))
                 except (KeyError, AttributeError):
                     capabilities[selected_id] = None
                 else:
                     _require_access(source)
-                    capabilities[selected_id] = (project_run_capabilities(runtime, source)
+                    capabilities[selected_id] = (project_run_capabilities(runtime, source, include_recovery=include_recovery)
                         if source.mission_id == mission_id else None)
             summary['actionCapabilities'] = capabilities[selected_id]
         payload['projectionRevision'] = projection_revision
@@ -3088,7 +3094,7 @@ def create_router(
         }
 
     @router.get("/runs/{run_id}")
-    async def get_run(run_id: str):
+    def get_run(run_id: str):
         # A capability snapshot and its displayed Run must share one authority
         # revision; do not combine a cached status with fresh permission offers.
         try:

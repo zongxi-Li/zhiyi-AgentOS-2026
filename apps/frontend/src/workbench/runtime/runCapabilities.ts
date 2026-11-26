@@ -4,6 +4,9 @@ export const runCapabilityActions = ['canInspect', 'canDiscuss', 'canCancel', 'c
   'canResolveToolApproval', 'canAnswerPlanner', 'canCollaborate', 'canSetPermission', 'canRetrySuccessor', 'canRecoverCurrentRun', 'canRerunSuccessor',
   'canDecideRevision', 'canApplyRevision', 'canDelete'] as const
 export type RunCapabilityAction = typeof runCapabilityActions[number]
+export const recoveryCheckPending = (value: RunActionCapabilities | null | undefined) =>
+  value?.unavailableReasons.some(({ action, code }) => code === 'RECOVERY_CHECK_PENDING'
+    && (action === 'canRecoverCurrentRun' || action === 'canRetrySuccessor')) === true
 const active = new Set(['pending', 'planning', 'running', 'retrying', 'waiting_review'])
 const terminal = new Set(['completed', 'failed', 'cancelled', 'superseded'])
 

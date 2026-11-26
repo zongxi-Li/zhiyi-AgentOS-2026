@@ -462,14 +462,15 @@ def test_rejection_feedback_does_not_clear_an_unrelated_execution_barrier(ready_
     assert run == original
 
 
-@pytest.mark.parametrize("proof", ["components.safe", "unproven", "policy"])
+@pytest.mark.parametrize("proof", ["components.safe", "unproven", "policy", "model_budget"])
 def test_native_readonly_proof_projects_recovery_option_without_retrying_work(ready_boundary, monkeypatch, proof):
     import runtime.orchestration.permit_recovery as module
     runtime, store, agent, run_id, state = ready_boundary
     run = store.get_run(run_id)
     run.steps[0].status = StepStatus.FAILED
     run.execution_state["failureEvents"] = [{"failureId": "failure", "failureType": "policy" if proof == "policy" else "system",
-        "source": "agent", "reasonCode": "AGENT_WORK_TIMEOUT", "details": {"stepId": run.steps[0].step_id}}]
+        "source": "agent", "reasonCode": "MODEL_INPUT_BUDGET_EXCEEDED" if proof == "model_budget" else "AGENT_WORK_TIMEOUT",
+        "details": {"stepId": run.steps[0].step_id}}]
     run.execution_state["recoveryOutcome"] = {"action": "abort"}
     readonly = {"stepId": run.steps[0].step_id, "attemptId": "attempt", "operationId": "operation", "retrySafe": True,
         "readRequestCount": 1, "confirmedReadCount": 0, "unconfirmedReadCount": 1}
@@ -482,9 +483,9 @@ def test_native_readonly_proof_projects_recovery_option_without_retrying_work(re
     monkeypatch.setattr(module, "run_step_readonly_retry_proof", validate)
     original = run.model_copy(deep=True)
     observation = runtime.runtime_planning_coordinator.observe(run, state, "failure")
-    assert observation.recovery_action == ("retry" if proof == "components.safe" else "abort")
+    assert observation.recovery_action == {"components.safe": "retry", "model_budget": "replan"}.get(proof, "abort")
     assert observation.readonly_recovery_proof == (readonly if proof == "components.safe" else None)
-    assert bool(calls) == (proof != "policy")
+    assert bool(calls) == (proof not in {"policy", "model_budget"})
     assert run == original and not agent.calls
 
 

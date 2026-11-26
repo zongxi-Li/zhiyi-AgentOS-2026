@@ -4,12 +4,15 @@ import type { MissionWorkspaceProjection, WorkspaceFileListing, WorkspaceFileRea
 export const createWorkspaceApi = () => ({
   async getMissionWorkspace(
     missionId: string,
-    options: { runId?: string; signal?: AbortSignal; timeout?: number } = {}
+    options: { runId?: string; signal?: AbortSignal; timeout?: number; includeRecovery?: boolean } = {}
   ): Promise<MissionWorkspaceProjection> {
     const response = await agentosRequest.get<MissionWorkspaceProjection>(
       `/missions/${encodeURIComponent(missionId)}/workspace`,
       {
-        params: { runId: options.runId || undefined },
+        params: {
+          runId: options.runId || undefined,
+          ...(options.includeRecovery === undefined ? {} : { includeRecovery: options.includeRecovery })
+        },
         signal: options.signal,
         ...(options.timeout === undefined ? {} : { timeout: options.timeout })
       }

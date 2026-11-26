@@ -269,7 +269,7 @@ import type { RunDocumentSymbol } from '@/workbench/runtime/runDocument'
 import type { ArtifactDocumentModel } from '@/workbench/runtime/artifactProjection'
 import { beginRunRecovery, pendingRunRecovery, completeRunRecovery, confirmCurrentRunRecovery,
   RecoveryResponseError } from '@/workbench/runtime/recoveryIdentity'
-import { readRunCapabilities } from '@/workbench/runtime/runCapabilities'
+import { readRunCapabilities, recoveryCheckPending } from '@/workbench/runtime/runCapabilities'
 import { conversationBindingKey, readRunDeliverableIntent } from '@/features/workspace/navigation'
 import { projectLifecycle } from '@/workbench/runtime/lifecycleProjection'
 import { initialEditorIntent, selectLifecycleEditor } from '@/workbench/runtime/editorSelection'
@@ -371,9 +371,9 @@ const workspaceProjectionRetryDelays = [
   ...Array.from({ length: 23 }, () => 5000)
 ]
 
-// A workspace projection is a small read model. Do not let the shared
-// 240-second API timeout turn a stalled gateway into a frozen editor.
-const WORKSPACE_PROJECTION_TIMEOUT_MS = 15000
+// Review/recovery evidence can take more than 15s on a persisted Run. Keep
+// this read bounded below the shared 240s timeout; navigation still aborts it.
+const WORKSPACE_PROJECTION_TIMEOUT_MS = 60000
 
 // Run Progress is a first-class editor entry. Its identity is scoped to the Run
 // so reopening/history switching cannot silently reuse another Run's document.
@@ -464,8 +464,9 @@ const pendingSelectedRecovery = computed(() => {
   try { return pendingRunRecovery(missionId.value, runId, sessionStorage) } catch { return null }
 })
 const canRerunSelectedRun = computed(() => Boolean(
-  projection.value?.activeRun?.runId && (pendingSelectedRecovery.value || lifecycle.value.capabilities?.canRetrySuccessor
-    || lifecycle.value.capabilities?.canRecoverCurrentRun || lifecycle.value.capabilities?.canRerunSuccessor)
+  projection.value?.activeRun?.runId && (pendingSelectedRecovery.value || !recoveryCheckPending(lifecycle.value.capabilities)
+    && (lifecycle.value.capabilities?.canRetrySuccessor || lifecycle.value.capabilities?.canRecoverCurrentRun
+      || lifecycle.value.capabilities?.canRerunSuccessor))
 ))
 const shouldResumeSelectedRun = computed(() => pendingSelectedRecovery.value?.kind === 'retry'
   || lifecycle.value.capabilities?.canRetrySuccessor === true || lifecycle.value.capabilities?.canRecoverCurrentRun === true)
@@ -477,6 +478,7 @@ const canCancelActiveRun = computed(() => Boolean(
 ))
 const rerunDisabledReason = computed(() => {
   if (rerunPending.value) return '正在提交恢复或再次运行请求'
+  if (recoveryCheckPending(lifecycle.value.capabilities)) return '正在核对可用的恢复方式'
   if (!canRerunSelectedRun.value) return '服务端未提供恢复或再次运行的能力'
   return shouldResumeSelectedRun.value
     ? '复用已完成节点，从失败节点继续执行'
@@ -703,7 +705,8 @@ const requestWorkspaceProjection = async (runId: string | null, signal: AbortSig
       return await agentosApi.getMissionWorkspace(missionId.value, {
         runId: runId || undefined,
         signal,
-        timeout: WORKSPACE_PROJECTION_TIMEOUT_MS
+        timeout: WORKSPACE_PROJECTION_TIMEOUT_MS,
+        includeRecovery: false
       })
     } catch (error: unknown) {
       const status = responseStatus(error)
@@ -1348,7 +1351,7 @@ onBeforeUnmount(() => {
 .workspace-loading-pane.is-loading { flex: 1; min-height: 0; display: block; padding: 0; }
 .workspace-pane-placeholder { height: 100%; min-height: 0; overflow: hidden; background: var(--wb-surface-1); }
 .workspace-pane-placeholder--editor { flex: 1; background: var(--wb-surface-shell); }
-.workspace-pane-placeholder__rail { height: var(--editor-rail-height, 32px); border-bottom: 1px solid var(--border-light); }
+.workspace-pane-placeholder__rail { height: var(--editor-rail-height, 32px); }
 .workspace-pane-placeholder__lines { display: grid; gap: 12px; padding: 16px 12px; }
 .workspace-pane-placeholder__lines i { width: 68%; height: 8px; border-radius: 3px; background: var(--wb-hover); }
 .workspace-pane-placeholder__lines i:nth-child(2) { width: 52%; }

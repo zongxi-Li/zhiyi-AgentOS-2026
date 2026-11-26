@@ -154,7 +154,7 @@
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { ArrowDown, ArrowRight, ArrowUp, ChatDotRound, Check, CircleCheck, Clock, Connection, Cpu, Loading, Lock, MagicStick, Share } from '@element-plus/icons-vue'
 import { agentosApi, type GraphProjection, type WorkspaceEntry, type WorkspaceGraphNode, type ModelCallUsage, type RunActionCapabilities } from '@/services/api/agentos'
-import { readRunCapabilities, type RunCapabilityAction } from '@/workbench/runtime/runCapabilities'
+import { readRunCapabilities, recoveryCheckPending, type RunCapabilityAction } from '@/workbench/runtime/runCapabilities'
 import type { CopilotPermission, CopilotPermissionChange, CopilotState, CopilotAction, CopilotActionKind, CopilotProgressPhase, TaskApprovalMode } from '@/services/api/agentos/api/copilot'
 import { copilotResponseSummary, type CopilotConversationMessage } from './copilotConversation'
 import { validationFailureDetails, type RuntimeObservation, type RuntimeTraceObservation } from '@/workbench/runtime/observation'
@@ -273,7 +273,7 @@ const reviewKind = computed(() => state.value?.review?.kind || (state.value?.rev
 const reviewValidationDetails = computed(() => validationFailureDetails(state.value?.review?.validationFailures))
 const reviewPending = computed(() => reviewKind.value === 'workspace_revision_pending')
 const planningRepairing = computed(() => state.value?.planningProgress?.kind === 'repairing')
-const reviewCanApprove = computed(() => !allows('canRecoverCurrentRun') && state.value?.review?.canApprove === true && !state.value.review.decisionRejected && !['workspace_revision_pending', 'workspace_revision_blocked', 'planner_rejected'].includes(reviewKind.value))
+const reviewCanApprove = computed(() => !recoveryCheckPending(offeredCapabilities.value) && !allows('canRecoverCurrentRun') && state.value?.review?.canApprove === true && !state.value.review.decisionRejected && !['workspace_revision_pending', 'workspace_revision_blocked', 'planner_rejected'].includes(reviewKind.value))
 const reviewTitle = computed(() => allows('canRecoverCurrentRun') ? '节点执行失败，可以局部恢复' : ({ workspace_revision_pending: '正在自动修订审查计划', workspace_revision_blocked: '审查计划修订受阻', planner_wait: '等待外部条件确认', planner_error: '规划处理失败', step_review: '请审核当前步骤的结果' } as Record<string, string>)[reviewKind.value]
   || (state.value?.review?.reasonCode === 'PLANNING_COMMIT_REJECTED' ? '计划修订未通过校验' : state.value?.decision?.action === 'recover' ? '任务暂停，未能自动恢复' : '任务暂停，下一步尚未执行'))
 const reviewDescription = computed(() => allows('canRecoverCurrentRun') ? '已完成的结果和工具证据已保留。打开输入框下方的任务操作，选择“恢复失败任务”，继续处理失败节点。' : state.value?.review?.displayReason || (reviewPending.value
