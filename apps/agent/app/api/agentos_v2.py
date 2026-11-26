@@ -346,7 +346,7 @@ def _state(run: RuntimeRunRecord) -> dict[str, Any]:
         "graphId", "graphVersion", "checkpointId", "outputRefs", "contextRefs",
         "memoryRefs", "phaseCapsuleRefs", "traceRefs", "provenanceRefs", "graphPatchRefs",
         "outputSummaries", "resourceBindings", "bindingHistory",
-        "bindingRequirements", "executionBindings", "schedulingDecisions",
+        "bindingRequirements", "executionBindings", "schedulingDecisions", "schedulingStates", "schedulingFailures",
         "evolutionPolicyVersion", "parentRunId", "sourceRunId", "rerunReason",
         "supersedesRunId", "supersededByRunId", "sourcePatchId",
         "consensusResults", "controlFrames", "loopIterations",
@@ -1415,10 +1415,21 @@ def create_router(
         if list_for_resource is None:
             raise HTTPException(status_code=503, detail="resource usage source unavailable")
         records = list_for_resource(resource_id, limit=limit)
+        visible_runs: dict[str, bool] = {}
+        visible_records = []
+        for record in records:
+            if record.run_id not in visible_runs:
+                try:
+                    load_content_run(record.run_id)
+                    visible_runs[record.run_id] = True
+                except HTTPException:
+                    visible_runs[record.run_id] = False
+            if visible_runs[record.run_id]:
+                visible_records.append(record)
         return {
             "resourceId": resource_id,
-            "items": [record.model_dump(by_alias=True, mode="json") for record in records],
-            "total": len(records),
+            "items": [record.model_dump(by_alias=True, mode="json") for record in visible_records],
+            "total": len(visible_records),
         }
 
     @router.get("/resources/{resource_id}/health-history")
@@ -1674,7 +1685,18 @@ def create_router(
             page_size=200,
         ).items
         active_by_resource: dict[str, list[dict[str, Any]]] = {}
+        mission_access: dict[str, bool] = {}
         for run in run_items:
+            if run.record_state == RunRecordState.DELETED:
+                continue
+            if run.mission_id not in mission_access:
+                try:
+                    require_current_mission_read(run.mission_id)
+                    mission_access[run.mission_id] = True
+                except HTTPException:
+                    mission_access[run.mission_id] = False
+            if not mission_access[run.mission_id]:
+                continue
             bindings = run.execution_state.get("executionBindings") if isinstance(run.execution_state, dict) else None
             if not isinstance(bindings, dict):
                 continue
@@ -1682,20 +1704,23 @@ def create_router(
                 if step.status is not StepStatus.RUNNING:
                     continue
                 binding = bindings.get(step.step_id)
-                if not isinstance(binding, dict):
+                if not isinstance(binding, dict) or (binding.get("runId"), binding.get("stepId")) != (run.run_id, step.step_id):
                     continue
                 registration = binding.get("agentRegistration")
-                if not isinstance(registration, dict):
-                    continue
-                ref = AgentRegistrationRef.model_validate(registration)
-                active_by_resource.setdefault(ref.resource_id, []).append({
+                step_info = {
                     "runId": run.run_id,
                     "missionId": run.mission_id,
                     "stepId": step.step_id,
                     "stepName": step.name,
                     "status": step.status.value,
                     "startedAt": step.started_at.isoformat() if step.started_at else None,
-                })
+                }
+                host_id = binding.get("resourceId")
+                if isinstance(host_id, str):
+                    active_by_resource.setdefault(host_id, []).append(step_info)
+                if isinstance(registration, dict):
+                    ref = AgentRegistrationRef.model_validate(registration)
+                    active_by_resource.setdefault(ref.resource_id, []).append(step_info)
         items = []
         for instance in pool.instances():
             ref = instance.ref
@@ -1725,7 +1750,25 @@ def create_router(
                 "activeSlots": coordinator.active_slots(ref.resource_id),
                 "activeSteps": active_by_resource.get(ref.resource_id, []),
             })
-        return {"observedAt": datetime.now(timezone.utc).isoformat(), "instances": items, "total": len(items)}
+        hosts = []
+        for profile in pool.resource_plane.runtimes():
+            if profile.kind is not RuntimeKind.EXECUTION_BACKEND:
+                continue
+            resource_id = profile.runtime_id
+            health = pool.resource_plane.health_monitor.health(resource_id)
+            hosts.append({
+                "resourceId": resource_id,
+                "displayName": profile.display_name,
+                "environment": profile.placement.value,
+                "remote": profile.endpoint is not None and profile.endpoint.protocol != "local",
+                "enabled": profile.enabled,
+                "draining": profile.draining,
+                "health": {"healthy": health.healthy, "lastHeartbeat": health.last_heartbeat},
+                "capacity": profile.capacity,
+                "activeSlots": coordinator.active_slots(resource_id),
+                "activeSteps": active_by_resource.get(resource_id, []),
+            })
+        return {"observedAt": datetime.now(timezone.utc).isoformat(), "instances": items, "total": len(items), "hosts": hosts}
 
     @router.post("/resources/register", status_code=status.HTTP_201_CREATED)
     async def register_remote_resource(request: RemoteResourceRegistrationRequest):

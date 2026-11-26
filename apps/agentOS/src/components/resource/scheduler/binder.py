@@ -537,6 +537,7 @@ class ResourceBinder:
                        and instance.agent_registration == existing_binding.agent_registration]
             if not choices:
                 return ReadyNodeSchedulingResult(status="rejected", candidates=evaluations, reason="PINNED_AGENT_UNAVAILABLE")
+        capacity_blockers: set[str] = set()
         for decision, instance in choices:
             profile = self.plane.runtime(decision.resource_id)
             if existing_binding is not None:
@@ -562,6 +563,7 @@ class ResourceBinder:
                 now=current,
             )
             if lease is None:
+                capacity_blockers.add("HOST_CAPACITY")
                 continue
             agent_lease = None
             allocated = False
@@ -572,17 +574,24 @@ class ResourceBinder:
                         run_id=run_id, step_id=step_id, attempt_id=attempt_id, slot_count=1,
                         ttl=self.lease_ttl, now=current,
                     )
-                    if agent_lease is None or self.plane.runtime(instance.runtime_id) != instance:
+                    if agent_lease is None:
+                        capacity_blockers.add("INSTANCE_CAPACITY")
+                        continue
+                    if self.plane.runtime(instance.runtime_id) != instance:
+                        capacity_blockers.add("RESOURCE_CHANGED")
                         continue
                 confirmed = self.plane.runtime_snapshot(profile.runtime_id)
                 if confirmed.version != versioned.version or self.plane.runtime(profile.runtime_id) != profile:
+                    capacity_blockers.add("RESOURCE_CHANGED")
                     continue
                 health = self.plane.health_monitor.health(profile.runtime_id, now=current)
                 if not health.healthy:
+                    capacity_blockers.add("RESOURCE_CHANGED")
                     continue
                 confirmed_health = self.plane.get_node_health(profile.node_id, now=current)
                 if confirmed_health.status in {NodeHealthStatus.UNKNOWN, NodeHealthStatus.STALE,
                                                 NodeHealthStatus.OFFLINE, NodeHealthStatus.SUSPICIOUS}:
+                    capacity_blockers.add("RESOURCE_CHANGED")
                     continue
                 _, score_factors = placement_score(
                     profile,
@@ -591,6 +600,11 @@ class ResourceBinder:
                     latency_ms=health.latency_ms,
                     requirement=requirement,
                 )
+                preferred_role = str(requirement.preferences.get("agentRole") or "").strip()
+                role_matched = bool(preferred_role and instance is not None and preferred_role.lower() in {
+                    instance.agent_registration.agent_id.lower(),
+                    (instance.display_name or "").strip().lower(),
+                })
                 binding = ExecutionBinding(
                     bindingId=f"binding:{run_id}:{step_id}:{attempt_id}",
                     runId=run_id,
@@ -613,6 +627,8 @@ class ResourceBinder:
                         "score": decision.score,
                         "deploymentTier": profile.placement.value,
                         "runtimeKind": profile.kind.value,
+                        "agentRoleMatched": role_matched,
+                        **({"agentRole": preferred_role} if preferred_role else {}),
                         "placementReasons": [
                             f"placement={profile.placement.value}",
                             f"runtimeKind={profile.kind.value}",
@@ -642,6 +658,7 @@ class ResourceBinder:
             status="queued",
             candidates=evaluations,
             reason="NO_CAPACITY",
+            capacityBlockers=tuple(sorted(capacity_blockers)),
         )
 
     async def wait_ready(
@@ -692,10 +709,11 @@ class ResourceBinder:
                 remaining = None if deadline is None else deadline - loop.time()
                 if remaining is not None and remaining <= 0:
                     return decision
-                if announced_reason != decision.reason and on_queued is not None:
+                observation = (decision.reason, decision.capacity_blockers)
+                if announced_reason != observation and on_queued is not None:
                     with suspended_work_wait():
                         await on_queued(decision)
-                    announced_reason = decision.reason
+                    announced_reason = observation
                 with suspended_work_wait():
                     try:
                         await asyncio.wait_for(changed.wait(), min(delay, remaining) if remaining is not None else delay)

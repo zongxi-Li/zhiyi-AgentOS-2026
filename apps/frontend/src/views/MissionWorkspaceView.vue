@@ -521,6 +521,7 @@ const activeAuxiliaryView = computed(() => (
     : null
 ))
 const auxiliaryViewProps = computed(() => ({
+  resourceStepId: typeof route.query.resourceStepId === 'string' ? route.query.resourceStepId : undefined,
   entry: inspectorEntry.value,
   graphNode: inspectorGraphNode.value,
   graphNodes: projection.value?.graphNodes || [],
@@ -1252,6 +1253,9 @@ const locateGraph = (entry: WorkspaceEntry) => {
 
 void loadWorkspace()
 watch(lifecycle, followLifecycle)
+watch(() => route.query.resourceStepId, stepId => {
+  if (typeof stepId === 'string' && route.query.inspector === 'copilot') activeAuxiliaryId.value = 'acg-copilot.sidebar'
+})
 watch(() => JSON.stringify([route.query.entryIntent, route.query.entryIntentId, route.query.entryIntentMissionId, route.query.entryIntentRunId]), () => {
   if (isWorkspaceVisible() && route.query.entryIntent) void loadWorkspace(typeof route.query.runId === 'string' ? route.query.runId : null)
 })

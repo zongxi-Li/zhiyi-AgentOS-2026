@@ -122,13 +122,14 @@
     </details>
   </section>
 
-  <el-drawer v-model="drawerOpen" :title="selectedResource ? selectedResource.profile.resourceId : '资源详情'" size="440px" append-to-body class="resource-detail-drawer">
-    <ResourceDetailPanel v-if="selectedResource" :item="selectedResource" @enabled-changed="handleEnabledChanged" />
+  <el-drawer v-model="drawerOpen" :title="selectedResource?.profile.resourceId || resourceId || '资源详情'" size="440px" append-to-body class="resource-detail-drawer" @close="emit('close-resource')">
+    <ResourceDetailPanel v-if="drawerOpen && selectedResource" :item="selectedResource" @enabled-changed="handleEnabledChanged" />
+    <p v-else-if="resourceId" class="resource-empty">{{ loading ? '正在读取资源…' : errorMessage || '该资源已离线、移除或当前不可见。任务中的历史绑定仍可查看。' }}</p>
   </el-drawer>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { agentosApi, type RuntimeResourceItem, type NodeCatalogItem } from '@/services/api/agentos'
@@ -140,6 +141,8 @@ import { formatCapacity, formatMetric, formatPercent, healthLabel, resourceTypeM
 import { resourceTypeIcon } from '@/utils/resourceTypeIcons'
 import { customerHealthLabel, customerPrivacyLabel, customerResourceType, resourceDisplayName, mergeProviderModels, providerModelKey, type ProviderModelProfile, type DiscoveredModels } from './resourceCenterPresentation'
 
+const props = defineProps<{ resourceId?: string }>()
+const emit = defineEmits<{ 'close-resource': [] }>()
 const capabilityPreviewLimit = 3
 const resources = ref<RuntimeResourceItem[]>([])
 const providerProfiles = ref<ProviderModelProfile[]>([])
@@ -392,6 +395,12 @@ const loadResources = async () => {
 }
 
 defineExpose({ loadResources })
+
+watch(() => [props.resourceId, resources.value] as const, ([resourceId]) => {
+  if (!resourceId) return
+  selectedResource.value = resources.value.find(item => item.profile.resourceId === resourceId) || null
+  drawerOpen.value = true
+}, { immediate: true })
 
 const focusSearch = (event: KeyboardEvent) => {
   if (event.key !== '/') return

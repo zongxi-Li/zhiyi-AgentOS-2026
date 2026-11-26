@@ -50,6 +50,18 @@
       <p class="resource-detail__spark-meta">最近 {{ healthEvents.length }} 次观测 · 最早 {{ formatDate(healthEvents[healthEvents.length - 1]?.observedAt) }}</p>
     </section>
 
+    <section v-if="showsExecution" class="resource-detail__section">
+      <h3>当前占用</h3>
+      <p v-if="poolResource">{{ poolResource.activeSlots }}/{{ poolResource.capacity }} 槽位已占用</p>
+      <ul v-if="poolResource?.activeSteps.length" class="resource-detail__usage">
+        <li v-for="step in poolResource.activeSteps" :key="`${step.runId}:${step.stepId}`">
+          <router-link class="resource-detail__history-link" :to="stepLink(step)">{{ step.stepName || step.stepId }} →</router-link>
+          <span>{{ step.runId }}</span>
+        </li>
+      </ul>
+      <p v-else class="resource-detail__empty">{{ poolResource ? '暂无可见的运行步骤' : poolStatus }}</p>
+    </section>
+
     <section class="resource-detail__section">
       <div class="resource-detail__section-head">
         <h3>最近参与任务</h3>
@@ -183,12 +195,13 @@
 
 <script setup lang="ts">
 import { confirmedResourceSlots } from './resourceCenterPresentation'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { agentosApi, type ResourceCredentialMetadata, type ResourceHealthEvent, type ResourceUsageRecord, type RuntimeResourceItem } from '@/services/api/agentos'
 import ResourceTypeBadge from './ResourceTypeBadge.vue'
 import { formatDate, formatMetric, formatPercent, healthLabel, resourceTypeMeta, tierLabel, formatCapacity } from '@/utils/resourceFormat'
 import { resourceTypeIcon } from '@/utils/resourceTypeIcons'
+import type { AgentPoolActiveStep, AgentPoolHost, AgentPoolInstance } from '@/services/api/agentos/types/agentPool'
 
 const props = defineProps<{ item: RuntimeResourceItem }>()
 const emit = defineEmits<{ (event: 'enabled-changed', payload: { resourceId: string; enabled: boolean }): void }>()
@@ -203,6 +216,34 @@ const healthEvents = ref<ResourceHealthEvent[]>([])
 const credential = ref<ResourceCredentialMetadata | null>(null)
 const rotatePending = ref(false)
 const isModelEndpoint = computed(() => props.item.profile.runtimeKind === 'model_endpoint')
+const showsExecution = computed(() => ['agent_instance', 'execution_backend'].includes(props.item.profile.runtimeKind || ''))
+const poolResource = ref<AgentPoolInstance | AgentPoolHost>()
+const poolStatus = ref('正在读取占用…')
+let poolRequest: AbortController | undefined
+let poolTimer: ReturnType<typeof setInterval> | undefined
+const stepLink = (step: AgentPoolActiveStep) => ({
+  name: 'MissionWorkspace',
+  params: { missionId: step.missionId },
+  query: { runId: step.runId, inspector: 'copilot', resourceStepId: step.stepId },
+})
+async function loadPoolResource() {
+  if (!showsExecution.value || poolRequest) return
+  const request = new AbortController()
+  poolRequest = request
+  const resourceId = props.item.profile.resourceId
+  try {
+    const snapshot = await agentosApi.getAgentPool({ signal: request.signal })
+    if (request.signal.aborted) return
+    poolResource.value = [...snapshot.instances, ...(snapshot.hosts || [])].find(item => item.resourceId === resourceId)
+    poolStatus.value = '暂无该资源的实时占用记录'
+  } catch {
+    if (request.signal.aborted) return
+    poolResource.value = undefined
+    poolStatus.value = '暂时无法读取占用'
+  } finally {
+    if (poolRequest === request) poolRequest = undefined
+  }
+}
 
 const canProbe = computed(() => !isModelEndpoint.value && props.item.profile.deploymentTier !== 'device' && props.item.profile.deploymentTier !== 'local' && props.item.profile.resourceType === 'worker')
 
@@ -236,8 +277,20 @@ const loadDetailData = async () => {
   }
 }
 
-onMounted(() => { void loadDetailData() })
-watch(() => props.item.profile.resourceId, () => { void loadDetailData() })
+onMounted(() => {
+  void loadDetailData()
+  void loadPoolResource()
+  poolTimer = setInterval(() => { if (!document.hidden && document.visibilityState !== 'hidden') void loadPoolResource() }, 4000)
+})
+onBeforeUnmount(() => { poolRequest?.abort(); clearInterval(poolTimer) })
+watch(() => props.item.profile.resourceId, () => {
+  void loadDetailData()
+  poolRequest?.abort()
+  poolRequest = undefined
+  poolResource.value = undefined
+  poolStatus.value = '正在读取占用…'
+  void loadPoolResource()
+})
 
 const onToggleEnabled = async (value: string | number | boolean) => {
   const enabled = Boolean(value)

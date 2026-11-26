@@ -1,7 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import AgentPoolPanel from './AgentPoolPanel.vue'
-import { agentosApi } from '@/services/api/agentos'
+import { agentosApi, type WorkflowRun } from '@/services/api/agentos'
 
 vi.mock('@/services/api/agentos', () => ({ agentosApi: { getAgentPool: vi.fn() } }))
 
@@ -16,8 +16,41 @@ const snapshot = {
 describe('AgentPoolPanel', () => {
   beforeEach(() => vi.mocked(agentosApi.getAgentPool).mockResolvedValue(snapshot as any))
 
+  it('keeps queue evidence and retired bindings distinct from a running remote step', async () => {
+    const run: WorkflowRun = {
+      runId: 'run-1', missionId: 'mission-1', workflowId: 'flow', domain: 'general', status: 'running',
+      steps: [
+        { stepId: 'queued', name: '等待执行', agentName: 'Agent', status: 'pending' },
+        { stepId: 'remote', name: '远程执行', agentName: 'Agent', status: 'running' },
+      ],
+      executionState: {
+        schedulingStates: { queued: { status: 'queued', reason: 'NO_CAPACITY', capacityBlockers: ['INSTANCE_CAPACITY'] } },
+        executionBindings: { remote: { attemptId: 'remote-1', resourceId: 'remote-host', metadata: { score: 0.8 } } },
+        schedulingDecisions: [{ stepId: 'queued', attemptId: 'old', binding: {
+          attemptId: 'old', resourceId: 'retired-host', agentRegistration: { ...snapshot.instances[0].registration, generation: 2 },
+        } }],
+      },
+    }
+    vi.mocked(agentosApi.getAgentPool).mockResolvedValue({ ...snapshot, hosts: [{
+      resourceId: 'remote-host', displayName: '远程服务', remote: true, enabled: true, draining: false, environment: 'cloud',
+      capacity: 2, activeSlots: 1, health: { healthy: true }, activeSteps: [],
+    }] })
+    const wrapper = mount(AgentPoolPanel, { props: { run, selectedStepId: 'remote' },
+      global: { stubs: { RouterLink: { props: ['to'], template: '<a :data-resource="to.query.resourceId"><slot /></a>' } } } })
+    await flushPromises()
+    expect(wrapper.get('button[aria-pressed="true"]').text()).toBe('当前任务')
+    expect(wrapper.text()).toContain('实例槽位已满')
+    expect(wrapper.text()).toContain('第 2 代')
+    expect(wrapper.get('[data-resource="remote-host"]').text()).toBe('查看执行服务')
+    expect(wrapper.text()).toContain('调度评分 0.80')
+    await wrapper.findAll('.pool-tabs button')[1].trigger('click')
+    expect(wrapper.text()).toContain('远程执行服务')
+    expect(wrapper.text()).toContain('1/2 槽位')
+    wrapper.unmount()
+  })
+
   it('shows instances and currently running steps, then opens the selected run', async () => {
-    const wrapper = mount(AgentPoolPanel, { global: { stubs: { ElIcon: { template: '<span><slot /></span>' } } } })
+    const wrapper = mount(AgentPoolPanel, { global: { stubs: { RouterLink: true } } })
     await flushPromises()
     expect(wrapper.text()).toContain('2个执行实例')
     expect(wrapper.text()).toContain('分析材料')
@@ -26,8 +59,22 @@ describe('AgentPoolPanel', () => {
     expect(wrapper.emitted('select-run')).toEqual([['run-1']])
     wrapper.unmount()
   })
+  it('keeps the chosen scope when the same run is refreshed with a new object', async () => {
+    const run: WorkflowRun = {
+      runId: 'run-1', missionId: 'mission-1', workflowId: 'flow', domain: 'general', status: 'running', steps: [],
+    }
+    const wrapper = mount(AgentPoolPanel, { props: { run }, global: { stubs: { RouterLink: true } } })
+    await flushPromises()
+    await wrapper.findAll('.pool-tabs button')[1].trigger('click')
+    expect(wrapper.find('.pool-summary').exists()).toBe(true)
+    // 轮询会替换 run 对象但 runId 不变，不能因此把范围切回「当前任务」。
+    await wrapper.setProps({ run: { ...run } })
+    await flushPromises()
+    expect(wrapper.find('.pool-summary').exists()).toBe(true)
+    wrapper.unmount()
+  })
   it('highlights the exact instance and keeps retired identities distinct from current replicas', async () => {
-    const wrapper = mount(AgentPoolPanel, { props: { selectedInstanceId: 'replica' } })
+    const wrapper = mount(AgentPoolPanel, { props: { selectedInstanceId: 'replica' }, global: { stubs: { RouterLink: true } } })
     await flushPromises()
     expect(wrapper.findAll('.is-selected')).toHaveLength(1)
     expect(wrapper.get('.is-selected .agent-title').text()).toContain('replica')

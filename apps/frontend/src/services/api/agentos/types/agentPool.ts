@@ -29,4 +29,29 @@ export interface AgentPoolSnapshot {
   observedAt: string
   instances: AgentPoolInstance[]
   total: number
+  hosts?: AgentPoolHost[]
+}
+
+export interface AgentPoolHost {
+  resourceId: string
+  displayName: string
+  environment: string
+  remote: boolean
+  enabled: boolean
+  draining: boolean
+  health: AgentPoolInstance['health']
+  capacity: number
+  activeSlots: number
+  activeSteps: AgentPoolActiveStep[]
+}
+
+export interface StepResourceBinding {
+  attemptId: string
+  resourceId: string
+  agentRegistration?: AgentPoolInstance['registration'] | null
+  metadata?: {
+    score?: number
+    agentRoleMatched?: boolean
+    agentRole?: string
+  }
 }

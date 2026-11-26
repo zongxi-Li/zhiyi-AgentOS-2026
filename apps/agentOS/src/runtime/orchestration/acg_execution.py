@@ -726,10 +726,14 @@ class ACGExecutionService(CollaboratorAccess):
 
             async def publish_queued(queued):
                 check_allocation_authority()
-                queued_at = utc_now().isoformat()
-                run.execution_state.setdefault("schedulingStates", {})[step_id] = {
+                scheduling = run.execution_state.setdefault("schedulingStates", {})
+                previous = scheduling.get(step_id, {})
+                queued_at = (previous.get("queuedAt") if previous.get("attemptId") == attempt_id else None) or utc_now().isoformat()
+                run.execution_state.get("schedulingFailures", {}).pop(step_id, None)
+                scheduling[step_id] = {
                     "status": "queued", "attemptId": attempt_id,
                     "reason": queued.reason, "queuedAt": queued_at,
+                    "capacityBlockers": list(queued.capacity_blockers),
                 }
                 self.state_persistence.persist(run, state, projection_changed=True)
                 await runtime_event_broker.publish(run.run_id, RuntimeEvent(
@@ -754,6 +758,11 @@ class ACGExecutionService(CollaboratorAccess):
                     f"{item.resource_id}:[{','.join(reason.value for reason in item.reasons)}]"
                     for item in decision.candidates if item.reasons
                 )
+                run.execution_state.setdefault("schedulingFailures", {})[step_id] = {
+                    "status": "rejected", "attemptId": attempt_id,
+                    "reason": decision.reason,
+                }
+                self.state_persistence.persist(run, state, projection_changed=True)
                 raise SchedulerNoEligibleResource(
                     f"{decision.reason}:{step_id}: {rejected or 'no registered candidates'}",
                     reason=decision.reason, step_id=step_id, candidates=decision.candidates,
@@ -809,6 +818,7 @@ class ACGExecutionService(CollaboratorAccess):
                 step.status = StepStatus.RUNNING
                 step.started_at = utc_now()
                 run.execution_state.get("schedulingStates", {}).pop(step_id, None)
+                run.execution_state.get("schedulingFailures", {}).pop(step_id, None)
                 model_binding = self._resolve_model_binding(
                     step_id=step_id,
                     binding=binding,

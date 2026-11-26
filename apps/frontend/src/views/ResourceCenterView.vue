@@ -29,7 +29,9 @@
           </nav>
 
           <section class="resource-center__content">
-            <ResourceOverviewPanel v-if="resourceTab === 'overview'" ref="overviewPanel" />
+            <ResourceOverviewPanel v-if="resourceTab === 'overview'" ref="overviewPanel"
+              :resource-id="typeof route.query.resourceId === 'string' ? route.query.resourceId : undefined"
+              @close-resource="closeResource" />
             <ModelManagementPanel v-else />
           </section>
         </main>
@@ -68,6 +70,11 @@ const selectResourceTab = (tab: ResourceTab) => {
 
 const refreshOverview = () => {
   overviewPanel.value?.loadResources()
+}
+
+const closeResource = () => {
+  const { resourceId: _resourceId, ...query } = route.query
+  if (_resourceId) void router.replace({ query })
 }
 
 const openRegistration = () => {

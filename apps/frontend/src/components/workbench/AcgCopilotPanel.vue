@@ -9,7 +9,7 @@
 
     <div v-show="tab === 'chat'" ref="messageList" class="conversation" :class="{ 'has-run-controls': hasFormalControl }" aria-live="polite" @scroll="trackScroll">
       <CopilotRunTimeline :key="runId || ''" :run-id="runId" :status="state?.status || runStatus || ''"
-        :messages="messages" :graph-nodes="graphNodes" :plan="state?.initialPlan" :tools="state?.toolActivity" :workspace-review="state?.workspaceReview" :traces="runtimeObservation?.runId === runId ? runtimeObservation.traces : []" :started-at="controlRun?.startedAt" :updated-at="controlRun?.updatedAt" :waiting-for-approval="hasPendingToolApproval" @content="hasTimelineContent = $event; scrollBottom()" @inspect-agent="inspectAgent">
+        :messages="messages" :graph-nodes="graphNodes" :plan="state?.initialPlan" :tools="state?.toolActivity" :workspace-review="state?.workspaceReview" :traces="runtimeObservation?.runId === runId ? runtimeObservation.traces : []" :started-at="controlRun?.startedAt" :updated-at="controlRun?.updatedAt" :waiting-for-approval="hasPendingToolApproval" :has-resource-details="!!controlRun" @content="hasTimelineContent = $event; scrollBottom()" @inspect-agent="inspectAgent" @inspect-resource-step="inspectResourceStep">
       <template #controls><FormalExecutionControls :key="runId || ''" :run="controlRun" :run-id="runId"
         :action-capabilities="actionCapabilities"
         :mission-id="missionId || state?.missionId || ''" :historical="historical"
@@ -100,7 +100,7 @@
       <small class="trace-footnote">按已加载的活动记录计数，不代表步骤数；模型调用按页加载，内部投影合并在调用详情中。</small>
     </div>
 
-    <AgentPoolPanel v-if="tab === 'pool'" :selected-instance-id="selectedAgentInstanceId" @select-run="emit('select-run', $event)" />
+    <AgentPoolPanel v-if="tab === 'pool'" :run="controlRun" :selected-step-id="selectedResourceStepId" :selected-instance-id="selectedAgentInstanceId" @select-run="emit('select-run', $event)" />
 
     <div v-if="reviewReceipt" class="wait-note" role="status">{{ reviewReceipt }}</div>
     <div v-if="permissionReceipt" class="wait-note permission-receipt" role="status">{{ permissionReceipt }}</div>
@@ -178,6 +178,7 @@ const props = withDefaults(defineProps<{
   creationDisabled?: boolean
   creationPending?: boolean
   initialDraft?: string
+  resourceStepId?: string
   missionId?: string; canCancel?: boolean; cancelPending?: boolean; projectionRevision?: number; workspaceRefreshing?: boolean
 }>(), { entry: null, graphNode: null, graphNodes: () => [], graph: null, runId: null, runStatus: null, runtimeObservation: null, historical: false, readonly: false, missionId: '', canCancel: false, cancelPending: false })
 const emit = defineEmits<{ 'select-run': [runId: string]; 'refresh-run': []; 'cancel-run': []; 'draft-change': [message: string] }>()
@@ -224,8 +225,13 @@ const hasTimelineContent = ref(false)
 const sessionOwnerId = localStorage.getItem('userId')
 const tab = ref<'chat' | 'trace' | 'pool'>('chat')
 const selectedAgentInstanceId = ref<string | null>(null)
+const selectedResourceStepId = ref<string | null>(null)
 function inspectAgent(instanceId: string) { selectedAgentInstanceId.value = instanceId; tab.value = 'pool' }
-watch(() => props.runId, () => { selectedAgentInstanceId.value = null })
+function inspectResourceStep(stepId: string) { selectedResourceStepId.value = stepId; tab.value = 'pool' }
+watch(() => props.runId, () => { selectedAgentInstanceId.value = null; selectedResourceStepId.value = null })
+watch(() => [props.runId, props.resourceStepId], () => {
+  if (props.resourceStepId) inspectResourceStep(props.resourceStepId)
+}, { immediate: true })
 const draft = ref(''), error = ref(''), traceSearch = ref('')
 const reviewComment = ref(''), reviewReceipt = ref('')
 let reviewRequest: { subject: string; revision: string; decision: string; comment: string; id: string } | undefined

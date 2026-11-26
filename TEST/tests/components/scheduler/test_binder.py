@@ -121,6 +121,7 @@ async def test_queue_deadline_and_configuration_rejection_leave_no_reservations(
     held = binder.bind_ready(attempt_id="held", **common)
     queued = await binder.wait_ready(attempt_id="waiting", timeout=.01, **common)
     assert queued.status == "queued" and queued.reason == "NO_CAPACITY"
+    assert queued.capacity_blockers == ("HOST_CAPACITY",)
     assert binder.coordinator.active_slots("runtime:single") == 1
     rejected = await binder.wait_ready(run_id="run", step_id="missing", attempt_id="missing",
                                        requirement=_requirement(requiredCapabilities=["missing"]))
@@ -539,6 +540,7 @@ def test_assessment_requires_capacity_on_a_matching_agent_and_recovers_after_rel
     queued = binder.bind_ready(attempt_id="waiting", **common)
     assert queued.status == "queued" and queued.reason == "NO_CAPACITY"
     assert binder.coordinator.active_slots(host.runtime_id) == 1
+    assert queued.capacity_blockers == ("INSTANCE_CAPACITY",)
     assert binder.coordinator.active_slots(agent.runtime_id) == 1
     assert binder.coordinator.active_slots(unrelated.runtime_id) == 0
 
