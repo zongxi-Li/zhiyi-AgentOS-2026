@@ -5,6 +5,7 @@ import { runPath } from '../paths'
 import axios from 'axios'
 import { isRunDeliverableEntry } from '@/workbench/runtime/deliverableIdentity'
 import type { AcgApiDependencies } from '../dependencies'
+import type { CopilotInitialPlan } from './copilot'
 
 /**
  * 输出正文专用 wire 合同（ContentValueQuery grammar）的解码入口：后端把用户产物
@@ -141,12 +142,18 @@ export const stepStatesFromRun = (
 
 export const createAcgApi = (getApi: () => AcgApiDependencies) => ({
   async getGraphVersions(runId: string, options: { signal?: AbortSignal } = {}): Promise<GraphVersionHistory> {
-    const response = await agentosRequest.get<GraphVersionHistory>(`${runPath(runId)}/graph/versions`, { ...options, timeout: 15000 })
+    const response = await agentosRequest.get<GraphVersionHistory>(`${runPath(runId)}/graph/versions`, { ...options, timeout: 60000 })
+    return response.data
+  },
+  async getPlanSnapshot(runId: string, planVersion?: number | null, options: { signal?: AbortSignal } = {}): Promise<{ runId: string; plan: CopilotInitialPlan | null }> {
+    const response = await agentosRequest.get<{ runId: string; plan: CopilotInitialPlan | null }>(`${runPath(runId)}/plan`, {
+      params: planVersion == null ? {} : { planVersion }, signal: options.signal, timeout: 60000,
+    })
     return response.data
   },
   async getGraphSnapshot(runId: string, blueprintId: string | null, options: { signal?: AbortSignal } = {}): Promise<GraphProjection> {
     const response = await agentosRequest.get<GraphProjection>(`${runPath(runId)}/graph`, {
-      ...options, timeout: 15000, params: blueprintId ? { blueprintId } : undefined
+      ...options, timeout: 60000, params: blueprintId ? { blueprintId } : undefined
     })
     return response.data
   },

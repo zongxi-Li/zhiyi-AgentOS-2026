@@ -64,6 +64,8 @@ from runtime.orchestration.binding import queued_step_attempts
 from runtime.orchestration.planning_interaction import RuntimePlanningInteraction, CopilotMessageRequest, PlannerAnswerRequest, CopilotPermissionRequest
 from runtime.orchestration.planning_operations import TaskOperationPreviewRequest, TaskOperationApplyRequest
 from runtime.projections.workspace_review import with_workspace_review
+from runtime.projections.copilot_projection import initial_plan_summary, task_plan_summary
+from contracts.planning import TaskPlan
 from runtime.orchestration.review import ReviewConflictError
 from runtime import IdentityQueryService
 from runtime.projections.workspace import (
@@ -3151,6 +3153,7 @@ def create_router(
         result = project(run)
         if run.execution_state.get("planningCommitRequired"):
             result["formalControl"] = project_initial_control(runtime, run)
+        result["initialPlan"] = initial_plan_summary(runtime, run)
         result['actionCapabilities'] = project_run_capabilities(runtime, run, formal_control=result.get('formalControl'))
         return result
 
@@ -3308,6 +3311,42 @@ def create_router(
         items = calls[start:start + page_size]
         next_cursor = str(start + page_size) if start + page_size < len(calls) else None
         return {"runId": run_id, "items": items, "nextCursor": next_cursor, "total": len(calls)}
+
+    @router.get("/runs/{run_id}/plan")
+    async def get_plan(run_id: str, plan_version: int | None = Query(default=None, alias="planVersion", ge=1)):
+        run = load_content_run(run_id)
+        if identity_repositories is not None and identity_repositories.runs.get(run_id) is not None:
+            require_run_access(run_id)
+        try:
+            initial = initial_plan_summary(runtime, run)
+            raw = run.execution_state.get("taskPlan")
+            current = TaskPlan.model_validate(raw) if raw is not None else None
+            if current is not None:
+                stored_version = run.execution_state.get("taskPlanVersion")
+                if (current.mission_id != run.mission_id
+                        or stored_version is not None and current.plan_version != stored_version):
+                    raise ValueError("TaskPlan does not match the Run")
+                if plan_version is None or plan_version == current.plan_version:
+                    if initial is not None and initial["planVersion"] == current.plan_version:
+                        return {"runId": run_id, "plan": initial}
+                    return {"runId": run_id, "plan": task_plan_summary(run, current)}
+            else:
+                if plan_version is None or initial is not None and plan_version == initial["planVersion"]:
+                    return {"runId": run_id, "plan": initial}
+
+            history = graph_history(runtime, run, identity_repositories).projection
+            if not any(item["taskPlanVersion"] == plan_version for item in history["items"]):
+                raise HTTPException(status_code=404, detail="plan version not found for Run")
+            if initial is not None and initial["planVersion"] == plan_version:
+                return {"runId": run_id, "plan": initial}
+            snapshot = identity_repositories.task_plans.get(run.mission_id, plan_version) if identity_repositories is not None else None
+            if snapshot is None:
+                raise HTTPException(status_code=404, detail="plan snapshot not available")
+            if snapshot.mission_id != run.mission_id or snapshot.plan_version != plan_version:
+                raise ValueError("TaskPlan does not match the requested snapshot")
+            return {"runId": run_id, "plan": task_plan_summary(run, snapshot)}
+        except (ValueError, KeyError, SQLiteError) as exc:
+            raise HTTPException(status_code=409, detail="planning snapshot is temporarily inconsistent") from exc
 
     @router.get("/runs/{run_id}/graph/versions")
     async def get_graph_versions(run_id: str):

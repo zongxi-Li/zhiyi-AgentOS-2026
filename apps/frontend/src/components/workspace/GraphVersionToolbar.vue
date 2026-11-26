@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, inject } from 'vue'
 import { RefreshRight } from '@element-plus/icons-vue'
-import { graphVersionKey, graphVersionTime, graphVersionsKey } from './graphVersions'
+import { graphVersionKey, graphVersionTime, graphVersionPair, graphVersionsKey } from './graphVersions'
 
+withDefaults(defineProps<{ mode?: 'plan' | 'runtime' }>(), { mode: 'runtime' })
 const versions = inject(graphVersionsKey, null)
 const emit = defineEmits<{ locateNode: [id: string] }>()
 const changes = computed(() => {
@@ -22,28 +23,28 @@ const changes = computed(() => {
     <div class="version-toolbar__controls">
       <slot name="heading" />
       <template v-if="versions">
-      <label class="version-select"><span>图版本</span><select aria-label="选择图版本" :value="versions.selectedKey.value || ''"
+      <label class="version-select"><span>规划与执行版本</span><select aria-label="选择图版本" :value="versions.selectedKey.value || ''"
         :disabled="!versions.entries.value.length" @change="versions.select(($event.target as HTMLSelectElement).value)">
         <option v-if="!versions.entries.value.length" value="">当前版本</option>
-        <option v-for="entry in [...versions.entries.value].reverse()" :key="graphVersionKey(entry)" :value="graphVersionKey(entry)">v{{ entry.graphVersion }}{{ entry.current ? ' · 当前' : ' · 历史' }}</option>
+        <option v-for="entry in [...versions.entries.value].reverse()" :key="graphVersionKey(entry)" :value="graphVersionKey(entry)">{{ graphVersionPair(entry) }}{{ entry.current ? ' · 当前' : ' · 历史' }}</option>
       </select></label>
       <button class="version-toolbar__follow" :class="{ 'is-active': versions.following.value }" type="button" :aria-pressed="versions.following.value" @click="versions.follow()"><span aria-hidden="true" class="follow-dot" />{{ versions.following.value ? '跟随当前' : '返回当前' }}</button>
       <span class="version-toolbar__spacer" />
       <button type="button" class="version-toolbar__compare" :disabled="!versions.previous.value" :aria-pressed="versions.comparing.value"
-        @click="versions.comparing.value = !versions.comparing.value">{{ versions.comparing.value ? '退出对比' : '对比上一版' }}</button>
+        @click="versions.comparing.value = !versions.comparing.value">{{ versions.comparing.value ? '退出对比' : mode === 'plan' ? '对比上一规划' : '对比上一版' }}</button>
       <button type="button" class="version-toolbar__refresh" :disabled="versions.loading.value" aria-label="刷新图版本" title="刷新图版本" @click="versions.refresh()"><el-icon aria-hidden="true"><RefreshRight /></el-icon></button>
       </template>
     </div>
     <div class="version-toolbar__meta">
     <template v-if="versions">
     <div v-if="!versions.following.value && versions.selected.value" class="version-history-notice" role="status">
-      <span>正在查看 v{{ versions.selected.value.graphVersion }}<template v-if="versions.current.value"> · 当前版本 v{{ versions.current.value.graphVersion }}</template></span>
+      <span>正在查看 {{ graphVersionPair(versions.selected.value) }}<template v-if="versions.current.value"> · 当前 {{ graphVersionPair(versions.current.value) }}</template></span>
     </div>
     <div v-if="versions.selected.value" class="version-summary">
       <p :title="versions.selected.value.reason || undefined">{{ versions.selected.value.reason || (versions.previous.value ? '执行图修订' : '初始执行图') }}</p>
       <div class="version-summary__facts"><time>{{ graphVersionTime(versions.selected.value) }}</time>
-        <span v-if="versions.selected.value.inherited.completedStepIds.length">复用 {{ versions.selected.value.inherited.completedStepIds.length }} 节点</span>
-        <span v-if="versions.selected.value.patch">新增 {{ versions.selected.value.patch.addedNodeIds.length }} 节点</span>
+        <span v-if="versions.selected.value.inherited.completedStepIds.length">RGraph 复用 {{ versions.selected.value.inherited.completedStepIds.length }} 节点</span>
+        <span v-if="versions.selected.value.patch">RGraph 新增 {{ versions.selected.value.patch.addedNodeIds.length }} 节点</span>
       </div>
     </div>
     </template>
@@ -52,7 +53,7 @@ const changes = computed(() => {
     <template v-if="versions">
     <p v-if="versions.error.value" class="version-toolbar__error" role="status">{{ versions.error.value }}<button type="button" @click="versions.refresh()">重试</button></p>
     <p v-if="versions.snapshotError.value" class="version-toolbar__error" role="alert">{{ versions.snapshotError.value }}<button type="button" @click="versions.retrySnapshot()">重试</button></p>
-    <section v-if="versions.comparing.value && versions.previous.value" class="graph-difference" aria-label="相邻图版本对比">
+    <section v-if="mode === 'runtime' && versions.comparing.value && versions.previous.value" class="graph-difference" aria-label="相邻图版本对比">
       <div class="graph-difference__header"><strong>v{{ versions.previous.value.graphVersion }} → v{{ versions.selected.value?.graphVersion }}</strong>
         <template v-if="versions.difference.value"><span class="is-added">+{{ versions.difference.value.addedNodeIds.length }} 新增</span><span class="is-updated">{{ versions.difference.value.updatedNodeIds.length }} 调整</span><span class="is-removed">−{{ versions.difference.value.removedNodeIds.length }} 移除</span>
           <span>依赖 +{{ versions.difference.value.addedEdgeIds.length }} / ~{{ versions.difference.value.updatedEdgeIds.length }} / −{{ versions.difference.value.removedEdgeIds.length }}</span></template>
@@ -77,7 +78,7 @@ const changes = computed(() => {
 .version-toolbar button:focus-visible, .version-toolbar select:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: 2px; }
 .version-select { display: inline-flex; align-items: center; gap: 7px; }
 .version-select > span { color: var(--wb-text-muted); font-size: 10px; }
-.version-select select { min-height: 24px; max-width: 150px; padding: 2px 23px 2px 8px; color: var(--wb-text); background: var(--wb-surface-inset); font-weight: 500; }
+.version-select select { min-height: 24px; max-width: 280px; padding: 2px 23px 2px 8px; color: var(--wb-text); background: var(--wb-surface-inset); font-weight: 500; }
 .version-toolbar__spacer { flex: 1; }
 .version-toolbar .version-toolbar__follow { background: transparent; border-color: transparent; }
 .version-toolbar .version-toolbar__follow.is-active { color: var(--wb-accent); background: color-mix(in srgb, var(--wb-accent) 7%, transparent); }

@@ -17,6 +17,7 @@ from contracts.recovery import GraphPatch
 from contracts.workflow import GraphRef
 from domain.models import AcgBlueprint
 from contracts.acg.schema import RuntimeBlueprintSpec
+from contracts.planning import PlannedTask, TaskPlan
 from support.stores.graph_activation_store import SQLiteGraphActivationStore
 from support.stores.graph_handoff_store import SQLiteGraphHandoffStore
 from support.stores.graph_materialization_store import SQLiteGraphMaterializationStore
@@ -220,7 +221,7 @@ def test_activation_source_requires_exact_graph_and_accepted_run_proof(history, 
     assert previous.status_code == 404
 
 
-@pytest.mark.parametrize("suffix", ["/graph/versions", "/graph?blueprintId=nonexistent"])
+@pytest.mark.parametrize("suffix", ["/graph/versions", "/graph?blueprintId=nonexistent", "/plan", "/plan?planVersion=1"])
 def test_graph_history_keeps_run_owner_authorization(history, suffix):
     actor = TrustedUserContext(user_id="other", subject="other", role="operator", tenant_id="other-tenant")
     token = _trusted_user_context.set(actor)
@@ -229,6 +230,62 @@ def test_graph_history_keeps_run_owner_authorization(history, suffix):
     finally:
         _trusted_user_context.reset(token)
     assert response.status_code == 404
+
+
+def test_plan_snapshot_follows_current_graph_and_can_open_proven_revision(history):
+    history.append(2)
+    history.append(3)
+    plans = {
+        version: TaskPlan(missionId=history.run.mission_id, planVersion=version,
+            nodes=(PlannedTask(key="report", title=f"Plan {version}", objective="produce the requested report",
+                capabilityRequirements=("analysis",)),), metadata={"rationale": "DO-NOT-EXPOSE"})
+        for version in (2, 3, 9)
+    }
+    for plan in plans.values():
+        history.repositories.task_plans.add(plan, {})
+    initial = history.repositories.task_plans.get(history.run.mission_id, 1)
+    assert initial is not None
+    record = SimpleNamespace(mission_id=history.run.mission_id, proposal_type="initial_plan",
+        source_provenance=SimpleNamespace(source_run_id=history.run.run_id), proposal_payload=initial,
+        commit_id="first-commit", commitment_revision=1)
+    history.runtime.planning_commit_authority.store = SimpleNamespace(
+        get_by_idempotency_key=lambda key: record if key == f"initial-planning:{history.run.run_id}" else None)
+    history.run.execution_state.update(taskPlanVersion=3, taskPlan=plans[3].model_dump(by_alias=True, mode="json"))
+    history.runtime.workflow_store.save_run(history.run)
+
+    path = f"/agentos/v2/runs/{history.run.run_id}/plan"
+    current = history.client.get(path)
+    previous = history.client.get(path, params={"planVersion": 2})
+    assert current.status_code == previous.status_code == 200
+    assert current.json()["runId"] == history.run.run_id
+    assert current.json()["plan"]["planVersion"] == 3
+    assert history.client.get(path, params={"planVersion": 1}).json()["plan"]["commitId"] == "first-commit"
+    assert previous.json()["plan"]["planVersion"] == 2
+    assert previous.json()["plan"]["tasks"][0]["capabilities"] == ["analysis"]
+    assert "DO-NOT-EXPOSE" not in previous.text
+    assert history.client.get(path, params={"planVersion": 9}).status_code == 404
+
+
+def test_plan_snapshot_can_read_the_initial_commit_before_graph_is_ready(history):
+    run = history.run
+    run.acg_blueprint = {}
+    run.execution_state.pop("taskPlan", None)
+    run.execution_state.pop("taskPlanVersion", None)
+    history.runtime.workflow_store.save_run(run)
+    plan = TaskPlan(missionId=run.mission_id, planVersion=2, nodes=(
+        PlannedTask(key="report", title="Accepted", objective="produce the requested report"),))
+    record = SimpleNamespace(mission_id=run.mission_id, proposal_type="initial_plan",
+        source_provenance=SimpleNamespace(source_run_id=run.run_id), proposal_payload=plan,
+        commit_id="initial-commit", commitment_revision=1)
+    history.runtime.planning_commit_authority.store = SimpleNamespace(
+        get_by_idempotency_key=lambda key: record if key == f"initial-planning:{run.run_id}" else None)
+
+    path = f"/agentos/v2/runs/{run.run_id}/plan"
+    response = history.client.get(path, params={"planVersion": 2})
+    assert response.status_code == 200
+    assert response.json()["plan"]["commitId"] == "initial-commit"
+    record.source_provenance.source_run_id = "sibling-run"
+    assert history.client.get(path).json() == {"runId": run.run_id, "plan": None}
 
 
 def test_corrupt_handoff_is_not_presented_as_verified_graph_history(history):

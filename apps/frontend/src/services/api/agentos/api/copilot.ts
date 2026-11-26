@@ -50,7 +50,8 @@ export interface ToolApprovalDecision {
 export interface CopilotInitialPlan {
   planVersion: number; commitId: string | null; commitmentRevision: number | null
   objective: string; constraints: string[]; expectedArtifacts: string[]
-  tasks: { key: string; title: string; objective: string; rationale: string; acceptanceCriteria: string[]; sourceRefs: string[] }[]
+  relations?: { sourceKey: string; targetKey: string; relationType: 'depends_on' | 'parent' }[]
+  tasks: { key: string; title: string; objective: string; rationale: string; acceptanceCriteria: string[]; sourceRefs: string[]; capabilities?: string[] }[]
 }
 export interface CopilotToolActivity {
   target?: string; resultPreview?: string

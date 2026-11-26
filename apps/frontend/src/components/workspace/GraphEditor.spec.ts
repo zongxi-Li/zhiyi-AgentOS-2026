@@ -1,13 +1,13 @@
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, nextTick, ref, shallowRef } from 'vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import GraphEditor from './GraphEditor.vue'
 import GraphVersionToolbar from './GraphVersionToolbar.vue'
 import { graphVersionsKey, type GraphVersionsController } from './graphVersions'
-import type { GraphProjection, WorkspaceGraphNode } from '@/services/api/agentos'
+import { agentosApi, type GraphProjection, type WorkspaceGraphNode } from '@/services/api/agentos'
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
 
-const graph: GraphProjection = { graphId: 'graph_1', nodes: [{ nodeId: 'node_1', nodeType: 'step', name: 'Capacity' }], edges: [] }
+const graph: GraphProjection = { graphId: 'graph_1', nodes: [{ nodeId: 'node_1', nodeType: 'step', name: 'Capacity', display: { semanticTaskKey: 'capacity' } }], edges: [] }
 const graphNodes: WorkspaceGraphNode[] = [{ acgNodeId: 'node_1', nodeType: 'step', name: 'Capacity', semanticTaskKey: 'capacity', taskId: 'task_1', identityQuality: 'canonical', displayOrder: 0 }]
 
 const topologyCalls = { focusNode: vi.fn(), locateCurrentTask: vi.fn() }
@@ -40,21 +40,52 @@ const mountEditor = (extraProps: Record<string, unknown> = {}) => mount(GraphEdi
   global: { stubs: { AcgTopologyGraph: topologyStub } }
 })
 
-beforeEach(() => { vi.clearAllMocks() })
+const showRuntime = async (wrapper: ReturnType<typeof mountEditor>) => {
+  await wrapper.findAll('.graph-editor__modes button')[1].trigger('click')
+}
+beforeEach(() => {
+  vi.clearAllMocks()
+  vi.spyOn(agentosApi, 'getPlanSnapshot').mockResolvedValue({ runId: 'run_1', plan: null })
+})
+afterEach(() => vi.restoreAllMocks())
 
 describe('GraphEditor', () => {
+  it('uses the frozen plan for dependencies and locates a specific runtime node of the same semantic task', async () => {
+    const runtimeGraph: GraphProjection = { ...graph, nodes: [...graph.nodes,
+      { nodeId: 'expanded_2', nodeType: 'step', name: '补充检查', display: { semanticTaskKey: 'capacity' } }] }
+    const task = { objective: '核对输入', rationale: '', acceptanceCriteria: [], sourceRefs: [] }
+    const initialPlan = { planVersion: 1, commitId: 'commit-1', commitmentRevision: 1, objective: '分析容量',
+      constraints: [], expectedArtifacts: [], tasks: [{ ...task, key: 'capacity', title: '容量', capabilities: ['read'] },
+        { ...task, key: 'report', title: '报告' }],
+      relations: [{ sourceKey: 'capacity', targetKey: 'report', relationType: 'depends_on' as const }] }
+    vi.mocked(agentosApi.getPlanSnapshot).mockResolvedValue({ runId: 'run_1', plan: initialPlan })
+    const wrapper = mountEditor({ graph: runtimeGraph, runId: 'run_1', runtimeObservation: observation(observedRun) })
+    await flushPromises()
+    expect(wrapper.get('.graph-editor__modes button[aria-pressed="true"]').text()).toBe('规划图 ACG')
+    expect(agentosApi.getPlanSnapshot).toHaveBeenCalledWith('run_1', null, expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(wrapper.findComponent(topologyStub).props('blueprint').edges).toMatchObject([{ sourceId: 'capacity', targetId: 'report' }])
+    expect(wrapper.findComponent(topologyStub).props('stepStates')).toBeUndefined()
+    expect(wrapper.text()).toContain('所需能力：read')
+    const links = wrapper.findAll('.planning-graph__links button')
+    expect(links).toHaveLength(2)
+    await links[1].trigger('click')
+    expect(wrapper.findComponent(topologyStub).props('blueprint')).toEqual(runtimeGraph)
+    expect(topologyCalls.focusNode).toHaveBeenCalledWith('expanded_2')
+    wrapper.unmount()
+  })
   it('renders only one canvas state while a historical snapshot loads, fails and recovers', async () => {
     const displayGraph = shallowRef<GraphProjection | null>(null)
     const snapshotLoading = ref(true)
     const snapshotError = ref('')
     const versions = { displayGraph, snapshotLoading, snapshotError,
-      historical: ref(true), selectedKey: ref('historical-v1'),
+      historical: ref(true), following: ref(false), selectedKey: ref('historical-v1'), selected: ref(null), previous: ref(null), comparing: ref(false),
       difference: ref(null), previousGraph: ref(null) } as unknown as GraphVersionsController
     const wrapper = mount(GraphEditor, {
       props: { graph, graphNodes, selectedSemanticTaskKey: null, focusNodeId: null },
       global: { provide: { [graphVersionsKey as symbol]: versions },
         stubs: { AcgTopologyGraph: topologyStub, GraphVersionToolbar: true } }
     })
+    await showRuntime(wrapper)
     expect(wrapper.findComponent(topologyStub).exists()).toBe(false)
     expect(wrapper.get('[role="status"]').text()).toContain('正在加载图快照')
     expect(wrapper.get('[role="status"]').text()).not.toContain('没有可展示')
@@ -75,6 +106,7 @@ describe('GraphEditor', () => {
     const run = { ...observedRun, lifecyclePhase: 'recovery', lifecycleMessage: message,
       activeStepIds: ['node_1'], steps: observedRun.steps.map(step => ({ ...step, status: 'failed' })) }
     const wrapper = mountEditor({ runId: 'run_1', runtimeObservation: observation(run) })
+    await showRuntime(wrapper)
     expect(wrapper.get('.graph-editor__runtime').text()).toContain(message)
     expect(wrapper.get('.graph-editor__runtime').text()).not.toContain('当前执行')
     expect(wrapper.get('.graph-editor__runtime button').text()).toBe('定位当前节点')
@@ -86,6 +118,7 @@ describe('GraphEditor', () => {
     const wrapper = mountEditor({ runId: 'run_1', focusNodeId: 'node_1',
       graph: { ...graph, nodes: [...graph.nodes, { nodeId: 'node_2', nodeType: 'step', name: '补读剩余范围' }] },
       runtimeObservation: observation(observedRun) })
+    await showRuntime(wrapper)
     expect(wrapper.get('.graph-editor__runtime').text()).toContain('补读剩余范围')
     await wrapper.get('.graph-editor__runtime button').trigger('click')
     await wrapper.get('.graph-editor__runtime button').trigger('click')
@@ -94,6 +127,7 @@ describe('GraphEditor', () => {
   })
   it('locates a comparison node again when the same change is clicked repeatedly', async () => {
     const wrapper = mountEditor()
+    await showRuntime(wrapper)
     const toolbar = wrapper.findComponent(GraphVersionToolbar)
     toolbar.vm.$emit('locateNode', 'node_1')
     toolbar.vm.$emit('locateNode', 'node_1')
@@ -103,6 +137,7 @@ describe('GraphEditor', () => {
   it('keeps the failed current step visible when execution stops and clears it for a different run', async () => {
     const currentGraph = { ...graph, nodes: [...graph.nodes, { nodeId: 'node_2', nodeType: 'step', name: '审查读取证据' }] }
     const wrapper = mountEditor({ graph: currentGraph, runId: 'run_1', runtimeObservation: observation(observedRun) })
+    await showRuntime(wrapper)
     expect(wrapper.get('.graph-editor__runtime').text()).toContain('当前执行 · 审查读取证据')
     await wrapper.setProps({ runtimeObservation: observation({ ...observedRun, status: 'failed',
       activeStepIds: [], currentStepId: 'node_2',
@@ -118,32 +153,37 @@ describe('GraphEditor', () => {
   })
   it('maps node selection to semanticTaskKey', async () => {
     const wrapper = mountEditor()
-    await wrapper.find('button').trigger('click')
+    await showRuntime(wrapper)
+    await wrapper.get('.topology-stub button').trigger('click')
     expect(wrapper.emitted('selectSemanticTask')).toEqual([['capacity']])
   })
 
   it('maps node double click to semanticTaskKey for the parent choice flow', async () => {
     const wrapper = mountEditor()
-    await wrapper.findAll('button')[1].trigger('click')
+    await showRuntime(wrapper)
+    await wrapper.findAll('.topology-stub button')[1].trigger('click')
     expect(wrapper.emitted('openSemanticTask')).toEqual([['capacity']])
   })
 
   it('does not guess a semantic key for an unbound graph node', async () => {
     const wrapper = mountEditor()
-    await wrapper.findAll('button')[2].trigger('click')
+    await showRuntime(wrapper)
+    await wrapper.findAll('.topology-stub button')[2].trigger('click')
     expect(wrapper.emitted('openSemanticTask')).toEqual([[null]])
   })
 
-  it('passes persisted step states of the observed run to the topology graph', () => {
+  it('passes persisted step states of the observed run to the topology graph', async () => {
     const wrapper = mountEditor({ runId: 'run_1', runtimeObservation: observation(observedRun) })
+    await showRuntime(wrapper)
     const stub = wrapper.findComponent(topologyStub)
     expect(stub.props('stepStates').map((state: { stepId: string; status: string }) => [state.stepId, state.status]))
       .toEqual([['node_1', 'completed'], ['node_2', 'waiting_review']])
     expect(stub.props('completedStepIds')).toEqual(['node_1'])
   })
 
-  it('ignores runtime observation of a different run', () => {
+  it('ignores runtime observation of a different run', async () => {
     const wrapper = mountEditor({ runId: 'run_1', runtimeObservation: observation({ ...observedRun, runId: 'run_other' }, 'run_other') })
+    await showRuntime(wrapper)
     const stub = wrapper.findComponent(topologyStub)
     expect(stub.props('stepStates')).toEqual([])
     expect(stub.props('completedStepIds')).toEqual([])

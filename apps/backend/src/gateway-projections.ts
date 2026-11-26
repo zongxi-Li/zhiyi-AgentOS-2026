@@ -11,7 +11,12 @@ const scalar = (value: unknown) => ['string', 'boolean', 'number'].includes(type
 const strings = (value: unknown) => list(value).filter((item): item is string => typeof item === 'string');
 const producerFields = (value: unknown) => Object.entries(row(value)).map(([producerId, fields]) => ({ producerId, fields: strings(fields) }));
 const lineage = (value: unknown) => pick(value, 'parentRunId sourceRunId rerunReason supersedesRunId supersededByRunId');
-const graphDisplay = (value: unknown) => pick(value, 'semanticTaskKey taskId logicalRole endpointRole agentName allowedSkills dependencyKeys displayOrder');
+const graphDisplay = (value: unknown) => {
+  const source = row(value);
+  const semanticKey = typeof source.semanticTaskKey === 'string' && source.semanticTaskKey.length
+    ? source.semanticTaskKey : typeof source.taskPlanKey === 'string' ? source.taskPlanKey : null;
+  return { ...pick(source, 'taskId logicalRole endpointRole agentName allowedSkills dependencyKeys displayOrder'), semanticTaskKey: semanticKey };
+};
 const graphNode = (source: Row) => ({ ...pick(source, 'nodeId nodeType name description goal agentName capability controlType'), display: graphDisplay(source.metadata) });
 const graphEdge = (source: Row) => ({ ...pick(source, 'edgeId sourceId targetId edgeType activation condition'), display: graphDisplay(source.metadata) });
 function graph(value: unknown): Row {
@@ -157,10 +162,14 @@ function copilotInitialPlan(value: unknown): Row | null {
     planVersion: numberOrNull(source.planVersion), commitId: stringOrNull(source.commitId),
     commitmentRevision: numberOrNull(source.commitmentRevision), objective: stringOrNull(source.objective),
     constraints: strings(source.constraints), expectedArtifacts: strings(source.expectedArtifacts),
+    relations: list(source.relations).map(row)
+      .filter(relation => typeof relation.sourceKey === 'string' && typeof relation.targetKey === 'string'
+        && (relation.relationType === 'depends_on' || relation.relationType === 'parent'))
+      .map(relation => pick(relation, 'sourceKey targetKey relationType')),
     tasks: rows(source.tasks, task => ({
       key: stringOrNull(task.key), title: stringOrNull(task.title), objective: stringOrNull(task.objective),
       rationale: stringOrNull(task.rationale), acceptanceCriteria: strings(task.acceptanceCriteria),
-      sourceRefs: strings(task.sourceRefs),
+      sourceRefs: strings(task.sourceRefs), capabilities: strings(task.capabilities),
     })),
   };
 }
@@ -271,7 +280,8 @@ const provenancePayload = (source: Row) => ({ ...pick(source, 'eventId runId mis
 export function projectAgentOsResponse(path: string, value: unknown): unknown {
   const source = row(value), suffix = path.replace(/^\/ai\/agentos\/v2/u, '');
   if (suffix === '/runs') return { ...pick(source, 'total page pageSize'), items: rows(source.items, run) };
-  if (/^\/runs\/[^/]+$/u.test(suffix)) return run(source);
+  if (/^\/runs\/[^/]+$/u.test(suffix)) return { ...run(source), initialPlan: copilotInitialPlan(source.initialPlan) };
+  if (/^\/runs\/[^/]+\/plan$/u.test(suffix)) return { runId: stringOrNull(source.runId), plan: copilotInitialPlan(source.plan) };
   if (/\/execution-tree$/u.test(suffix)) return executionTree(source);
   if (/\/workspace$/u.test(suffix)) return workspace(source);
   if (/^\/runs\/[^/]+\/graph\/versions$/u.test(suffix)) return graphVersions(source);

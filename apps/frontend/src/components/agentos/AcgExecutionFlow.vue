@@ -15,6 +15,7 @@ const props = defineProps<{
   statuses: Record<string, { status: string; label: string }>
   difference?: GraphDifference | null
   historical?: boolean
+  overviewOnLoad?: boolean
 }>()
 const emit = defineEmits<{ select: [id: string]; doubleClick: [id: string]; zoom: [percent: number] }>()
 const flow = useVueFlow()
@@ -94,25 +95,49 @@ const overview = () => {
   cancelFocus()
   return flow.fitView({ padding: 0.15, duration: 300, minZoom: 0.08, maxZoom: 1 })
 }
+const initialView = async () => {
+  await nextTick()
+  if (disposed) return
+  if (!props.overviewOnLoad) return actualSize(props.anchorId, 0)
+  const { width, height } = flow.dimensions.value
+  if (width <= 0 || height <= 0 || !nodes.value.length) return
+  // Planning nodes have deterministic layout bounds before DOM measurement.
+  const bounds = nodes.value.map(node => ({ ...node.position, ...(sizes.get(node.id) || closedSize) }))
+  const left = Math.min(...bounds.map(node => node.x)), top = Math.min(...bounds.map(node => node.y))
+  const right = Math.max(...bounds.map(node => node.x + node.width)), bottom = Math.max(...bounds.map(node => node.y + node.height))
+  const zoom = Math.min(1, Math.max(0.08, Math.min(width / (right - left + 80), height / (bottom - top + 80))))
+  cancelFocus()
+  return flow.setViewport({ x: width / 2 - (left + right) / 2 * zoom,
+    y: height / 2 - (top + bottom) / 2 * zoom, zoom }, { duration: 0 })
+}
+let overviewVersion = ''
+const onNodesInitialized = () => {
+  if (!props.overviewOnLoad) return
+  const version = JSON.stringify([props.blueprint.graphId, props.blueprint.graphVersion])
+  if (overviewVersion === version) return
+  overviewVersion = version
+  void initialView()
+}
 const zoomBy = (factor: number) => {
   cancelFocus()
   return flow.zoomTo(Math.max(0.08, Math.min(2.4, flow.viewport.value.zoom * factor)), { duration: 180 })
 }
 watch([() => props.blueprint.graphId, () => props.blueprint.graphVersion], () => {
   sizes.clear(); draggedCenters.clear(); expandedId.value = ''; placeNodes()
-  void actualSize(props.anchorId, 0)
+  void initialView()
 })
 watch(() => props.selectedId, id => { expandedId.value = id; placeNodes() })
 watch(() => [props.blueprint, props.positions, props.statuses, props.difference, props.historical], placeNodes, { immediate: true, deep: true })
 watch(() => props.anchorId, id => {
   // Explicit node selection owns its own camera request. Execution advancing
   // without a selection follows the new active node once, not on every poll.
-  if (!props.selectedId) void actualSize(id)
+  if (!props.selectedId && !props.overviewOnLoad) void actualSize(id)
 })
 watch(() => [flow.dimensions.value.width, flow.dimensions.value.height], ([width, height], [oldWidth, oldHeight]) => {
   if (width <= 0 || height <= 0) return
   if (focusRequest || oldWidth <= 0 || oldHeight <= 0) {
-    void actualSize(focusRequest?.id || props.selectedId || props.anchorId, 0)
+    if (props.overviewOnLoad && !focusRequest && !props.selectedId) void initialView()
+    else void actualSize(focusRequest?.id || props.selectedId || props.anchorId, 0)
     return
   }
   // Pane resizing and review/header expansion change the visible canvas.
@@ -121,7 +146,7 @@ watch(() => [flow.dimensions.value.width, flow.dimensions.value.height], ([width
   void flow.setViewport({ x: viewport.x + (width - oldWidth) / 2,
     y: viewport.y + (height - oldHeight) / 2, zoom: viewport.zoom }, { duration: 0 })
 }, { flush: 'post' })
-flow.onInit(() => { void actualSize(props.anchorId, 0) })
+flow.onInit(() => { void initialView() })
 flow.onMoveStart(({ event }) => { if (event) cancelFocus() })
 flow.onViewportChange(viewport => emit('zoom', Math.round(viewport.zoom * 100)))
 flow.onNodeDragStop(({ node }) => {
@@ -141,6 +166,7 @@ defineExpose({ actualSize, overview, zoomBy, close })
 <template>
   <VueFlow v-model:nodes="nodes" :edges="edges" :min-zoom="0.08" :max-zoom="2.4" :nodes-connectable="false"
     :delete-key-code="null" :selection-key-code="null" :zoom-on-double-click="false"
+    @nodes-initialized="onNodesInitialized"
     @node-double-click="emit('doubleClick', $event.node.id)" @pane-click="close">
     <template #node-execution="{ id, data }">
       <AcgExecutionNode :id="id" :name="data.name" :status="data.status" :status-label="data.label"

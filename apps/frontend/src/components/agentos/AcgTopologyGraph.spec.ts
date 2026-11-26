@@ -130,9 +130,11 @@ describe('execution flow integration', () => {
     expect(network.getScale()).toBe(1.7); expect(network.getViewPosition()).toEqual({ x: 80, y: 120 })
     expect(network.moveTo).not.toHaveBeenCalled()
   })
-  it('renders the running neighborhood with Vue Flow without creating a canvas network', async () => {
+  it('renders all steps by default and switches to the running neighborhood without creating a canvas network', async () => {
     const wrapper = await setup()
     await vi.advanceTimersByTimeAsync(150)
+    expect(ids(wrapper)).toHaveLength(5)
+    await click(wrapper, '当前步骤及关联')
     expect(ids(wrapper)).toEqual(['n2', 'n3', 'n4'])
     expect(wrapper.get('[data-node="n3"]').text()).toContain('\u8fd0\u884c\u4e2d')
     expect(networks).toHaveLength(0)
@@ -180,6 +182,7 @@ describe('execution flow integration', () => {
       stepStates: [{ stepId: 'n2', status: 'completed', agentName: 'worker', attempt: 1, retryCount: 1 },
         { stepId: 'n3', status: 'retrying', agentName: 'worker', attempt: 1, retryCount: 1 },
         { stepId: 'n9', status: 'running', agentName: 'worker', attempt: 1, retryCount: 0 }] })
+    await click(wrapper, '当前步骤及关联')
     expect(ids(wrapper)).toEqual(['n8', 'n9', 'n10'])
     const flow = wrapper.findComponent('.mock-execution-flow')
     expect(flow.props('anchorId')).toBe('n9')

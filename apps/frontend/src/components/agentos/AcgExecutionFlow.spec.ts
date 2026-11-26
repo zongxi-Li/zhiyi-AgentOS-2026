@@ -54,6 +54,18 @@ const flow = (w: ReturnType<typeof mount>) => w.findComponent({ name: 'VueFlow' 
 const nodeRows = (w: ReturnType<typeof mount>) => flow(w).props('nodes') as any[]
 
 describe('execution flow geometry', () => {
+  it('fits the complete ACG planning graph on first display', async () => {
+    const wrapper = mount(AcgExecutionFlow, { props: { blueprint, positions, selectedId: '', anchorId: 'a',
+      statuses: {}, historical: true, overviewOnLoad: true } })
+    wrappers.push(wrapper)
+    api.onInit.mock.calls.at(-1)![0]()
+    await flushPromises()
+    api.setViewport.mockClear()
+    wrapper.findComponent({ name: 'VueFlow' }).vm.$emit('nodesInitialized')
+    await flushPromises()
+    expect(api.setViewport).toHaveBeenCalledWith(expect.objectContaining({ zoom: 1 }), { duration: 0 })
+    expect(api.setCenter).not.toHaveBeenCalled()
+  })
   it('keeps the expanding center fixed and opens space above and below in the same frame', async () => {
     const wrapper = setup()
     const node = wrapper.findAllComponents({ name: 'AcgExecutionNode' }).find(n => n.props('id') === 'b')!

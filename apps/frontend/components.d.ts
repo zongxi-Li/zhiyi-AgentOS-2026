@@ -126,6 +126,8 @@ declare module 'vue' {
     ModelRuntimeControls: typeof import('./src/components/ModelRuntimeControls.vue')['default']
     NativeWorkspacePicker: typeof import('./src/components/platform/NativeWorkspacePicker.vue')['default']
     PermissionSelector: typeof import('./src/components/PermissionSelector.vue')['default']
+    PlanningGraphPanel: typeof import('./src/components/workspace/PlanningGraphPanel.vue')['default']
+    PlanningGraphView: typeof import('./src/components/workspace/PlanningGraphView.vue')['default']
     PlanningStageArtifact: typeof import('./src/components/workspace/PlanningStageArtifact.vue')['default']
     ProblemsPanel: typeof import('./src/components/workbench/ProblemsPanel.vue')['default']
     PublicRouteLayout: typeof import('./src/components/app/PublicRouteLayout.vue')['default']

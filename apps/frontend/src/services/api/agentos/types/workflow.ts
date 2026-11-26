@@ -170,6 +170,7 @@ export interface TraceEvent {
   createdAt?: string
 }
 export interface WorkflowRun {
+  initialPlan?: CopilotInitialPlan | null
   actionCapabilities?: RunActionCapabilities | null
   formalControl?: FormalControl | null
   error?: { code?: string } | null

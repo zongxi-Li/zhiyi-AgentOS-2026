@@ -384,8 +384,10 @@ const acgSymbol = (
     id: `acg:${runId}`,
     type: 'acg',
     status,
-    title: 'ACG',
-    subtitle,
+    title: '规划图 ACG',
+    subtitle: graph?.taskPlanVersion != null
+      ? `ACG v${graph.taskPlanVersion} · RGraph v${graph.graphVersion || '—'}`
+      : subtitle,
     runId,
     metrics: {
       ...(nodeCount != null ? { Nodes: nodeCount } : {}),

@@ -32,7 +32,7 @@ const labels: Record<string, string> = {
   Interactions: '运行交互', 'Content reference': '正文引用', Provenance: '来源关联',
   Failure: '失败原因', Executions: '执行记录', 'Technical IDs': '技术编号', 'Latest Attempt': '最近一次执行',
   STRUCTURED_OUTPUT: '结构化输出', PLANNING: '任务规划', MODEL: '模型调用', TOOL: '工具调用',
-  AGENT: '智能体', TASK: '任务步骤', RESULT: '执行结果', RUNTIME: '结构化输出', ACG: '执行图',
+  AGENT: '智能体', TASK: '任务步骤', RESULT: '执行结果', RUNTIME: '结构化输出', ACG: '规划图 ACG', RGraph: '执行图 RGraph',
   runIdRef: '运行引用', stepId: '步骤编号', contractStatus: '内容合同', inputRevision: '输入版本',
   outputRef: '输出引用', contextRef: '上下文引用', memoryRef: '记忆引用', traceRef: '执行追踪引用',
   tokensAvailable: '可获取 Token', tokensDelivered: '实际投递 Token', savingRatio: '节省比例',
