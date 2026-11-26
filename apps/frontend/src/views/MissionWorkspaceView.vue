@@ -476,10 +476,11 @@ const canRerunSelectedRun = computed(() => Boolean(
 ))
 const shouldResumeSelectedRun = computed(() => pendingSelectedRecovery.value?.kind === 'retry'
   || lifecycle.value.capabilities?.canRetrySuccessor === true || lifecycle.value.capabilities?.canRecoverCurrentRun === true)
+// 停止入口不依赖服务端能力位：后端按 Run 状态裁决（终态 409、无权 403 都有既定提示），
+// 这里只保留只读与重复提交守卫。
 const canCancelActiveRun = computed(() => Boolean(
   projection.value?.activeRun?.runId
   && !controlReadOnly.value
-  && lifecycle.value.capabilities?.canCancel === true
   && !cancelPending.value
 ))
 const rerunDisabledReason = computed(() => {

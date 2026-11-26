@@ -767,9 +767,9 @@ describe('task Copilot', () => {
     vi.mocked(agentosApi.previewCopilotAction).mockResolvedValue(proposal)
     vi.mocked(agentosApi.applyCopilotAction).mockResolvedValue(receipt)
     const w = await panel({ actionCapabilities: capabilitiesFixture('run-1', 'mission-1', snapshot.status, 3, { canRerunSuccessor: true }), entry: { entryId: 'step:B', kind: 'task', name: '生成报告', group: 'steps', displayOrder: 2, acgNodeId: 'B' } })
-    await w.get('[aria-label="任务操作"]').trigger('click')
+    await w.get('[aria-label="任务对话输入"]').setValue('/rerun-node')
     expect((w.get('select').element as HTMLSelectElement).value).toBe('B')
-    await w.get('.operation-menu button:nth-of-type(2)').trigger('click'); await flushPromises()
+    await w.get('.command-menu button').trigger('click'); await flushPromises()
     expect(agentosApi.applyCopilotAction).not.toHaveBeenCalled()
     expect(w.get('.operation-card').text()).toContain('复用结果：提取资料')
     vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...snapshot, exchanges: [proposal, receipt] })
@@ -780,7 +780,7 @@ describe('task Copilot', () => {
     expect(w.emitted('select-run')).toEqual([['run-2']])
     expect(w.findAll('.message.is-user')).toHaveLength(1)
   })
-  it('previews and confirms formally offered current Run recovery with precise reuse wording', async () => {
+  it.each(['menu', 'slash click', 'slash Enter'])('previews and confirms current Run recovery via %s', async entry => {
     const snapshot = { ...state(), status: 'failed', steps: [
       { stepId: 'A', name: '提取资料', status: 'completed' }, { stepId: 'B', name: '生成报告', status: 'failed' },
     ] }
@@ -796,20 +796,46 @@ describe('task Copilot', () => {
     const w = await panel({ actionCapabilities: capabilitiesFixture('run-1', 'mission-1', 'failed', 3,
       { canRecoverCurrentRun: true, retryStepId: 'B' }) })
     expect(w.get('[aria-label="任务操作"]').attributes('disabled')).toBeUndefined()
-    await w.get('[aria-label="任务操作"]').trigger('click')
-    const recover = w.findAll('.operation-menu button').find(button => button.text().includes('恢复失败任务'))!
-    expect(recover.attributes('disabled')).toBeUndefined()
-    expect(recover.text()).toContain('在当前 Run')
-    await recover.trigger('click'); await flushPromises()
+    if (entry === 'menu') {
+      await w.get('[aria-label="任务操作"]').trigger('click')
+      const recover = w.findAll('.operation-menu button').find(button => button.text().includes('恢复失败任务'))!
+      expect(recover.attributes('disabled')).toBeUndefined()
+      expect(recover.text()).toContain('在当前 Run')
+      await recover.trigger('click')
+    } else {
+      const input = w.get('[aria-label="任务对话输入"]')
+      await input.setValue('/rec')
+      expect(w.get('.command-menu').text()).toContain('/recover')
+      if (entry === 'slash click') await w.get('.command-menu button').trigger('click')
+      else await input.trigger('keydown', { key: 'Enter' })
+    }
+    await flushPromises()
     expect(agentosApi.previewCopilotAction).toHaveBeenCalledWith('run-1', 'recover', '恢复失败任务',
       expect.any(String), 'task_collaboration', undefined)
     expect(w.get('.operation-card').text()).toContain('在当前 Run 继续执行')
     expect(w.get('.operation-card').text()).not.toContain('创建新 Run')
     expect(w.get('.operation-card button').attributes('disabled')).toBeUndefined()
+    expect(agentosApi.applyCopilotAction).not.toHaveBeenCalled()
     vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...snapshot, exchanges: [proposal, receipt] })
     await w.get('.operation-card button').trigger('click'); await flushPromises()
     expect(agentosApi.applyCopilotAction).toHaveBeenCalledWith('run-1', proposal.operationId, 3, 'task_collaboration')
     expect(w.find('.operation-receipt button').exists()).toBe(false)
+  })
+  it('lists all task commands and sends only the supplemental argument to the preview', async () => {
+    vi.mocked(agentosApi.previewCopilotAction).mockResolvedValue({
+      operationId: 'input', user: '继续核查', assistant: '待确认', createdAt: '2026-10-06T00:00:00Z', observedRevision: 3
+    })
+    const w = await panel({ actionCapabilities: capabilitiesFixture('run-1', 'mission-1', 'running', 3, { canCollaborate: true }) })
+    const input = w.get('[aria-label="任务对话输入"]')
+    await input.setValue('/')
+    expect(w.findAll('.command-menu button').map(button => button.text().split('　')[0]))
+      .toEqual(['/rerun', '/rerun-node', '/recover', '/input'])
+    await input.setValue('/input 继续核查')
+    await input.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(agentosApi.previewCopilotAction).toHaveBeenCalledWith('run-1', 'user_input', '继续核查',
+      expect.any(String), 'task_collaboration', undefined)
+    expect(agentosApi.applyCopilotAction).not.toHaveBeenCalled()
   })
   it.each([undefined, 'successor_run'])('does not confirm a %s recovery proposal with a current Run offer', async retryMode => {
     const action = { kind: 'recover' as const, retryMode: retryMode as 'successor_run' | undefined,
@@ -911,7 +937,10 @@ describe('task Copilot', () => {
     expect(vi.mocked(renderMarkdown).mock.calls.filter(([text]) => text === '文'.repeat(100))).toHaveLength(1)
   })
   it('restores a warm conversation immediately while validating fresh state before sending', async () => {
-    const saved = state(); saved.exchanges = [{ operationId: 'saved', user: '上次的问题', assistant: '已保存的回复', createdAt: '2026-10-05T12:00:00Z', observedRevision: 3 }]
+    // 运行中的 Run 现在由停止键接管 .send-button（Codex 式变形），
+    // 发送校验语义改用终态运行的草稿会话验证。
+    const saved = state(); saved.status = 'completed'
+    saved.exchanges = [{ operationId: 'saved', user: '上次的问题', assistant: '已保存的回复', createdAt: '2026-10-05T12:00:00Z', observedRevision: 3 }]
     vi.mocked(agentosApi.getCopilot).mockResolvedValue(saved)
     const first = await panel()
     await first.get('textarea').setValue('尚未发送的草稿')
@@ -1098,5 +1127,28 @@ describe('task Copilot', () => {
     expect(detail.text()).toContain('First output')
     expect(detail.text()).not.toContain('Second invocation')
     expect(detail.text()).not.toContain('Separate tool')
+  })
+})
+describe('composer stop button while a run is executing', () => {
+  it('morphs the send button into a stop control for an active run and emits cancel-run on click', async () => {
+    const w = await panel()
+    expect(w.get('[aria-label="停止运行"]').exists()).toBe(true)
+    expect(w.find('[aria-label="发送消息"]').exists()).toBe(false)
+    await w.get('[aria-label="停止运行"]').trigger('click')
+    expect(w.emitted('cancel-run')).toHaveLength(1)
+  })
+
+  it('restores the send button once the run reaches a terminal state', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), status: 'completed' })
+    const w = await panel({ runStatus: 'completed' })
+    expect(w.find('[aria-label="停止运行"]').exists()).toBe(false)
+    expect(w.get('[aria-label="发送消息"]').exists()).toBe(true)
+  })
+
+  it('keeps the send button while a planner question is pending so the answer flow stays reachable', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), question: { questionId: 'q-1', prompt: '需要审计哪些目录？', choices: ['全部', '仅源码'] } })
+    const w = await panel({ runStatus: 'running' })
+    expect(w.find('[aria-label="停止运行"]').exists()).toBe(false)
+    expect(w.get('[aria-label="提交回答并继续"]').exists()).toBe(true)
   })
 })

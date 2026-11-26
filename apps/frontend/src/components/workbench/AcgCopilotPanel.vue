@@ -107,22 +107,22 @@
     <div v-if="error" class="error-note" role="alert"><span>{{ error }}</span><button @click="refresh()">刷新</button></div>
     <slot v-if="creating" name="creation-status" />
     <div v-if="!creating && (historical || readonly || !allows('canCollaborate'))" class="readonly-note">{{ historical ? '历史 Run 只读，可讨论原始证据。' : '操作按所选 Run 的服务端能力限制。' }}<button v-if="state?.latestRunId && state.latestRunId !== runId" type="button" @click="emit('select-run', state.latestRunId)">查看最新创建的 Run</button></div>
-    <form ref="composerRoot" class="composer" :class="{ 'is-answering': answering && state?.question }" @submit.prevent="send" @keydown.esc="openMenu = null">
+    <form ref="composerRoot" class="composer" :class="{ 'is-answering': answering && state?.question }" @submit.prevent="send" @keydown.esc="openMenu = null; commandDismissed = true">
       <div v-if="state?.question" class="composer-mode"><button type="button" :class="{ selected: answering }" @click="answering = true">回答问题</button><button type="button" :class="{ selected: !answering }" @click="answering = false">询问助手</button></div>
       <slot v-if="creating" name="composer-context" />
-      <textarea ref="composerInput" v-model="draft" rows="3" :maxlength="creating ? undefined : answering && state?.question ? 2000 : 4000" :disabled="(!runId && !creating) || busy || creationPending" :placeholder="composerPlaceholder" aria-label="任务对话输入" @keydown="onKeydown"></textarea>
+      <div v-if="showCommands" class="picker-menu command-menu operation-menu" role="group" aria-label="命令">
+        <template v-for="command in visibleCommands" :key="command.kind">
+          <label v-if="command.kind === 'rerun_node'">起始节点<select v-model="operationStep" aria-label="选择重跑节点"><option value="" disabled>选择一个节点</option><option v-for="step in state?.steps" :key="step.stepId" :value="step.stepId">{{ step.name }}</option></select></label>
+          <button type="button" :disabled="!canPreviewCommand(command.kind) || command.kind === 'rerun_node' && !operationStep" @click="selectCommand(command)">
+            <span><strong>{{ command.name }}　{{ actionLabel(command.kind) }}</strong><small>{{ command.description() }}</small></span>
+          </button>
+        </template>
+      </div>
+      <textarea ref="composerInput" v-model="draft" rows="2" :maxlength="creating ? undefined : answering && state?.question ? 2000 : 4000" :disabled="(!runId && !creating) || busy || creationPending" :placeholder="composerPlaceholder" aria-label="任务对话输入" @input="commandDismissed = false" @keydown="onKeydown"></textarea>
       <div class="composer-footer">
         <slot v-if="creating" name="creation-tools" />
         <template v-else>
         <div class="composer-picker"><button type="button" class="picker-trigger" aria-label="任务操作" :disabled="busy || loading || !state || permission !== 'task_collaboration' || readonly || historical || !(allows('canCollaborate') || operationAllowed('recover') || allows('canRerunSuccessor'))" :aria-expanded="openMenu === 'operation'" @click="openMenu = openMenu === 'operation' ? null : 'operation'"><el-icon><CircleCheck /></el-icon></button>
-          <div v-if="openMenu === 'operation'" class="picker-menu operation-menu">
-            <div class="menu-heading">任务操作</div>
-            <button type="button" :disabled="!allows('canRerunSuccessor')" @click="prepareOperation('rerun')"><span><strong>再次运行</strong><small>在原任务下创建新 Run</small></span></button>
-            <label>起始节点<select v-model="operationStep" aria-label="选择重跑节点"><option value="" disabled>选择一个节点</option><option v-for="step in state?.steps" :key="step.stepId" :value="step.stepId">{{ step.name }}</option></select></label>
-            <button type="button" :disabled="!operationStep || !allows('canRerunSuccessor')" @click="prepareOperation('rerun_node')"><span><strong>从指定节点重跑</strong><small>重新执行该节点及其受影响的后续步骤</small></span></button>
-            <button type="button" :disabled="!operationAllowed('recover')" @click="prepareOperation('recover')"><span><strong>恢复失败任务</strong><small>{{ offeredCapabilities?.retryMode === 'current_run' ? '在当前 Run 复用已提交结果，重试失败节点' : '在新 Run 复用已提交结果，重试失败节点' }}</small></span></button>
-            <button type="button" :disabled="!draft.trim() || !allows('canCollaborate')" @click="prepareOperation('user_input')"><span><strong>提交补充要求</strong><small>将输入框中的要求交给 Planner 重新决策</small></span></button>
-          </div>
         </div>
         <div class="composer-picker permission-picker" :class="{ 'is-auto-approval': permissionChoice === 'full' }" @keydown="onPermissionKeydown">
           <button type="button" class="picker-trigger" aria-label="选择权限" aria-haspopup="menu" :aria-expanded="openMenu === 'permission'" :aria-busy="settingPermission" :disabled="busy || loading || !state || readonly || historical || !allows('canSetPermission')" @click="openMenu = openMenu === 'permission' ? null : 'permission'"><el-icon :class="{ 'is-loading': settingPermission }"><Loading v-if="settingPermission" /><MagicStick v-else-if="permissionChoice === 'full'" /><Lock v-else /></el-icon><span>{{ settingPermission ? '正在设置…' : permissionLabel }}</span><el-icon class="chevron"><ArrowDown /></el-icon></button>
@@ -143,7 +143,8 @@
           </div>
         </div>
         </template>
-        <button class="send-button" type="submit" :disabled="!canSend" :aria-label="creating ? '发送任务' : answering && state?.question ? '提交回答并继续' : '发送消息'"><el-icon v-if="busy" class="is-loading"><Loading /></el-icon><el-icon v-else><ArrowUp /></el-icon></button>
+        <button v-if="canStopRun && !busy" class="send-button is-stop" type="button" :aria-label="cancelPending ? '正在取消…' : '停止运行'" :disabled="cancelPending" @click="emit('cancel-run')"><span class="stop-square" aria-hidden="true"></span></button>
+        <button v-else class="send-button" type="submit" :disabled="!canSend" :aria-label="creating ? '发送任务' : answering && state?.question ? '提交回答并继续' : '发送消息'"><el-icon v-if="busy" class="is-loading"><Loading /></el-icon><el-icon v-else><ArrowUp /></el-icon></button>
       </div>
     </form>
     <slot v-if="creating" name="creation-notice" />
@@ -155,6 +156,7 @@ import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMoun
 import { ArrowDown, ArrowRight, ArrowUp, ChatDotRound, Check, CircleCheck, Clock, Connection, Cpu, Loading, Lock, MagicStick, Share } from '@element-plus/icons-vue'
 import { agentosApi, type GraphProjection, type WorkspaceEntry, type WorkspaceGraphNode, type ModelCallUsage, type RunActionCapabilities } from '@/services/api/agentos'
 import { readRunCapabilities, recoveryCheckPending, type RunCapabilityAction } from '@/workbench/runtime/runCapabilities'
+import { isActiveRunStatus } from '@/features/workspace/session'
 import type { CopilotPermission, CopilotPermissionChange, CopilotState, CopilotAction, CopilotActionKind, CopilotProgressPhase, TaskApprovalMode } from '@/services/api/agentos/api/copilot'
 import { copilotResponseSummary, type CopilotConversationMessage } from './copilotConversation'
 import { validationFailureDetails, type RuntimeObservation, type RuntimeTraceObservation } from '@/workbench/runtime/observation'
@@ -320,11 +322,43 @@ const statusLabel = computed(() => {
       waiting_review: current?.question ? '等待你的回答' : reviewPending.value ? '自动修订中' : reviewKind.value === 'workspace_revision_blocked' ? '修订受阻' : '已暂停',
       completed: '已完成', failed: '执行失败', cancelled: '已取消', superseded: '已替换' } as Record<string, string>)[status] || '尚未启动')
 })
-const composerPlaceholder = computed(() => creating.value ? '输入任务，描述你想完成的事情…' : !props.runId ? '先选择一项任务' : answering.value && state.value?.question ? '补充你的选择或信息，让任务继续…' : '询问当前任务，或一起梳理下一步…')
-const canSend = computed(() => creating.value
+const commands: { name: string; kind: CopilotActionKind; description: () => string }[] = [
+  { name: '/rerun', kind: 'rerun', description: () => '在原任务下创建新 Run' },
+  { name: '/rerun-node', kind: 'rerun_node', description: () => '重新执行选中节点及其受影响的后续步骤' },
+  { name: '/recover', kind: 'recover', description: () => offeredCapabilities.value?.retryMode === 'current_run'
+    ? '在当前 Run 复用已提交结果，重试失败节点' : '复用已提交结果，重试失败节点' },
+  { name: '/input', kind: 'user_input', description: () => '输入补充要求，交给 Planner 重新决策' }
+]
+const commandDismissed = ref(false)
+const commandQuery = computed(() => draft.value.trim().toLowerCase())
+const inputArgument = computed(() => draft.value.trim().match(/^\/input\s+([\s\S]+)$/i)?.[1].trim() || '')
+const matchingCommands = computed(() => !creating.value && props.runId && commandQuery.value.startsWith('/')
+  ? commands.filter(command => command.name.startsWith(commandQuery.value)) : [])
+const selectedCommand = computed(() => matchingCommands.value.find(command => command.name === commandQuery.value)
+  || (matchingCommands.value.length === 1 ? matchingCommands.value[0] : undefined)
+  || (inputArgument.value && !creating.value && props.runId ? commands.find(command => command.kind === 'user_input') : undefined))
+const visibleCommands = computed(() => openMenu.value === 'operation' ? commands : matchingCommands.value)
+const showCommands = computed(() => openMenu.value === 'operation'
+  || !openMenu.value && !commandDismissed.value && matchingCommands.value.length > 0)
+const canPreviewCommand = (kind: CopilotActionKind) => !!props.runId && !!state.value && !busy.value && !loading.value
+  && permission.value === 'task_collaboration' && operationAllowed(kind)
+const composerPlaceholder = computed(() => creating.value ? '输入任务，描述你想完成的事情…' : !props.runId ? '先选择一项任务' : answering.value && state.value?.question ? '补充你的选择或信息，让任务继续…' : '询问当前任务，输入 / 查看命令…')
+const canSend = computed(() => selectedCommand.value
+  ? canPreviewCommand(selectedCommand.value.kind) && (selectedCommand.value.kind !== 'user_input' || !!inputArgument.value)
+    && (selectedCommand.value.kind !== 'rerun_node' || !!operationStep.value)
+  : matchingCommands.value.length ? false : creating.value
   ? Boolean(draft.value.trim()) && !busy.value && !props.creationPending && !props.creationDisabled
     && !props.readonly && !props.historical
   : !!props.runId && !!state.value && allows('canDiscuss') && !loading.value && !busy.value && !!draft.value.trim() && (answering.value && state.value.question && allows('canAnswerPlanner') ? permission.value === 'task_collaboration' : selectedModel.value ? availableModels.value.some(m => m.id === selectedModel.value) : state.value.modelAvailable))
+// 发送键的 Codex 式变形：Run 处于活跃执行态时按钮变为「停止」。只看 Run 状态，
+// 不依赖服务端能力位；审核等待与任务澄清时保留发送键，避免挡住审核与回答入口。
+const canStopRun = computed(() => {
+  const status = state.value?.status || props.runStatus || ''
+  return Boolean(props.runId) && !creating.value && !props.historical && !props.readonly
+    && permission.value === 'task_collaboration'
+    && isActiveRunStatus(status) && status !== 'waiting_review'
+    && !state.value?.question
+})
 const messages = computed<CopilotConversationMessage[]>(() => [
   ...(state.value?.exchanges || []).flatMap(e => [ ...(e.user ? [{ id: `${e.sourceRunId || props.runId}:${e.operationId}-u`, role: 'user', content: e.user, time: e.createdAt, planner: false, action: undefined, receipt: undefined, proposalId: e.operationId, sourceRunId: e.sourceRunId || props.runId || undefined }] : []), { id: `${e.sourceRunId || props.runId}:${e.operationId}-a`, role: 'assistant', content: e.assistant, time: e.createdAt, planner: false, action: e.action, receipt: e.receipt, proposalId: e.operationId, sourceRunId: e.sourceRunId || props.runId || undefined, responseTimings: e.responseTimings, latencyMs: e.latencyMs, providerRequest: e.providerRequest, contextUsage: e.contextUsage }]),
   ...(state.value?.humanAnswers || []).flatMap(a => [{ id: `${a.questionId}-q`, role: 'assistant', content: a.prompt, time: a.answeredAt, planner: true, action: undefined, receipt: undefined, proposalId: '', sourceRunId: a.sourceRunId }, { id: `${a.questionId}-r`, role: 'user', content: a.answer, time: a.answeredAt, planner: true, action: undefined, receipt: undefined, proposalId: '', sourceRunId: a.sourceRunId }])
@@ -535,6 +569,8 @@ async function loadCalls(more = false) {
   finally { if (token === generation) callsLoading.value = false }
 }
 async function send() {
+  if (selectedCommand.value) return selectCommand(selectedCommand.value)
+  if (matchingCommands.value.length) return
   if (creating.value) {
     if (!canSend.value) return
     const token = generation
@@ -589,11 +625,12 @@ async function send() {
   } catch (e) { if (token === generation) { error.value = errorMessage(e); if ((e as any)?.response?.status === 409) await refresh(true) } }
   finally { if (token === generation) batcher.flush(); batcher.dispose(); if (streamBatcher === batcher) streamBatcher = undefined; if (token === generation) { busy.value = false; streamContent.value = ''; pendingUser.value = '' } }
 }
-async function prepareOperation(kind: CopilotActionKind) {
+async function prepareOperation(kind: CopilotActionKind, commandInput?: string) {
   if (!state.value || !props.runId || busy.value || !operationAllowed(kind) || permission.value !== 'task_collaboration') return
   const id = props.runId, token = generation
   const stepId = kind === 'rerun_node' ? operationStep.value : undefined
-  const content = kind === 'user_input' ? draft.value.trim() : `${actionLabel(kind)}${stepId ? `：${stepNames([stepId])}` : ''}`
+  if (kind === 'rerun_node' && !stepId) return
+  const content = kind === 'user_input' ? commandInput ?? draft.value.trim() : `${actionLabel(kind)}${stepId ? `：${stepNames([stepId])}` : ''}`
   if (!content) return
   const target = `operation:${kind}:${stepId || ''}`, options = permission.value
   if (!requestKey || requestKey.content !== content || requestKey.target !== target || requestKey.options !== options) requestKey = { content, target, options, id: crypto.randomUUID() }
@@ -602,7 +639,7 @@ async function prepareOperation(kind: CopilotActionKind) {
     const exchange = await agentosApi.previewCopilotAction(id, kind, content, requestKey.id, permission.value, stepId)
     if (token !== generation) return
     if (!state.value.exchanges.some(e => e.operationId === exchange.operationId)) state.value.exchanges.push(exchange)
-    requestKey = undefined; if (kind === 'user_input') draft.value = ''
+    requestKey = undefined; if (kind === 'user_input' || selectedCommand.value?.kind === kind) draft.value = ''
     followBottom.value = true; scrollBottom()
   } catch (e) { if (token === generation) error.value = errorMessage(e) }
   finally { if (token === generation) busy.value = false }
@@ -641,7 +678,25 @@ async function confirmAction(proposalId: string, action: CopilotAction, sourceRu
   finally { if (token === generation) busy.value = false }
 }
 watch(() => props.graphNode?.acgNodeId || props.entry?.acgNodeId, id => { operationStep.value = id || '' }, { immediate: true })
-function onKeydown(e: KeyboardEvent) { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); void send() } }
+function selectCommand(command: typeof commands[number]) {
+  if (!canPreviewCommand(command.kind)) return
+  if (command.kind === 'user_input' && !inputArgument.value) {
+    const existing = matchingCommands.value.length ? '' : draft.value.trim()
+    draft.value = `/input ${existing}`
+    openMenu.value = null
+    commandDismissed.value = true
+    composerInput.value?.focus()
+    return
+  }
+  return prepareOperation(command.kind, command.kind === 'user_input' ? inputArgument.value : undefined)
+}
+function onKeydown(e: KeyboardEvent) {
+  if (e.isComposing) return
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    void send()
+  }
+}
 function saveSession(id = props.runId) { if (id && state.value) saveCopilotSession(id, { state: state.value, draft: draft.value, model: selectedModel.value, permission: permission.value, effort: reasoningEffort.value, operation: requestKey }, sessionOwnerId) }
 watch(() => props.runId, (_next, previous) => {
   saveSession(previous)
@@ -665,7 +720,7 @@ watch(() => props.runId, (_next, previous) => {
 watch(tab, value => { if (value === 'trace') void loadCalls() })
 watch(reasoningOptions, options => { if (!options.includes(reasoningEffort.value)) reasoningEffort.value = '' })
 watch(draft, value => { if (creating.value) emit('draft-change', value) }, { flush: 'sync' })
-watch(draft, () => void nextTick(() => { const e = composerInput.value; if (e) { e.style.height = 'auto'; e.style.height = `${Math.min(180, Math.max(76, e.scrollHeight))}px` } }))
+watch(draft, () => void nextTick(() => { const e = composerInput.value; if (e) { e.style.height = 'auto'; e.style.height = `${Math.min(180, Math.max(52, e.scrollHeight))}px` } }))
 function closePickers(e: PointerEvent) { if (!composerRoot.value?.contains(e.target as Node)) openMenu.value = null }
 onMounted(() => { document.addEventListener('pointerdown', closePickers); document.addEventListener('visibilitychange', onVisibilityChange) })
 onDeactivated(() => { viewActive = false; viewSuspended = true; stopScheduledRefresh(); document.removeEventListener('pointerdown', closePickers); document.removeEventListener('visibilitychange', onVisibilityChange) })
@@ -746,11 +801,11 @@ button:focus-visible, input:focus-visible { outline:2px solid var(--wb-accent); 
 .question-choices button:hover { border-color:var(--wb-accent); }
 .reply-link { display:flex; align-items:center; gap:7px; padding:0; margin-top:13px; border:0; background:transparent; color:var(--wb-accent); font-size:11px; }
 .wait-note { display:flex; gap:8px; padding:12px; color:var(--wb-text-muted); font-size:12px; line-height:1.6; border:1px solid var(--cp-border); border-radius:9px; }
-.composer { position:relative; margin:8px 12px 0; padding:16px 14px 10px; border:1px solid var(--cp-border); border-radius:17px; background:var(--wb-surface-section); box-shadow:0 3px 12px #0000000a; }
+.composer { position:relative; margin:10px 12px 12px; padding:12px 14px 12px; border:1px solid var(--cp-border); border-radius:17px; background:var(--wb-surface-section); box-shadow:0 3px 12px #0000000a; }
 .composer:focus-within { border-color:color-mix(in srgb,var(--wb-text-muted) 60%,var(--cp-border)); }
-.composer textarea { display:block; box-sizing:border-box; width:100%; min-height:76px; max-height:180px; resize:none; padding:0 2px; border:0; outline:0; background:transparent; color:var(--wb-text); font:13px/1.7 var(--font-sans,sans-serif); }
+.composer textarea { display:block; box-sizing:border-box; width:100%; min-height:52px; max-height:180px; resize:none; padding:0 2px; border:0; outline:0; background:transparent; color:var(--wb-text); font:13px/1.7 var(--font-sans,sans-serif); }
 .composer textarea::placeholder { color:var(--wb-text-muted); }
-.composer-footer { display:flex; align-items:center; gap:6px; margin-top:12px; min-width:0; }
+.composer-footer { display:flex; align-items:center; gap:8px; margin-top:12px; min-width:0; }
 .composer-picker { min-width:0; }
 .permission-picker { flex-shrink:0; }
 .model-picker { margin-left:auto; flex:0 1 auto; }
@@ -771,6 +826,8 @@ button:focus-visible, input:focus-visible { outline:2px solid var(--wb-accent); 
 .picker-menu strong { display:block; font-size:12px; font-weight:500; overflow-wrap:anywhere; }
 .picker-menu small { display:block; margin-top:4px; font-size:10px; line-height:1.5; color:var(--wb-text-muted); }
 .picker-menu .selected-check { color:var(--wb-accent); }
+.command-menu { bottom:calc(100% + 6px); left:0; right:0; }
+.command-menu button:disabled { opacity:.55; }
 .picker-menu p { margin:7px 8px 4px; padding-top:8px; border-top:1px solid var(--cp-border); color:var(--wb-text-muted); font-size:10px; line-height:1.5; }
 .reasoning-controls { border-top:1px solid var(--cp-border); padding:4px 4px 8px; }
 .reasoning-controls > small { display:block; padding:4px 8px; }
@@ -779,6 +836,8 @@ button:focus-visible, input:focus-visible { outline:2px solid var(--wb-accent); 
 .effort-options button[aria-pressed=true] { background:var(--wb-accent-soft); color:var(--wb-accent); }
 .send-button { display:grid; place-items:center; width:30px; height:30px; flex-shrink:0; border:0; border-radius:50%; background:var(--wb-text); color:var(--wb-surface-1); font-size:17px; }
 .send-button:disabled { background:var(--wb-hover); color:var(--wb-text-muted); opacity:.7; }
+.send-button.is-stop:disabled { opacity:.55; }
+.stop-square { width:11px; height:11px; border-radius:3px; background:currentColor; }
 .composer-mode { display:flex; gap:5px; margin-bottom:10px; }
 .composer-mode button { border:0; background:transparent; color:var(--wb-text-muted); border-radius:5px; padding:4px 7px; font-size:10px; }
 .composer-mode .selected { color:var(--wb-accent); background:var(--wb-accent-soft); }
