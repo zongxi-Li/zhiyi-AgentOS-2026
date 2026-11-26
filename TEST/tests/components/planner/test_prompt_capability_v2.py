@@ -52,6 +52,11 @@ def test_workspace_origin_reaches_discovery_without_overriding_caller_evidence(
         "Read every file including VCS and caches" if model_origin == "explicit" else
         "仔细阅读这个文件夹中的代码，梳理依赖并给出勘察报告")
     profile = IntentParser(llm=Model()).parse(intent=intent, task_input=task_input)
+    if expected_origin == "inferred":
+        assert {".git", "node_modules", "dist", "build"} <= set(profile.workspace_observations[0].exclude_paths)
+    else:
+        assert not profile.workspace_observations[0].exclude_paths
+    assert type(profile).model_validate_json(profile.model_dump_json(by_alias=True)) == profile
     plan = build_workspace_discovery_plan("mission_aabbccddeeff", profile, task_input)
     assert plan.metadata["workspaceDiscovery"]["scopeOrigin"] == expected_origin
     metadata = {**plan.metadata,

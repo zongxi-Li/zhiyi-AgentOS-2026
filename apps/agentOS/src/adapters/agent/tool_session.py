@@ -304,6 +304,8 @@ class AgentToolSession:
                 'the whole workspace inside this node. '
             )
         if acquisition_context_version == 3:
+            from components.planner.workspace_defaults import EXPLORATION_GUIDANCE
+            workspace_instructions += EXPLORATION_GUIDANCE
             workspace_instructions += (
                 'assignedDiscovery identifies an adaptive read-only investigation for subsequent planning. '
                 'Use the observed directory structure and mission objective to choose useful project '

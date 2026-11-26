@@ -15,6 +15,7 @@ from contracts import stable_checksum
 from contracts.planning import PlannedTask, TaskPlan, TaskPlanPatch, TaskPlanRelation, inherit_task_plan_constraints
 from contracts.runtime_planning import RuntimePlanningDecision, RuntimePlanningObservation
 from contracts.acg.semantic_profile import TaskSemanticProfile
+from .workspace_defaults import EXPLORATION_GUIDANCE
 
 
 WORKSPACE_DISCOVERY_SOURCE = "workspace_discovery"
@@ -102,7 +103,8 @@ def build_workspace_discovery_plan(
             "through the existing information-extraction output contract. A proposed exclusion is a suggestion, "
             "not an accepted change to caller requirements. Preserve explicit requested scope and report conflicts. "
             "Submit useful partial evidence and remaining discovery questions when further investigation is needed. "
-            "Do not run Shell commands, modify files, invent unread contents or claim complete repository coverage.",
+            "Do not run Shell commands, modify files, invent unread contents or claim complete repository coverage. "
+            + EXPLORATION_GUIDANCE,
         capabilityRequirements=("information_extraction",),
         logicalRole=WORKSPACE_DISCOVERY_ROLE,
         acceptanceCriteria=(

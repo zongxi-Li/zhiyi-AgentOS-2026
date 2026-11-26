@@ -402,6 +402,13 @@ class IntentParser:
             profile.workspace_scope_origin = (
                 "explicit" if fixed and len(fixed) == len(profile.workspace_observations) else "inferred"
             )
+            if profile.workspace_scope_origin == "inferred":
+                from .workspace_defaults import inferred_exclusions
+                profile.workspace_observations = [
+                    type(item).model_validate({**item.model_dump(), "exclude_paths": tuple(dict.fromkeys([
+                        *item.exclude_paths, *inferred_exclusions(item.path)]))})
+                    if item.kind == "directory" and item.operation == "read" else item
+                    for item in profile.workspace_observations]
         if profile.workspace_observations:
             if profile.evidence_scope == "task_input_only":
                 raise ValueError("workspace inspection conflicts with task_input_only evidence scope")
