@@ -221,7 +221,7 @@
         @keydown.esc="closeAccountMenu"
       >
         <div class="sidebar-account-menu__identity">
-          <UserAvatar :size="34" class="sidebar-account-menu__avatar" :fallback="sidebarUserInitial" />
+          <UserAvatar :size="28" class="sidebar-account-menu__avatar" :fallback="sidebarUserInitial" />
           <div class="sidebar-account-menu__user-copy">
             <strong>{{ sidebarUserName }}</strong>
             <span>{{ userStore.currentUser?.email || '知弈账户' }}</span>
@@ -1785,17 +1785,19 @@ onUnmounted(() => {
   outline-offset: 2px;
 }
 
+/* 菜单被 Teleport 到 body，不设字号会继承全局大字；固定基准让按钮 font:inherit 落到紧凑口径 */
 .sidebar-account-menu {
   position: fixed;
   z-index: 4000;
-  width: 248px;
+  width: 216px;
   max-height: calc(100vh - 24px);
   overflow-y: auto;
-  padding: 8px;
+  padding: 6px;
   border: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
-  border-radius: 16px;
+  border-radius: 12px;
   background: var(--bg-sidebar);
   color: var(--text-primary);
+  font-size: 12.5px;
   box-shadow: 0 16px 42px rgba(0, 0, 0, 0.32);
   backdrop-filter: blur(18px);
 }
@@ -1803,9 +1805,9 @@ onUnmounted(() => {
 .sidebar-account-menu__identity {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   min-width: 0;
-  padding: 8px 7px 10px;
+  padding: 6px 6px 8px;
 }
 
 .sidebar-account-menu__avatar { flex: 0 0 auto; }
@@ -1813,7 +1815,7 @@ onUnmounted(() => {
 .sidebar-account-menu__user-copy {
   display: grid;
   min-width: 0;
-  gap: 2px;
+  gap: 1px;
 }
 
 .sidebar-account-menu__user-copy strong,
@@ -1823,30 +1825,32 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
-.sidebar-account-menu__user-copy strong { font-size: 14px; font-weight: 600; }
-.sidebar-account-menu__user-copy span { color: var(--text-secondary); font-size: 12px; }
+.sidebar-account-menu__user-copy strong { font-size: 13px; font-weight: 600; }
+.sidebar-account-menu__user-copy span { color: var(--text-secondary); font-size: 11px; }
 
 .sidebar-account-menu__divider {
   height: 1px;
-  margin: 2px 4px 6px;
+  margin: 3px 4px 5px;
   background: var(--border-color);
 }
 
 .sidebar-account-menu > button {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   width: 100%;
-  min-height: 38px;
+  min-height: 30px;
   padding: 0 8px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 6px;
   background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
+
+.sidebar-account-menu > button .el-icon { font-size: 14px; }
 
 .sidebar-account-menu > button:hover,
 .sidebar-account-menu > button:focus-visible { background: var(--bg-panel); }
