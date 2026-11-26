@@ -5,55 +5,50 @@
       <header class="card-header">
         <div class="header-left">
           <el-icon class="header-icon" aria-hidden="true"><Search /></el-icon>
-          <span class="header-title">智能检索</span>
-        </div>
-        <div class="header-settings">
-          <span class="settings-label">Top K</span>
-          <el-input-number
-            v-model="topK"
-            :min="1"
-            :max="10"
-            size="small"
-            controls-position="right"
-            class="k-input"
-          />
+          <h2 class="header-title">向知识库提问</h2>
         </div>
       </header>
 
       <div class="query-body">
-        <div class="input-area">
+        <form class="query-composer" @submit.prevent="handleQuery">
           <textarea
+            ref="queryInput"
             v-model="queryText"
             class="query-textarea"
-            placeholder="请输入您的问题，AI 将基于知识库为您解答..."
-            rows="4"
-            @keydown.enter.prevent.ctrl="handleQuery"
+            aria-label="检索问题"
+            placeholder="例如：文档中提到了哪些部署要求？"
+            rows="3"
+            @keydown.ctrl.enter.prevent="handleQuery"
+            @keydown.meta.enter.prevent="handleQuery"
           ></textarea>
-        </div>
 
         <div class="input-footer">
-          <span class="hint-text">Ctrl + Enter 发送</span>
+          <div class="header-settings">
+            <span class="settings-label" title="每次检索最多取回的文档片段数">检索条数</span>
+            <el-input-number
+              v-model="topK"
+              :min="1"
+              :max="10"
+              size="small"
+              controls-position="right"
+              aria-label="检索条数"
+              class="k-input"
+            />
+          </div>
           <button
             class="submit-button"
-            type="button"
-            :disabled="loading"
-            @click="handleQuery"
+            type="submit"
+            :disabled="loading || !queryText.trim()"
+            title="Ctrl / ⌘ + Enter"
           >
             <el-icon v-if="!loading" class="submit-icon" aria-hidden="true"><ArrowRight /></el-icon>
             <el-icon v-else class="submit-icon loading" aria-hidden="true"><Loading /></el-icon>
-            <span>查询</span>
+            <span>{{ loading ? '检索中' : '开始检索' }}</span>
           </button>
         </div>
+        </form>
 
-        <RecommendationPanel
-          title="检索推荐"
-          subtitle="基于当前角色、查询和检索结果生成"
-          :items="recommendations"
-          :loading="recommendationLoading"
-          refreshable
-          @refresh="loadRecommendations"
-          @select="applyRecommendation"
-        />
+        <p v-if="queryError" class="query-error" role="alert">{{ queryError }}</p>
 
         <transition name="fade-slide">
           <div v-if="result" class="result-area">
@@ -92,92 +87,94 @@
             </div>
           </div>
         </transition>
+        <div v-if="result && recommendations.length" class="query-suggestions">
+          <span>继续追问</span>
+          <button
+            v-for="item in recommendations"
+            :key="item.text"
+            type="button"
+            @click="applyRecommendation(item.text)"
+          >{{ item.text }}</button>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, ref, watch } from 'vue'
 import { ArrowRight, Link, Loading, Search } from '@element-plus/icons-vue'
-import RecommendationPanel from '@/components/RecommendationPanel.vue'
 import { recommendationApi, type RecommendationItem } from '@/services/api/recommendation'
 import { ragApi } from '@/services/api/rag'
-import { useDebounce } from '@/composables/useDebounce'
 import { useRoleStore } from '@/stores/role'
 import { resolveKnowledgeRoleId } from '@/utils/knowledgeRole'
 
 type RagResult = Awaited<ReturnType<typeof ragApi.query>>
 
 const queryText = ref('')
+const queryInput = ref<HTMLTextAreaElement | null>(null)
 const topK = ref(5)
 const loading = ref(false)
+const queryError = ref('')
 const result = ref<RagResult | null>(null)
 const recommendations = ref<RecommendationItem[]>([])
-const recommendationLoading = ref(false)
 
 const roleStore = useRoleStore()
 const currentRoleId = computed(() => resolveKnowledgeRoleId(roleStore.currentRole))
-const debouncedQueryText = useDebounce(queryText, 350)
 
 const handleQuery = async () => {
-  if (!queryText.value.trim()) {
-    ElMessage.warning('请输入查询内容')
-    return
-  }
+  const question = queryText.value.trim()
+  if (loading.value || !question) return
+  const roleId = currentRoleId.value
 
   loading.value = true
+  queryError.value = ''
   result.value = null
+  recommendations.value = []
 
   try {
-    result.value = await ragApi.query(
-      queryText.value,
-      topK.value,
+    const answer = await ragApi.query(
+      question,
+      topK.value ?? 5,
       undefined,
-      currentRoleId.value,
+      roleId,
     )
-    ElMessage.success('查询成功')
+    if (currentRoleId.value !== roleId) return
+    result.value = answer
+    void loadRecommendations(question, result.value)
   } catch (error: any) {
-    ElMessage.error(`查询失败：${error.message || '未知错误'}`)
+    if (currentRoleId.value === roleId) {
+      queryError.value = `检索失败：${error.message || '请重试'}`
+    }
   } finally {
     loading.value = false
   }
 }
 
-const loadRecommendations = async () => {
-  recommendationLoading.value = true
-
+const loadRecommendations = async (question: string, queryResult: RagResult) => {
   try {
-    recommendations.value = await recommendationApi.getContextualRecommendations({
+    const items = await recommendationApi.getContextualRecommendations({
       roleName: roleStore.currentRole?.name,
       scope: 'rag',
       scene: 'query',
-      currentInput: queryText.value,
-      currentOutput: result.value?.answer,
-      conversationHistory: queryText.value.trim() ? [queryText.value.trim()] : [],
+      currentInput: question,
+      currentOutput: queryResult.answer,
+      conversationHistory: [question],
     })
+    if (result.value === queryResult) recommendations.value = items
   } catch (error) {
     console.warn('加载 RAG 推荐失败', error)
-    recommendations.value = []
-  } finally {
-    recommendationLoading.value = false
   }
 }
 
-const applyRecommendation = (item: RecommendationItem) => {
-  queryText.value = item.text
+const applyRecommendation = (question: string) => {
+  queryText.value = question
+  queryInput.value?.focus()
 }
 
-watch(
-  [currentRoleId, debouncedQueryText, () => result.value?.answer],
-  () => {
-    void loadRecommendations()
-  },
-)
-
-onMounted(() => {
-  void loadRecommendations()
+watch(currentRoleId, () => {
+  result.value = null
+  queryError.value = ''
 })
 </script>
 
@@ -185,7 +182,6 @@ onMounted(() => {
 .rag-query-container {
   display: flex;
   width: 100%;
-  height: 100%;
   min-height: 0;
 }
 
@@ -193,7 +189,6 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   width: 100%;
-  height: 100%;
   min-height: 0;
   overflow: hidden;
   border: 1px solid var(--border-light);
@@ -209,7 +204,7 @@ onMounted(() => {
   justify-content: space-between;
   gap: 16px;
   min-height: 58px;
-  padding: 10px 14px;
+  padding: 10px 20px 0;
 }
 
 .header-left,
@@ -242,12 +237,16 @@ onMounted(() => {
   font-weight: 650;
 }
 
+.header-title {
+  margin: 0;
+  font-size: 16px;
+}
+
 .header-settings {
   gap: 8px;
 }
 
 .settings-label,
-.hint-text,
 .confidence-label {
   color: var(--text-muted);
   font-size: 11px;
@@ -263,25 +262,31 @@ onMounted(() => {
   flex-direction: column;
   min-height: 0;
   gap: 14px;
-  overflow: auto;
-  padding: 14px;
+  padding: 12px 20px 20px;
 }
 
-.input-area {
-  flex: 0 0 auto;
+.query-composer {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-card);
+  background: var(--bg-input);
+}
+
+.query-composer:focus-within {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--primary-fade);
 }
 
 .query-textarea {
   display: block;
   width: 100%;
-  min-height: 150px;
+  min-height: 84px;
   padding: 12px;
   resize: vertical;
-  border: 1px solid var(--border-light);
+  border: 0;
   border-radius: var(--radius-card);
   outline: none;
   color: var(--text-primary);
-  background: var(--bg-input);
+  background: transparent;
   font: inherit;
   font-size: 13px;
   line-height: 1.6;
@@ -289,13 +294,6 @@ onMounted(() => {
     border-color 160ms var(--ease-out),
     box-shadow 160ms var(--ease-out),
     background-color 160ms var(--ease-out);
-}
-
-.query-textarea:focus {
-  border-color: var(--border-focus);
-  outline: none;
-  background: var(--surface-solid);
-  box-shadow: 0 0 0 3px var(--primary-fade);
 }
 
 .query-textarea::placeholder {
@@ -306,6 +304,40 @@ onMounted(() => {
   justify-content: space-between;
   gap: 12px;
   min-height: 32px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border-light);
+}
+
+.query-error {
+  margin: 0;
+  color: var(--danger-color, #e87179);
+  font-size: 12px;
+}
+
+.query-suggestions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.query-suggestions button {
+  padding: 5px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-control);
+  color: var(--text-primary);
+  background: var(--surface-subtle);
+  font: inherit;
+  overflow-wrap: anywhere;
+  text-align: left;
+  cursor: pointer;
+}
+
+.query-suggestions button:hover {
+  border-color: var(--primary-color);
 }
 
 .submit-button {
