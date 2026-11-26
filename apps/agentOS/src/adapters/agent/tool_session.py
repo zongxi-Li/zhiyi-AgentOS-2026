@@ -22,14 +22,16 @@ from contracts.execution_evidence import (
 from contracts.tools import HOST_TOOL_FAILURE_CODES, ToolResult, model_tool_result, safe_tool_failure_details
 from contracts.capability import ModelInvocationResponse
 from adapters.model.prompt_runtime import TrustClass, canonical_hash, trust_envelope
+from adapters.model.request_diagnostics import resolve_request_budget
+from components.communicator.contracts import estimate_tokens
 from support.work_timeouts import work_timeout
 from contracts.runtime_events import RuntimeEvent
 from adapters.tool.context_read import ContextReadTools
 
 
-def agent_tool_definitions(context):
+def agent_tool_definitions(context, *, context_tools=None):
     discover = getattr(context.tool_runtime, 'list_tools', None)
-    return tuple(discover() if callable(discover) else ()) + ContextReadTools(context).list_tools()
+    return tuple(discover() if callable(discover) else ()) + (context_tools or ContextReadTools(context)).list_tools()
 
 
 def supports_agent_tools(context):
@@ -66,6 +68,76 @@ class AgentToolSession:
             delegate = getattr(delegate, 'delegate', None)
         if self._store is None and self.context_tools.reader is not None:
             self._store = self.context_tools.reader.operation_store
+
+    def uses_evidence_pages(self, commit_id=None):
+        reader = self.context_tools.reader
+        if reader is None or reader.operation_store is None:
+            return False
+        first = reader.operation_store.get_tool_value(run_id=self.context.run.run_id,
+            key=f'{commit_id or self.context.commit_id}:tools:0:model-turn')
+        return first is None or first.get('workspaceEvidenceVersion') == 1
+
+    def project_receipts(self, observations):
+        if not self.uses_evidence_pages():
+            return observations
+        projected = []
+        for item in observations:
+            record = item.get('record') or item
+            receipt = item.get('content') or {}
+            tool = record.get('tool') or receipt.get('capabilityId')
+            if tool not in {'fs.read', 'fs.list'}:
+                projected.append(item)
+                continue
+            result = item.get('result') or receipt.get('output') or {}
+            projected.append({**{key: value for key, value in item.items()
+                                 if key not in {'record', 'result', 'content'}},
+                'receiptRef': record.get('receiptRef') or item.get('receiptRef'),
+                'tool': tool, 'field': 'content' if tool == 'fs.read' else 'entries',
+                'path': result.get('path'), 'status': record.get('status') or receipt.get('status'),
+                'sourceStepId': record.get('stepId') or (receipt.get('identity') or {}).get('stepId')})
+        return projected
+
+    @staticmethod
+    def _bound_receipt_pages(messages, tools, schema, budget):
+        if budget is None:
+            return messages
+        # Deliver the whole latest tool batch once before deferring its bodies.
+        latest_tool_turn = next((index for index in range(len(messages) - 1, -1, -1)
+                                 if messages[index].get('role') == 'assistant' and messages[index].get('tool_calls')), 0)
+        older_messages = messages[:latest_tool_turn]
+        if not any(item.get('role') == 'tool' for item in older_messages):
+            return messages
+        limit = budget.total_tokens - budget.output_reserve_tokens
+        trigger = budget.working_set_trigger_tokens or limit
+        estimate = estimate_tokens({'messages': messages, 'tools': tools, 'response_format': schema})
+        if estimate <= trigger:
+            return messages
+        target = budget.working_set_target_tokens or limit
+        projected = list(messages)
+        for index, message in enumerate(older_messages):
+            if message.get('role') != 'tool':
+                continue
+            try:
+                result = json.loads(message['content'])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not isinstance(result, dict):
+                continue
+            output = result.get('output') or {}
+            if result.get('name') == 'context.read_page' and output.get('scope') == 'evidence_page' and 'data' in output:
+                output.pop('data')
+            elif result.get('name') in {'fs.read', 'fs.list'} and output.get('scope') == 'evidence_inline':
+                for key in ('text', 'content', 'entries'):
+                    output.pop(key, None)
+            else:
+                continue
+            output.update(dataDeferred=True, complete=False)
+            projected[index] = {**message, 'content': json.dumps(result, ensure_ascii=False,
+                                                                sort_keys=True, separators=(',', ':'))}
+            estimate -= estimate_tokens(message) - estimate_tokens(projected[index])
+            if estimate <= target:
+                break
+        return projected
 
     async def _load_historical_records(self, observations):
         """Reuse bound retry evidence without counting it as this Attempt's work."""
@@ -136,20 +208,33 @@ class AgentToolSession:
 
     async def generate_json(self, *, prompt, schema, system_prompt=None, timeout_seconds=300.0,
                             commit_id=None, prompt_version='agent-tool-loop.v1', prompt_metadata=None,
-                            historical_observations=None,
+                            historical_observations=None, verified_observations=(),
                             validate_output: Callable[[dict[str, Any]], str | None] | None = None, **kwargs):
         context = self.context
+        self.context_tools.evidence_enabled = self.uses_evidence_pages(commit_id)
         self.historical_records = await self._load_historical_records(historical_observations)
+        for record in self.historical_records:
+            self.context_tools.admit_evidence(record)
+        if self.context_tools.evidence_enabled:
+            self.context_tools.admit_context_pack_evidence()
+            for item in verified_observations:
+                receipt = item['content']
+                self.context_tools.admit_evidence({**receipt['identity'], **item,
+                    'tool': receipt.get('capabilityId'), 'status': receipt.get('status')})
         frozen_policy = context.step.input.get('contextPolicy') or {}
         request_budget = frozen_policy.get('requestBudget')
-        definitions = agent_tool_definitions(context)
+        definitions = agent_tool_definitions(context, context_tools=self.context_tools)
         names = {tool.name.replace('.', '__'): tool for tool in definitions}
         if len(names) != len(definitions):
             raise ValueError('Tool wire names must be unique')
         tools = [{'type': 'function', 'function': {'name': name, 'description': tool.description,
                   'parameters': tool.parameters}} for name, tool in names.items()]
         describe_model = getattr(context.model_runtime, 'describe_model', None)
-        provider = describe_model().provider if callable(describe_model) else getattr(context.model_runtime, 'provider', '')
+        capability = describe_model() if callable(describe_model) else None
+        provider = capability.provider if capability is not None else getattr(context.model_runtime, 'provider', '')
+        page_budget = (resolve_request_budget(request_budget, capability,
+            kwargs.get('max_output_tokens') or capability.max_output_tokens)
+            if self.context_tools.evidence_enabled and capability is not None else None)
         messages, schema_index = execution_messages(prompt=prompt, system_prompt=system_prompt,
             provider=provider, prompt_metadata=prompt_metadata)
         read_instructions = (
@@ -157,6 +242,15 @@ class AgentToolSession:
             'Follow context.read_page nextCursor until null for the fields needed by a check. '
             'A partial page or failed read cannot support a claim of complete verification; report gaps explicitly. '
         ) if self.context_tools.list_tools() else ''
+        if self.context_tools.evidence_enabled:
+            read_instructions += (
+                'Workspace tool results and historical observations may contain only receipt references. '
+                'Use context.list_sources and context.read_page with that reference as producerStepId and '
+                'the listed field. Continue nextCursor for additional content. Earlier pages may be '
+                'represented by references again when the working set fills. Preserve findings and '
+                'cite evidence references, and reread only details needed for this batch. When an '
+                'extracted fact has a source field, put the exact receipt reference there. '
+            )
         workspace = workspace_execution_context(context.run)
         acquisition_context_version = 1
         if workspace is not None:
@@ -278,8 +372,12 @@ class AgentToolSession:
                 return timeout_seconds if deadline is None else max(
                     0.001, deadline - asyncio.get_running_loop().time())
 
-            def request_hash(current_messages):
-                identity = {'messages': current_messages, 'tools': tools, 'schema': schema}
+            def model_messages(current_messages):
+                return self._bound_receipt_pages(current_messages, tools, schema, page_budget)
+
+            def request_hash(current_messages, *, projected=False):
+                identity = {'messages': current_messages if projected else model_messages(current_messages),
+                            'tools': tools, 'schema': schema}
                 if schema_index is not None:
                     identity['schemaMessageIndex'] = schema_index
                 return canonical_hash(identity)
@@ -333,7 +431,8 @@ class AgentToolSession:
             async def invoke_model(current_messages, turn):
                 nonlocal generated
                 key = f'{commit_id or context.commit_id}:tools:{turn}'
-                current_hash = request_hash(current_messages)
+                current_messages = model_messages(current_messages)
+                current_hash = request_hash(current_messages, projected=True)
                 cached = cached_turn(turn)
                 if cached is not None:
                     if cached['requestHash'] != current_hash:
@@ -379,6 +478,7 @@ class AgentToolSession:
                                 'toolFeedbackVersion': 1,
                                 'workspaceContextVersion': acquisition_context_version,
                                 'workspaceFeedbackVersion': 2,
+                                **({'workspaceEvidenceVersion': 1} if self.context_tools.evidence_enabled else {}),
                                 'response':response.model_dump(by_alias=True, mode='json')})
                 await guidance.model_observed(turn)
                 self.actions += len(response.tool_calls)
@@ -445,6 +545,16 @@ class AgentToolSession:
                         if record:
                             self.records.append(dict(record))
                             recorded = True
+                            source = self.context_tools.admit_evidence(record)
+                            if source:
+                                field = source['fields'][0]['name']
+                                if source['fields'][0]['estimatedTokens'] > self.context_tools.budget.page_tokens:
+                                    for key in ('text', 'content', 'entries'):
+                                        result.output.pop(key, None)
+                                    result.output.update(receiptRef=source['receiptRef'], field=field,
+                                        scope='evidence_reference', dataDeferred=True)
+                                else:
+                                    result.output.update(receiptRef=source['receiptRef'], field=field, scope='evidence_inline')
                         if result.status == 'cancelled':
                             raise asyncio.CancelledError('Hands execution cancelled')
                         self.observations.append((definition.name, arguments, result))

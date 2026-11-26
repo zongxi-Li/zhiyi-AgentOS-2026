@@ -10,6 +10,7 @@ import pytest
 from adapters.agent.tool_session import AgentToolSession, agent_tool_definitions, supports_agent_tools
 from adapters.tool.audited_runtime import AuditedToolRuntime
 from adapters.tool.context_read import ContextReadTools
+from adapters.tool.hands_http import receipt_checksum
 from adapters.model.compatibility import ModelCompatibilityRegistry
 from adapters.model.registered_runtime import RegisteredModelRuntime
 from adapters.model.openai_runtime import OpenAICompatibleRuntime
@@ -18,7 +19,7 @@ from components.communicator.manifest import CommunicationManifest, Communicatio
 from components.communicator.reader import CommunicationReader
 from components.executor.value_store import SQLiteExecutionValueStore
 from contracts.capability import CapabilityKind, CapabilityManifest
-from contracts.request_budget import SupplementalReadBudget
+from contracts.request_budget import ModelRequestBudget, SupplementalReadBudget
 from contracts.tools import hands_tools
 
 
@@ -39,6 +40,69 @@ def context(reader, model=None):
     return SimpleNamespace(communication_reader=reader, tool_runtime=None, model_runtime=model,
         step=SimpleNamespace(input={}, step_id="consumer", name="consumer", capability="analysis"),
         run=SimpleNamespace(run_id="run", input={}, execution_state={}), commit_id="commit", attempt_id="attempt")
+
+
+@pytest.mark.asyncio
+async def test_receipt_pages_share_the_frozen_context_budget_and_require_admitted_references(tmp_path):
+    store, broker, reader = setup_reader(tmp_path, budget=SupplementalReadBudget(
+        maxReadTokens=40, pageTokens=40, totalTokens=60))
+
+    def save_receipt(step_id):
+        receipt = {"identity": {"runId": "run", "stepId": step_id, "attemptId": "attempt", "commitId": "commit"},
+                   "capabilityId": "fs.read", "status": "completed",
+                   "output": {"path": "note.txt", "text": "Bound evidence. " * 80}}
+        receipt["checksum"] = receipt_checksum(receipt)
+        return store.put_tool_value(run_id="run", step_id=step_id, key=step_id + ":receipt", payload=receipt)
+
+    reference, private = save_receipt("producer"), save_receipt("unrelated")
+    output_ref = reader._output_refs["producer"]
+    store.prepare_node_commit(run_id="run", commit_id="commit")
+    store.complete_node_commit(run_id="run", commit_id="commit",
+        payload={"outputRef": output_ref, "auditOutcome": "allow",
+                 "toolCalls": [{"runId": "run", "stepId": "producer", "receiptRef": reference}]})
+    ctx = context(reader)
+    ctx.context_pack = SimpleNamespace(evidence_refs=[], source_data={"producer": {"extracted_information": {
+        "facts": [{"source": reference}, {"source": private}]}}})
+    tools = ContextReadTools(ctx)
+    tools.evidence_enabled = True
+    tools.admit_context_pack_evidence()
+    args = {"producerStepId": reference, "fields": ["content"]}
+    listed = await tools.execute("context.list_sources", {}, operation_key="list")
+    assert reference in listed.model_dump_json() and private not in listed.model_dump_json()
+    assert "Bound evidence." not in listed.model_dump_json()
+    with pytest.raises(CommunicationAccessError):
+        await tools.execute("context.read_page", {**args, "producerStepId": private}, operation_key="private")
+    with pytest.raises(CommunicationAccessError):
+        await tools.execute("context.read_page", {**args, "cursor": "0:100"}, operation_key="bad-cursor")
+    first = await tools.execute("context.read_page", args, operation_key="page")
+    assert first.output["estimatedTokens"] <= 40
+    assert first.output["evidenceRefs"] == [reference] and first.output["nextCursor"]
+    usage = broker.usage_snapshot()
+    assert await tools.execute("context.read_page", args, operation_key="page") == first
+    assert broker.usage_snapshot() == usage
+    with pytest.raises(EntropyBudgetExceededError):
+        await tools.execute("context.read_page", {**args, "cursor": first.output["nextCursor"]}, operation_key="page2")
+    assert "Bound evidence." not in json.dumps(broker.usage_snapshot())
+
+
+def test_rolling_request_defers_old_page_bodies_and_keeps_reference_and_cursor():
+    def message(ref, marker):
+        output = {"scope": "evidence_page", "receiptRef": ref, "nextCursor": "next",
+                  "complete": False, "data": {"content": marker * 490}}
+        return {"role": "tool", "tool_call_id": ref,
+                "content": json.dumps({"name": "context.read_page", "output": output})}
+
+    protected = {"role": "system", "content": "Preserve the frozen acceptance contract"}
+    latest_call = {"role": "assistant", "tool_calls": [{"id": "second"}]}
+    original = [protected, message("first", "a"), latest_call, message("second", "b")]
+    budget = ModelRequestBudget(totalTokens=1000, outputReserveTokens=100,
+        workingSetTriggerTokens=400, workingSetTargetTokens=350)
+    projected = AgentToolSession._bound_receipt_pages(original, [], {}, budget)
+    assert projected[0] == protected and projected[-1] == original[-1]
+    output = json.loads(projected[1]["content"])["output"]
+    assert output["receiptRef"] == "first" and output["nextCursor"] == "next"
+    assert output["dataDeferred"] is True and "data" not in output
+    assert "data" in json.loads(original[1]["content"])["output"]
 
 
 def test_directory_is_permission_scoped_and_contains_no_body_or_reference(tmp_path):
@@ -251,6 +315,19 @@ def test_real_model_tool_loop_reads_without_hands_and_replays_decisions(tmp_path
     assert second.data == first.data and len(transport.requests) == 3
     assert broker.usage_snapshot() == before
     assert len(reader.drain_packs()) == 1
+
+
+def test_tool_session_preserves_unversioned_wal_prompt_on_replay(tmp_path, monkeypatch):
+    _, _, reader = setup_reader(tmp_path)
+    transport = Transport([{"answer": "legacy"}])
+    ctx = context(reader, model(transport))
+    schema = {"type": "object", "properties": {"answer": {"type": "string"}}}
+    with monkeypatch.context() as legacy:
+        legacy.setattr(AgentToolSession, "uses_evidence_pages", lambda *args: False)
+        first = asyncio.run(AgentToolSession(ctx).generate_json(prompt="Inspect source", schema=schema))
+    second = asyncio.run(AgentToolSession(ctx).generate_json(prompt="Inspect source", schema=schema))
+    assert second.data == first.data == {"answer": "legacy"}
+    assert len(transport.requests) == 1
 
 
 def test_native_agent_and_node_runner_record_supplemental_provenance_without_body(tmp_path):
