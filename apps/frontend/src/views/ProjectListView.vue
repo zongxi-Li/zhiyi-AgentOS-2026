@@ -19,7 +19,7 @@
             <input v-model="searchText" type="search" placeholder="搜索项目名称或 Mission ID" />
           </label>
           <div class="project-list__toolbar-actions">
-            <span class="project-list__count"><strong>{{ filteredMissions.length }}</strong> 个项目</span>
+            <span v-if="!errorMessage && (!loading || missions.length)" class="project-list__count"><strong>{{ filteredMissions.length }}</strong> 个项目</span>
             <button
               class="project-list__export"
               type="button"
@@ -234,7 +234,7 @@ onBeforeRouteLeave(() => {
     restoreFocus
   })
 })
-const loading = ref(false)
+const loading = ref(true)
 const errorMessage = ref('')
 let controller: AbortController | null = null
 const actionMenu = reactive<{ mission: MissionListItem | null; x: number; y: number }>({ mission: null, x: 0, y: 0 })
