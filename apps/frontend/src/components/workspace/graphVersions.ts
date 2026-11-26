@@ -56,6 +56,9 @@ export const createGraphVersions = (
   let listRequest = 0
   let snapshotRequest = 0
   let controller: AbortController | null = null
+  let listController: AbortController | null = null
+  let listInFlight: Promise<void> | null = null
+  let refreshAgain = false
   const entries = computed(() => [...(history.value?.items || [])].sort((a, b) => a.graphVersion - b.graphVersion))
   const current = computed(() => entries.value.find(entry => entry.current) || null)
   const selected = computed(() => following.value ? current.value : entries.value.find(entry => graphVersionKey(entry) === pinnedKey.value) || null)
@@ -122,13 +125,15 @@ export const createGraphVersions = (
       if (isCurrent()) snapshotPending.value = false
     }
   }
-  const refresh = async () => {
+  const performRefresh = async () => {
     if (!runId.value) return
     const expectedRun = runId.value
     const request = ++listRequest
+    const local = new AbortController()
+    listController = local
     loading.value = true
     try {
-      const result = await api.getGraphVersions(expectedRun)
+      const result = await api.getGraphVersions(expectedRun, { signal: local.signal })
       if (request !== listRequest || runId.value !== expectedRun) return
       if (result.runId !== expectedRun) throw new Error('Run mismatch')
       const pinned = !following.value ? selected.value : null
@@ -140,10 +145,20 @@ export const createGraphVersions = (
       }
       error.value = ''
     } catch {
-      if (request === listRequest && runId.value === expectedRun) error.value = '版本记录暂时不可用'
+      if (!local.signal.aborted && request === listRequest && runId.value === expectedRun) error.value = '版本记录暂时不可用'
     } finally {
       if (request === listRequest) loading.value = false
     }
+  }
+  const refresh = (): Promise<void> => {
+    if (listInFlight) return listInFlight
+    const active = performRefresh().finally(() => {
+      if (listInFlight !== active) return
+      listInFlight = null
+      if (refreshAgain) { refreshAgain = false; void refresh() }
+    })
+    listInFlight = active
+    return active
   }
   const select = (key: string) => {
     if (!entries.value.some(entry => graphVersionKey(entry) === key)) return
@@ -154,6 +169,9 @@ export const createGraphVersions = (
   watch(runId, () => {
     generation++
     listRequest++
+    listController?.abort()
+    listInFlight = null
+    refreshAgain = false
     snapshotRequest++
     controller?.abort()
     history.value = null
@@ -167,9 +185,12 @@ export const createGraphVersions = (
     snapshotFailures.value = {}
     void refresh()
   }, { immediate: true, flush: 'sync' })
-  watch(watermark, () => { void refresh() })
+  watch(watermark, () => {
+    if (listInFlight) refreshAgain = true
+    else void refresh()
+  })
   watch([selectionIdentity, liveSelectionKey], () => { void loadSelection() })
-  onScopeDispose(() => { generation++; listRequest++; snapshotRequest++; controller?.abort() })
+  onScopeDispose(() => { generation++; listRequest++; snapshotRequest++; controller?.abort(); listController?.abort(); refreshAgain = false })
   return { history, entries, current, selected, selectedKey, previous, following, historical, comparing,
     loading, snapshotLoading, error, snapshotError, displayGraph, previousGraph, difference,
     select, follow, refresh, retrySnapshot: loadSelection }

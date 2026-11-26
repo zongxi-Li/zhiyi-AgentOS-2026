@@ -90,12 +90,12 @@
                   <button type="button" :aria-pressed="graphMode === 'runtime'" @click="graphMode = 'runtime'">执行图 RGraph</button>
                 </div>
                 <GraphVersionToolbar :mode="graphMode" @locate-node="locateRuntimeFromPlan" />
-                <PlanningGraphPanel v-if="graphMode === 'plan'"
+                <KeepAlive :max="1"><PlanningGraphPanel v-if="graphMode === 'plan'" :key="resolvedRunId || ''"
                   :initial-plan-version="graphObservedRun?.initialPlan?.planVersion"
                   :run-id="resolvedRunId" :graph="selectedRuntimeGraph" :graph-nodes="graphNodes"
-                  :task-key="selectedSemanticTaskKey" @locate-runtime="locateRuntimeFromPlan" />
+                  :task-key="selectedSemanticTaskKey" @locate-runtime="locateRuntimeFromPlan" /></KeepAlive>
                 <AcgTopologyGraph
-                  v-else
+                  v-if="graphMode === 'runtime'"
                   ref="runtimeTopology"
                   :blueprint="displayRuntimeGraph"
                   :focus-node-id="graphFocusNodeId"

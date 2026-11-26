@@ -58,11 +58,12 @@ const onDimensions = (id: string, size: { width: number; height: number }) => {
 const edges = computed(() => props.blueprint.edges.map((edge, index) => {
   const emphasized = !props.selectedId || edge.sourceId === props.selectedId || edge.targetId === props.selectedId
   const change = changes.value.edges.get(edge.edgeId)
-  const stroke = change ? graphChangeColor[change] : 'var(--wb-text-secondary, #8590a3)'
+  const stroke = change ? graphChangeColor[change]
+    : 'color-mix(in srgb, var(--wb-text, #26332f) 55%, var(--wb-text-secondary, #8590a3))'
   return {
     id: edge.edgeId || `execution-edge-${index}`, source: edge.sourceId, target: edge.targetId,
     type: 'default', markerEnd: MarkerType.ArrowClosed,
-    style: { stroke, strokeWidth: change ? 2 : emphasized ? 1.5 : 1, opacity: change ? 0.95 : emphasized ? 0.8 : 0.16,
+    style: { stroke, strokeWidth: change ? 2 : emphasized ? 1.6 : 1.1, opacity: change ? 0.95 : emphasized ? 0.9 : 0.45,
       ...(change === 'removed' ? { strokeDasharray: '6 5' } : {}) },
     label: change ? graphChangeLabel[change] : undefined,
     class: [change ? `difference-${change}` : '', !props.historical && edge.activation === 'inactive' ? 'is-inactive' : ''].filter(Boolean).join(' ')

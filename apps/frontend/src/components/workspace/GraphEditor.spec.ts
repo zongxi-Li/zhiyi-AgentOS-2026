@@ -71,6 +71,10 @@ describe('GraphEditor', () => {
     await links[1].trigger('click')
     expect(wrapper.findComponent(topologyStub).props('blueprint')).toEqual(runtimeGraph)
     expect(topologyCalls.focusNode).toHaveBeenCalledWith('expanded_2')
+    await wrapper.findAll('.graph-editor__modes button')[0].trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('所需能力：read')
+    expect(agentosApi.getPlanSnapshot).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })
   it('renders only one canvas state while a historical snapshot loads, fails and recovers', async () => {

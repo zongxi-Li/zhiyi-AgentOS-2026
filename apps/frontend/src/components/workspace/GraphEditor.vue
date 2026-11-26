@@ -22,10 +22,10 @@
       </template>
     </GraphVersionToolbar>
     </header>
-    <PlanningGraphPanel v-if="mode === 'plan'" :run-id="runId || null"
+    <KeepAlive :max="1"><PlanningGraphPanel v-if="mode === 'plan'" :key="runId || ''" :run-id="runId || null"
       :initial-plan-version="runtimeObservation && runtimeObservation.runId === runId ? runtimeObservation.run?.initialPlan?.planVersion : null"
-      :graph="selectedGraph" :graph-nodes="graphNodes" :task-key="linkedTaskKey || selectedSemanticTaskKey" @locate-runtime="locateFromPlan" />
-    <div v-else class="graph-editor__canvas">
+      :graph="selectedGraph" :graph-nodes="graphNodes" :task-key="linkedTaskKey || selectedSemanticTaskKey" @locate-runtime="locateFromPlan" /></KeepAlive>
+    <div v-if="mode === 'runtime'" class="graph-editor__canvas">
       <AcgTopologyGraph
         v-if="displayGraph"
         ref="topology"

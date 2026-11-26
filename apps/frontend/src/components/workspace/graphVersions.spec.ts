@@ -24,6 +24,26 @@ const setup = (initialLive: GraphProjection | null = graph(2)) => {
 }
 
 describe('workspace graph versions', () => {
+  it('shares concurrent history refreshes and coalesces version invalidations into one follow-up', async () => {
+    const { scope, state, api, watermark } = setup()
+    await settle()
+    let finish!: (value: GraphVersionHistory) => void
+    api.getGraphVersions.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    const first = state.refresh()
+    const second = state.refresh()
+    expect(first).toBe(second)
+    watermark.value = 2
+    await settle()
+    watermark.value = 3
+    await settle()
+    expect(api.getGraphVersions).toHaveBeenCalledTimes(2)
+    finish(history(2))
+    await first
+    await settle()
+    expect(api.getGraphVersions).toHaveBeenCalledTimes(3)
+    expect(state.loading.value).toBe(false)
+    scope.stop()
+  })
   it('uses the matching live graph without requesting a redundant current snapshot', async () => {
     const { scope, state, api } = setup()
     await settle()

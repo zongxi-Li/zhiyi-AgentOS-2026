@@ -69,7 +69,8 @@ onBeforeUnmount(() => { observer?.disconnect(); spring.stop() })
 </template>
 
 <style scoped>
-.execution-node { position: relative; box-sizing: border-box; overflow: hidden; border: 1px solid var(--wb-border, #64748b); background: var(--wb-surface-2, #e6edf2); color: var(--wb-text, #26332f); box-shadow: 0 2px 7px #00000014; }
+/* 卡片底色在主题面上向文字色提亮一档，边框同步提亮：暗色画布上不再沉入背景。 */
+.execution-node { position: relative; box-sizing: border-box; overflow: hidden; border: 1px solid color-mix(in srgb, var(--wb-text, #26332f) 18%, var(--wb-border, #64748b)); background: color-mix(in srgb, var(--wb-text, #26332f) 8%, var(--wb-surface-2, #e6edf2)); color: var(--wb-text, #26332f); box-shadow: 0 2px 7px #00000014; }
 .execution-node.is-open { border-color: var(--wb-accent, #6ea8fe); background: var(--wb-surface-1, #fff); box-shadow: 0 10px 28px #00000026; }
 .execution-node.running { border-color: var(--sem-running, #6ea8fe); background: color-mix(in srgb, var(--sem-running, #6ea8fe) 8%, var(--wb-surface-2, #e6edf2)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--sem-running, #6ea8fe) 16%, transparent); }
 .execution-node.completed { border-color: var(--sem-success, #8bcb78); }

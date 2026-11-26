@@ -342,7 +342,13 @@ const runtimeStore = shallowRef<RunRuntimeStore | null>(null)
 const graphVersions = createGraphVersions(
   computed(() => selectedRunId.value || projection.value?.activeRun?.runId || null),
   computed(() => projection.value?.activeRun?.runId === selectedRunId.value ? projection.value.activeGraph || null : null),
-  computed(() => `${projection.value?.projectionRevision || 0}:${runtimeObservation.value?.run?.graphVersion || 0}`)
+  // Tool calls and output streaming change projectionRevision without changing
+  // either graph. Refresh history only when graph identity/version advances.
+  computed(() => JSON.stringify([
+    projection.value?.activeGraph?.graphId, projection.value?.activeGraph?.graphVersion,
+    projection.value?.activeGraph?.taskPlanVersion, runtimeObservation.value?.run?.graphVersion,
+    projection.value?.entries.find(entry => entry.kind === 'graph')?.blueprintId,
+  ]))
 )
 provide(graphVersionsKey, graphVersions)
 watch(graphVersions.selectedKey, () => {
