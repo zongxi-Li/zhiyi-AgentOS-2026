@@ -1,6 +1,6 @@
 <template>
   <div class="sidebar-view-stack">
-    <p class="sidebar-intro">查看步骤收到的上下文、前置依赖和来源引用。展开单条记录可查看字段。</p>
+    <!-- <p class="sidebar-intro">查看步骤收到的上下文、前置依赖和来源引用。展开单条记录可查看字段。</p> -->
     <InspectorSection v-if="hasStepSnapshot" title="步骤上下文" badge="projection">
       <InspectorPropertyList :rows="[
         { label: 'objective', value: context.entry?.objective },
@@ -11,33 +11,25 @@
       </div>
     </InspectorSection>
 
-    <InspectorSection v-if="operational" title="控制协同" :badge="operational ? `${controlRecordCount} records` : '未观测'">
-      <div v-if="operational" class="sidebar-metrics" aria-label="控制协同统计">
-        <div><strong>{{ operational.controlFrames.length }}</strong><span>控制记录</span></div>
-        <div><strong>{{ Object.keys(operational.loopIterations).length }}</strong><span>循环</span></div>
-        <div><strong>{{ Object.keys(operational.consensusResults).length }}</strong><span>共识</span></div>
-        <div><strong>{{ Object.keys(operational.debateSessions).length }}</strong><span>讨论</span></div>
-      </div>
-      <p v-if="!operational" class="sidebar-empty">未观测到控制协同数据。</p>
+    <InspectorSection v-if="operational" title="控制协同" :badge="`${controlRecordCount} 条`">
+      <p v-if="!controlRecordCount" class="sidebar-empty">本次运行暂无控制协同记录。</p>
       <template v-else>
-        <OperationalRecords title="控制记录" :items="operational.controlFrames" />
-        <OperationalMap title="循环迭代" :value="operational.loopIterations" />
-        <OperationalMap title="共识结果" :value="operational.consensusResults" />
-        <OperationalMap title="讨论过程" :value="operational.debateSessions" />
+        <OperationalRecords v-if="operational.controlFrames.length" title="控制记录" :items="operational.controlFrames" />
+        <OperationalMap v-if="Object.keys(operational.loopIterations).length" title="循环迭代" :value="operational.loopIterations" />
+        <OperationalMap v-if="Object.keys(operational.consensusResults).length" title="共识结果" :value="operational.consensusResults" />
+        <OperationalMap v-if="Object.keys(operational.debateSessions).length" title="讨论过程" :value="operational.debateSessions" />
       </template>
     </InspectorSection>
 
-    <InspectorSection v-if="operational" title="通信上下文" :badge="operational ? `${contextReferenceCount} refs` : '未观测'">
-      <p v-if="!operational" class="sidebar-empty">未观测到通信上下文数据。</p>
-      <template v-else>
-        <ReferenceGroup title="通信" :items="operational.communicationRefs" />
-        <ReferenceGroup title="记忆" :items="operational.memoryRefs" />
-        <ReferenceGroup title="证据" :items="operational.evidenceRefs" />
-        <OperationalMap title="资源租约" :value="operational.leaseStatuses" />
-      </template>
+    <InspectorSection v-if="operational" title="通信上下文" :badge="`${operational.communicationRefs.length} 个通信引用`">
+      <ReferenceGroup title="通信引用" :items="operational.communicationRefs" />
+      <ReferenceGroup title="记忆引用" :items="operational.memoryRefs" />
+      <ReferenceGroup title="证据引用" :items="operational.evidenceRefs" />
+      <OperationalMap title="资源租约" :value="operational.leaseStatuses" />
     </InspectorSection>
 
-    <p v-if="!operational" class="sidebar-empty">当前快照尚未提供控制协同和通信引用。</p>
+    <p v-if="operationalReadFailed" class="sidebar-empty">读取控制协同和通信引用失败。</p>
+    <p v-else-if="runtimeObservation && !operational" class="sidebar-empty">当前快照尚未提供控制协同和通信引用。</p>
     <InspectorSection title="上下文数据" :badge="contextPacks ? `${contextPacks.length} packs` : '未观测'">
       <p v-if="!contextPacks" class="sidebar-empty">当前快照尚未提供上下文包。</p>
       <ContextPackRecords v-else :items="contextPacks" />
@@ -46,8 +38,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, type PropType } from 'vue'
+import { computed, defineComponent, h, type PropType, type VNode } from 'vue'
 import InspectorPropertyList from '@/components/workbench/InspectorPropertyList.vue'
+import InspectorDetails from '@/components/workbench/InspectorDetails.vue'
 import { inspectorLabel, inspectorValue } from '@/workbench/runtime/inspectorPresentation'
 import InspectorSection from '@/components/workbench/InspectorSection.vue'
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
@@ -61,6 +54,7 @@ const props = defineProps<{
 const dependencyKeys = computed(() => props.context.entry?.dependencyKeys || [])
 const hasStepSnapshot = computed(() => Boolean(props.context.entry?.objective || dependencyKeys.value.length))
 const operational = computed(() => props.runtimeObservation?.operational || null)
+const operationalReadFailed = computed(() => props.runtimeObservation?.unavailableSources.includes('operational'))
 const contextPacks = computed(() => props.runtimeObservation?.contextPacks || null)
 const controlRecordCount = computed(() => {
   const value = operational.value
@@ -69,15 +63,6 @@ const controlRecordCount = computed(() => {
       + Object.keys(value.loopIterations).length
       + Object.keys(value.consensusResults).length
       + Object.keys(value.debateSessions).length
-    : 0
-})
-const contextReferenceCount = computed(() => {
-  const value = operational.value
-  return value
-    ? value.communicationRefs.length
-      + value.memoryRefs.length
-      + value.evidenceRefs.length
-      + Object.keys(value.leaseStatuses).length
     : 0
 })
 
@@ -106,7 +91,7 @@ const renderStructuredValue = (value: unknown) => {
       renderFieldValue(item)
     ])),
     h('details', { class: 'structured-raw' }, [
-      h('summary', '展开原始数据'),
+      h('summary', '原始数据'),
       h('pre', formatValue(value))
     ])
   ])
@@ -115,12 +100,20 @@ const renderStructuredValue = (value: unknown) => {
 const renderFieldValue = (value: unknown) => {
   if (value && typeof value === 'object') {
     return h('details', { class: 'structured-field__nested' }, [
-      h('summary', Array.isArray(value) ? `${value.length} 项` : '展开'),
+      h('summary', Array.isArray(value) ? `${value.length} 项` : '字段详情'),
       h('pre', formatValue(value))
     ])
   }
   return h('strong', { class: 'structured-field__value' }, String(inspectorValue(typeof value === 'number' || typeof value === 'string' ? value : value == null ? null : String(value))))
 }
+
+const renderDisclosureGroup = (title: string, count: number, renderBody: () => VNode) =>
+  count
+    ? h(InspectorDetails, { title, count, class: 'context-disclosure' }, { default: renderBody })
+    : h('div', { class: 'context-disclosure context-disclosure--empty' }, [
+      h('span', title),
+      h('span', { class: 'context-disclosure__empty' }, '暂无')
+    ])
 
 const ReferenceGroup = defineComponent({
   props: {
@@ -128,19 +121,12 @@ const ReferenceGroup = defineComponent({
     items: { type: Array as PropType<string[]>, required: true }
   },
   setup(componentProps) {
-    return () => h('div', { class: 'context-record-group' }, [
-      h('div', { class: 'context-record-group__heading' }, [
-        h('strong', componentProps.title),
-        h('span', String(componentProps.items.length))
-      ]),
-      componentProps.items.length
-        ? h('div', { class: 'reference-list' }, componentProps.items.map((item, index) => h('code', {
-          class: 'reference-item',
-          key: `${item}:${index}`,
-          title: item
-        }, item)))
-        : h('p', { class: 'sidebar-empty' }, `暂无 ${componentProps.title} 引用。`)
-    ])
+    return () => renderDisclosureGroup(componentProps.title, componentProps.items.length,
+      () => h('div', { class: 'reference-list' }, componentProps.items.map((item, index) => h('code', {
+        class: 'reference-item',
+        key: `${item}:${index}`,
+        title: item
+      }, item))))
   }
 })
 
@@ -174,21 +160,17 @@ const OperationalMap = defineComponent({
     value: { type: Object as PropType<Record<string, unknown>>, required: true }
   },
   setup(componentProps) {
-    return () => h('div', { class: 'context-record-group' }, [
-      h('div', { class: 'context-record-group__heading' }, [
-        h('strong', componentProps.title),
-        h('span', String(Object.keys(componentProps.value).length))
-      ]),
-      Object.keys(componentProps.value).length
-        ? h('div', { class: 'structured-list' }, Object.entries(componentProps.value).map(([key, value]) => h('details', {
+    return () => {
+      const entries = Object.entries(componentProps.value)
+      return renderDisclosureGroup(componentProps.title, entries.length,
+        () => h('div', { class: 'structured-list' }, entries.map(([key, value]) => h('details', {
           class: 'structured-record',
           key
         }, [
           h('summary', { title: key }, inspectorLabel(key)),
           renderStructuredValue(value)
-        ])))
-        : h('p', { class: 'sidebar-empty' }, `暂无 ${componentProps.title} 数据。`)
-    ])
+        ]))))
+    }
   }
 })
 
@@ -286,18 +268,34 @@ const ContextPackRecords = defineComponent({
 .sidebar-view-stack { display: contents; }
 .sidebar-intro { margin: 10px 0; color: var(--wb-text-secondary); font: 12px/1.7 var(--font-sans, sans-serif); }
 :deep(.structured-record > summary) { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 8px 11px; cursor: pointer; list-style: none; color: var(--wb-text-secondary); font: 500 12px/1.55 var(--font-sans, sans-serif); transition: background-color 140ms var(--ease-out, ease), color 140ms var(--ease-out, ease); }
-:deep(.structured-record > summary::-webkit-details-marker) { display: none; }
-:deep(.structured-record > summary::before) { content: ''; flex: 0 0 auto; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; opacity: .72; transform: rotate(-45deg); transition: transform 160ms var(--ease-out, ease); }
-:deep(.structured-record[open] > summary::before) { transform: rotate(45deg); }
 :deep(.structured-record > summary:hover) { color: var(--wb-text); background: var(--wb-hover); }
 :deep(.structured-record[open] > summary) { color: var(--wb-text); }
 :deep(.structured-record > summary:focus-visible) { outline: 2px solid var(--wb-accent); outline-offset: -2px; }
 .dependency-list { display: grid; gap: 5px; margin-top: 10px; }
 .dependency-list code { overflow-wrap: anywhere; color: var(--wb-text); font: 10px/1.4 var(--font-mono, monospace); }
-.sidebar-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
-.sidebar-metrics > div { display: grid; gap: 2px; min-width: 0; }
-.sidebar-metrics strong { color: var(--wb-text); font: 15px var(--font-mono, monospace); }
-.sidebar-metrics span { color: var(--wb-text-muted); font-size: 11px; line-height: 1.3; }
+:deep(.context-disclosure) { margin-top: 6px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-md); background: var(--wb-surface-inset); }
+:deep(.context-disclosure > summary), :deep(.context-disclosure--empty) { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 10px; color: var(--wb-text-secondary); font: 500 12px/1.55 var(--font-sans, sans-serif); }
+:deep(.context-disclosure > summary:hover) { background: var(--wb-hover); border-radius: inherit; }
+:deep(.context-disclosure > summary::before) { content: none; }
+:deep(.context-disclosure .inspector-details__count) { margin-left: auto; padding: 0 5px; color: var(--wb-text-muted); font: 11px/1.65 var(--font-mono, monospace); }
+:deep(.context-disclosure .inspector-details__body) { padding: 0 10px 10px; }
+:deep(.context-disclosure--empty) { justify-content: space-between; background: transparent; }
+:deep(.context-disclosure__empty) { color: var(--wb-text-muted); font-size: 11px; }
+.sidebar-view-stack :deep(summary) { list-style: none; }
+.sidebar-view-stack :deep(summary::-webkit-details-marker) { display: none; }
+.sidebar-view-stack :deep(details > summary::after) {
+  content: '展开' / '';
+  flex: none;
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: var(--wb-radius-sm);
+  color: var(--wb-text-secondary);
+  background: var(--wb-hover);
+  font: 500 10px/1.6 var(--font-sans, sans-serif);
+}
+.sidebar-view-stack :deep(details[open] > summary::after) { content: '收起' / ''; color: var(--wb-accent); background: var(--wb-accent-soft); }
+.sidebar-view-stack :deep(.context-disclosure > summary::after) { margin-left: 0; }
+.sidebar-view-stack :deep(summary:focus-visible) { outline: 2px solid var(--wb-accent); outline-offset: -2px; }
 :deep(.context-record-group) { display: grid; gap: 8px; margin-top: 12px; }
 :deep(.context-record-group:first-child) { margin-top: 0; }
 :deep(.context-record-group__heading) { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
@@ -317,7 +315,7 @@ const ContextPackRecords = defineComponent({
 :deep(.structured-field__label) { min-width: 0; overflow-wrap: anywhere; color: var(--wb-text-muted); font: 11px/1.65 var(--font-mono, monospace); }
 :deep(.structured-field__value) { min-width: 0; overflow-wrap: anywhere; color: var(--wb-text); font: 12px/1.65 var(--font-mono, monospace); text-align: left; }
 :deep(.structured-field__nested) { min-width: 0; color: var(--wb-accent); font: 11px/1.65 var(--font-mono, monospace); text-align: right; }
-:deep(.structured-field__nested) summary, :deep(.structured-raw) summary { cursor: pointer; }
+:deep(.structured-field__nested) summary, :deep(.structured-raw) summary { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 :deep(.structured-field__nested) summary:hover, :deep(.structured-raw) summary:hover { color: var(--wb-text); }
 :deep(.structured-field__nested) pre, :deep(.structured-raw) pre { max-height: 180px; margin: 5px 0 0; overflow: auto; color: var(--wb-text-muted); font: 9px/1.5 var(--font-mono, monospace); text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; }
 :deep(.structured-raw) { padding: 7px 9px; color: var(--wb-text-muted); font-size: 11px; }
@@ -345,14 +343,10 @@ const ContextPackRecords = defineComponent({
 :deep(.context-pack__row-empty) { color: var(--wb-text-muted); font-size: 11px; line-height: 1.6; }
 :deep(.context-pack__technical) { min-width: 0; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); background: color-mix(in srgb, var(--wb-surface-section) 72%, transparent); }
 :deep(.context-pack__technical > summary) { display: flex; align-items: center; gap: 8px; padding: 7px 10px; cursor: pointer; list-style: none; color: var(--wb-text-muted); font-size: 11px; transition: color 140ms var(--ease-out, ease); }
-:deep(.context-pack__technical > summary::-webkit-details-marker) { display: none; }
-:deep(.context-pack__technical > summary::before) { content: ''; flex: 0 0 auto; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; opacity: .72; transform: rotate(-45deg); transition: transform 160ms var(--ease-out, ease); }
-:deep(.context-pack__technical[open] > summary::before) { transform: rotate(45deg); }
 :deep(.context-pack__technical > summary:hover) { color: var(--wb-text); }
 :deep(.context-pack__tech-rows) { display: grid; padding: 0 10px 8px; }
 :deep(.context-pack__tech-row) { display: grid; grid-template-columns: minmax(64px, 88px) minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 5px 0; }
 :deep(.context-pack__tech-row + .context-pack__tech-row) { border-top: 1px solid var(--wb-border-soft); }
 :deep(.context-pack__tech-row span) { color: var(--wb-text-muted); font-size: 11px; }
 :deep(.context-pack__tech-row code) { min-width: 0; overflow-wrap: anywhere; color: var(--wb-text-secondary); font: 10px/1.5 var(--font-mono, monospace); user-select: text; }
-@media (max-width: 480px) { .sidebar-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>

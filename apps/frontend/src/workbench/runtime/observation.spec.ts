@@ -223,15 +223,22 @@ describe('RuntimeObservationAdapter', () => {
       ]
     } as any)
     vi.spyOn(agentosApi, 'listResources').mockResolvedValue(resourceResponse as any)
+    const operational = {
+      controlFrames: [], loopIterations: {}, consensusResults: {}, debateSessions: {},
+      communicationRefs: ['communication:stored'], memoryRefs: [], evidenceRefs: [], leaseStatuses: {}
+    }
     vi.spyOn(agentosApi, 'getExecutionTree').mockResolvedValue({
+      run: { runId: 'run_1' },
       nodes: [],
       lineage: { parentRunId: 'parent_1' },
-      lifecycles: [{ stepId: 'step_2', attemptId: 'attempt_1', phase: 'committed', sequence: 0 }]
+      lifecycles: [{ stepId: 'step_2', attemptId: 'attempt_1', phase: 'committed', sequence: 0 }],
+      operational
     } as any)
 
     const result = await readRuntimeObservation('run_1')
 
     expect(result.communication).toHaveLength(1)
+    expect(result.operational).toEqual(operational)
     expect(result.provenance).toMatchObject({
       integrityStatus: 'valid',
       productions: [{ eventId: 'prod_1' }],

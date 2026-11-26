@@ -62,8 +62,8 @@ const observation = (packs: RunContextPackSummary[] | null): RuntimeObservation 
   unavailableSources: []
 })
 
-const mountView = (packs: RunContextPackSummary[] | null) => {
-  const runtimeObservation = observation(packs)
+const mountView = (packs: RunContextPackSummary[] | null, fields: Partial<RuntimeObservation> = {}) => {
+  const runtimeObservation = { ...observation(packs), ...fields }
   const context = {
     ...createWorkbenchContext({
       missionId: 'mission_1',
@@ -82,6 +82,33 @@ const mountView = (packs: RunContextPackSummary[] | null) => {
 }
 
 describe('RuntimeContextSidebarView context packs', () => {
+  it('shows saved Run references when coordination has no records', () => {
+    const wrapper = mountView([pack], { operational: {
+      controlFrames: [], loopIterations: {}, consensusResults: {}, debateSessions: {},
+      communicationRefs: ['communication:one'], memoryRefs: [], evidenceRefs: ['evidence:one'], leaseStatuses: {}
+    } })
+
+    expect(wrapper.text()).toContain('本次运行暂无控制协同记录。')
+    expect(wrapper.text()).toContain('1 个通信引用')
+    expect(wrapper.text()).toContain('communication:one')
+    expect(wrapper.text()).toContain('evidence:one')
+    expect(wrapper.findAll('details.context-disclosure').map(group => group.get('summary').text()))
+      .toEqual(['通信引用1', '证据引用1'])
+    expect(wrapper.findAll('.context-disclosure--empty').map(row => row.text()))
+      .toEqual(['记忆引用暂无', '资源租约暂无'])
+    expect(wrapper.text()).toContain('上下文数据')
+    expect(wrapper.text()).not.toContain('当前快照尚未提供控制协同和通信引用。')
+    wrapper.unmount()
+  })
+
+  it('reports a failed execution tree read while showing returned context packs', () => {
+    const wrapper = mountView([pack], { unavailableSources: ['operational'] })
+
+    expect(wrapper.text()).toContain('读取控制协同和通信引用失败。')
+    expect(wrapper.text()).toContain('上下文数据')
+    wrapper.unmount()
+  })
+
   it('renders a pack card with status badges, token metrics and prose goals', () => {
     const wrapper = mountView([pack])
     const text = wrapper.text()

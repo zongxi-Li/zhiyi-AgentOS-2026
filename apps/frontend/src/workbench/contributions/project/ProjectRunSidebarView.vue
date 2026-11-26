@@ -53,7 +53,7 @@
         <div><strong>{{ runtimeObservation.communication.length }}</strong><span>通信记录</span></div>
         <div><strong>{{ runtimeObservation.toolCalls.length }}</strong><span>工具调用</span></div>
       </div>
-      <InspectorDetails title="最近执行记录" :count="recentTraces.length">
+      <InspectorDetails class="recent-execution-details" text-toggle title="最近执行记录" :count="recentTraces.length">
         <div v-if="recentTraces.length" class="recent-traces" aria-label="最近运行记录">
           <div v-for="item in recentTraces" :key="item.eventId" class="recent-traces__item">
             <div><strong>{{ inspectorEventLabel(item.eventType) }}</strong><time>{{ formatTraceTime(item.timestamp) }}</time></div>
@@ -63,7 +63,7 @@
         </div>
         <p v-else class="sidebar-empty">当前快照没有执行追踪记录。</p>
       </InspectorDetails>
-      <InspectorDetails v-if="runtimeObservation?.operational" title="节点执行记录" :count="nodeExecutions.length">
+      <InspectorDetails v-if="nodeExecutions" title="节点执行记录" :count="nodeExecutions.length">
         <div v-if="nodeExecutions.length" class="record-list" aria-label="节点生命周期记录">
           <article v-for="record in nodeExecutions" :key="record.executionInstanceId" class="record-list__item">
             <div class="record-list__heading"><strong>{{ stepLabel(record.stepId) }}</strong><span class="phase" :class="phaseToneClass(record.phase)">{{ phaseLabel(record.phase) }}</span></div>
@@ -157,7 +157,10 @@ const graphIdentity = computed(() => {
   return 'unproven'
 })
 const runtimeObservation = computed(() => props.runtimeObservation || props.context?.runtimeObservation || null)
-const nodeExecutions = computed(() => runtimeObservation.value?.operational?.nodeExecutions || [])
+const nodeExecutions = computed(() => {
+  const operational = runtimeObservation.value?.operational
+  return operational && 'nodeExecutions' in operational ? operational.nodeExecutions : null
+})
 const lowEntropy = computed(() => runtimeObservation.value?.lowEntropy || null)
 const savingRatioLabel = computed(() => {
   const ratio = lowEntropy.value?.effectiveSavingRatio ?? lowEntropy.value?.averageSavingRatio
@@ -218,6 +221,7 @@ const phaseToneClass = (phase: NodeExecutionPhase) => `tone-${PHASE_TONE[phase] 
 .low-entropy-hero__saved { display: grid; justify-items: end; gap: 2px; padding-left: 14px; text-align: right; }
 .low-entropy-hero__saved strong { color: var(--wb-text); font: 500 22px/1.1 var(--font-serif, serif); font-variant-numeric: tabular-nums; }
 .low-entropy-signals { margin-top: 4px; }
+.recent-execution-details { margin-top: 22px; }
 .sidebar-metrics strong.is-retry { color: var(--wb-retry); }
 .sidebar-metrics strong.is-danger { color: var(--wb-danger); }
 .low-entropy-footer { display: flex; justify-content: space-between; gap: 10px; margin-top: 8px; padding-top: 9px; color: var(--wb-text-muted); font: 10px/1.35 var(--font-sans, sans-serif); }

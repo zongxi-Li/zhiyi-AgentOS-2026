@@ -468,6 +468,33 @@ describe('workbench response compatibility', () => {
       proposals: [] });
     expect(JSON.stringify(result)).not.toContain('PRIVATE');
   });
+  it('returns formal Run references and allowlisted coordination facts', () => {
+    const projectTree = (operational: unknown) => projectAgentOsResponse('/ai/agentos/v2/runs/run/execution-tree', {
+      run: { runId: 'run' }, blueprint: {}, nodes: [], operational,
+    });
+    const projected = projectTree({
+      communicationRefs: ['communication:one', { payload: 'PRIVATE' }],
+      memoryRefs: ['memory:one'],
+      evidenceRefs: ['evidence:one'],
+      leaseStatuses: { lease: 'released', unexpected: { payload: 'PRIVATE' } },
+      controlFrames: [{ controlId: 'loop', controlType: 'loop', iteration: 2, region: ['step'], observedStates: ['PRIVATE'] }],
+      loopIterations: { loop: 2 },
+      consensusResults: { gate: { accepted: true, quorum: 2, rawVotes: 'PRIVATE' } },
+      debateSessions: { step: { round: 2, phase: 'complete', resultArtifactRef: 'artifact:one', participants: ['step'], transcript: 'PRIVATE' } },
+      recoveryOutcome: { payload: 'PRIVATE' },
+    });
+
+    expect(projected).toHaveProperty('operational', {
+      communicationRefs: ['communication:one'], memoryRefs: ['memory:one'], evidenceRefs: ['evidence:one'],
+      leaseStatuses: { lease: 'released' },
+      controlFrames: [{ controlId: 'loop', controlType: 'loop', iteration: 2, region: ['step'] }],
+      loopIterations: { loop: 2 },
+      consensusResults: { gate: { accepted: true, quorum: 2 } },
+      debateSessions: { step: { round: 2, phase: 'complete', resultArtifactRef: 'artifact:one', participants: ['step'] } },
+    });
+    expect(JSON.stringify(projected)).not.toContain('PRIVATE');
+    expect(projectTree(null)).toHaveProperty('operational', null);
+  });
   it('preserves historical graph identity and edge conditions without runtime overlays', () => {
     const result = projectAgentOsResponse('/ai/agentos/v2/runs/run/graph', {
       runId: 'run', graphId: 'graph', blueprintId: 'blueprint:1', graphVersion: 1, taskPlanVersion: 4, historical: true,

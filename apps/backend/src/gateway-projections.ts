@@ -70,6 +70,34 @@ function run(source: Row): Row {
 const missionRun = (source: Row) => pick(source, 'runId missionId status graphVersion startedAt finishedAt createdAt updatedAt');
 const task = (source: Row) => ({ ...pick(source, 'taskId missionId semanticTaskKey parentTaskId title objective status'), constraintCount: list(source.constraints).length });
 
+function operationalSummary(source: Row): Row {
+  const scalarFields = (value: unknown, fields: string) => Object.fromEntries(
+    Object.entries(pick(value, fields)).filter(([, item]) => scalar(item) !== null)
+  );
+  return {
+    controlFrames: rows(source.controlFrames, frame => ({
+      ...scalarFields(frame, 'controlId controlType iteration'),
+      region: strings(frame.region),
+    })),
+    loopIterations: Object.fromEntries(Object.entries(row(source.loopIterations))
+      .filter(([, value]) => numberOrNull(value) !== null)),
+    consensusResults: Object.fromEntries(Object.entries(row(source.consensusResults)).map(([id, result]) =>
+      [id, scalarFields(result, 'votes approvals committedParticipants quorum accepted strategy resolvedByReview')])),
+    debateSessions: Object.fromEntries(Object.entries(row(source.debateSessions)).map(([id, value]) => {
+      const session = row(value);
+      return [id, {
+        ...scalarFields(session, 'round phase maxRounds quorum resultArtifactRef'),
+        participants: strings(session.participants),
+      }];
+    })),
+    communicationRefs: strings(source.communicationRefs),
+    memoryRefs: strings(source.memoryRefs),
+    evidenceRefs: strings(source.evidenceRefs),
+    leaseStatuses: Object.fromEntries(Object.entries(row(source.leaseStatuses))
+      .filter(([, value]) => typeof value === 'string')),
+  };
+}
+
 function executionTree(source: Row): Row {
   const blueprint = row(source.blueprint);
   const operational = row(source.operational);
@@ -96,7 +124,8 @@ function executionTree(source: Row): Row {
     return String(left.executionInstanceId ?? '').localeCompare(String(right.executionInstanceId ?? ''));
   }).map((value, displayOrder) => ({ ...pick(value, 'stepId attemptId phase failureCode'), displayOrder }));
   return { run: missionRun(row(source.run)), graph: { ...graph(blueprint.graph), ...pick(blueprint, 'graphId missionId'), graphVersion: blueprint.version ?? null },
-    nodes, lineage: lineage(operational.lineage), lifecycles };
+    nodes, lineage: lineage(operational.lineage), lifecycles,
+    operational: source.operational == null ? null : operationalSummary(operational) };
 }
 
 function workspace(source: Row): Row {

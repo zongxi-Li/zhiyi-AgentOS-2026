@@ -6,6 +6,7 @@ import {
   type ResourceObservation,
   type RunContextPackSummary,
   type RunOperationalState,
+  type RunOperationalSummary,
   type RunLineage,
   type RunExecutionTree,
   type NodeLifecycleQuery,
@@ -121,7 +122,7 @@ export interface RuntimeObservation {
   problems: RuntimeProblem[]
   audit: RuntimeAuditObservation
   provenance: RuntimeProvenanceObservation
-  operational: RunOperationalState | null
+  operational: RunOperationalSummary | RunOperationalState | null
   lineage: RunLineage | null
   lifecycles: NodeLifecycleQuery[]
   recoveryTrace: RuntimeTraceObservation[]
@@ -750,7 +751,7 @@ export const readRuntimeObservation = async (
     problems: normalizeProblems(traces, diagnostics),
     audit: normalizeAudit(provenance, traces, reviews?.items.length ?? null),
     provenance,
-    operational: null,
+    operational: executionTree?.run?.runId === runId ? executionTree.operational ?? null : null,
     lineage: executionTree?.lineage || run?.lineage || null,
     lifecycles: executionTree?.lifecycles || [],
     recoveryTrace,

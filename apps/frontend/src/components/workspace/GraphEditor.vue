@@ -1,11 +1,11 @@
 <template>
   <section class="graph-editor" aria-label="graph.acg">
     <header class="graph-editor__overview">
-    <div class="graph-editor__modes" role="group" aria-label="图视图">
+    <GraphVersionToolbar :mode="mode" @locate-node="topology?.focusNode($event)">
+    <template #modes><div class="graph-editor__modes" role="group" aria-label="图视图">
       <button type="button" :aria-pressed="mode === 'plan'" @click="mode = 'plan'">规划图 ACG</button>
       <button type="button" :aria-pressed="mode === 'runtime'" @click="mode = 'runtime'">执行图 RGraph</button>
-    </div>
-    <GraphVersionToolbar :mode="mode" @locate-node="topology?.focusNode($event)">
+    </div></template>
       <template #heading>
       <div class="graph-editor__title">
         <svg class="graph-editor__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m8 7 8 5-8 5" stroke="currentColor" stroke-width="1.6"/><circle cx="6" cy="6" r="3" fill="currentColor"/><circle cx="18" cy="12" r="3" fill="currentColor"/><circle cx="6" cy="18" r="3" fill="currentColor"/></svg>

@@ -710,10 +710,8 @@ onBeforeUnmount(() => {
 .project-list__state--error strong { color: var(--danger); }
 @media (max-width: 960px) { .project-list__rows.is-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 720px) { .project-list { padding: 24px 18px 40px; } .project-list__header { display: block; } .project-list__create { margin-top: 18px; } .project-list__toolbar { align-items: stretch; flex-direction: column; gap: 12px; padding: 12px 0; } .project-list__search { width: 100%; } .project-list__toolbar-actions { justify-content: flex-end; gap: 8px; flex-wrap: wrap; } .project-view-toggle button { min-width: 30px; padding: 0 7px; } .project-view-toggle button span { display: none; } .project-row { grid-template-columns: 40px minmax(0, 1fr) 32px 20px; gap: 12px; min-height: 76px; padding: 12px; } .project-row__meta { grid-column: 2 / 3; gap: 12px; margin-top: -8px; font-size: 10px; } .project-row__actions { grid-column: 3; grid-row: 1 / 3; } .project-row__arrow { grid-column: 4; grid-row: 1 / 3; } .project-list__rows.is-grid { grid-template-columns: 1fr; } .project-row.is-grid { grid-template-columns: 40px minmax(0, 1fr) 32px 20px; } .project-row.is-grid .project-row__meta { grid-column: 1 / -1; margin-top: 0; } }
-.project-row.is-last-opened {
-  box-shadow: inset 2px 0 0 var(--primary-color);
-  background: color-mix(in srgb, var(--primary-color) 6%, var(--bg-card));
-}
+/* 最近打开：仅整卡背景染色，不再叠加左侧竖条 */
+.project-row.is-last-opened { background: color-mix(in srgb, var(--primary-color) 6%, var(--bg-card)); }
 </style>
 
 <style>

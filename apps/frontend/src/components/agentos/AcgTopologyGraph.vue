@@ -1755,6 +1755,8 @@ onBeforeUnmount(() => {
 }
 .uml-card__more:hover { border-color: var(--wb-accent, var(--primary-color)); color: var(--wb-accent, var(--primary-color)); }
 .acg-topology.is-workbench .uml-card { border-color: var(--wb-border); background: var(--wb-surface-1); box-shadow: var(--wb-shadow-section, 0 6px 18px rgba(15, 35, 40, 0.12)); }
+.acg-topology .uml-card.execution-detail,
+.acg-topology .execution-detail .uml-card__head { background: var(--node-focus-background, var(--wb-surface-1)); }
 
 .acg-topology .uml-card.execution-detail {
   position: relative; z-index: auto; width: 100%; max-height: 520px;

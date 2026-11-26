@@ -1,6 +1,6 @@
 <template>
   <div class="sidebar-view-stack">
-    <InspectorSection title="通信摘要" :badge="items.length ? `${items.length} records` : '未观测'">
+    <InspectorSection title="通信摘要" :badge="runtimeObservation ? `${items.length} 条` : '未观测'">
       <div class="sidebar-metrics" aria-label="通信统计">
         <div><strong>{{ targetIds.size ? inboundCount : '—' }}</strong><span>相关接收</span></div>
         <div><strong>{{ targetIds.size ? outboundCount : '—' }}</strong><span>相关发送</span></div>
@@ -21,13 +21,16 @@
         <div v-for="item in relatedItems" :key="item.id" class="communication-list__item">
           <strong>{{ communicationTitle(item) }}</strong>
           <span>{{ inspectorValue(item.source) }} · {{ formatDate(item.timestamp) }}</span>
-          <InspectorDetails title="字段与来源引用"><p>{{ item.fields.length ? item.fields.map(inspectorLabel).join('、') : '当前没有记录字段列表。' }}</p><code v-if="item.artifactRef">{{ item.artifactRef }}</code></InspectorDetails>
+          <InspectorDetails v-if="item.fields.length || item.artifactRef" text-toggle title="字段与来源引用">
+            <p v-if="item.fields.length">{{ item.fields.map(inspectorLabel).join('、') }}</p>
+            <code v-if="item.artifactRef">{{ item.artifactRef }}</code>
+          </InspectorDetails>
         </div>
       </div>
     </InspectorSection>
 
-    <InspectorSection title="数据流转" :badge="`${consumptions.length} records`">
-      <InspectorDetails title="整次运行的读取记录" :count="consumptions.length"><div v-if="consumptions.length" class="record-list" aria-label="数据血缘记录">
+    <InspectorSection title="数据流转" :badge="runtimeObservation ? `${consumptions.length + productions.length} 条` : '未观测'">
+      <InspectorDetails v-if="consumptions.length" text-toggle title="整次运行的读取记录" :count="consumptions.length"><div class="record-list" aria-label="数据血缘记录">
         <article v-for="item in consumptions" :key="item.eventId" class="record-list__item">
           <div class="flow">
             <span v-for="producer in item.producerStepIds" :key="producer" class="node-tag producer">{{ stepLabel(producer) }}</span>
@@ -40,21 +43,19 @@
           </div>
           <small>event {{ item.eventId }}<template v-if="item.contractStatus"> · {{ item.contractStatus }}</template></small>
         </article>
-      </div>
-      <p v-else class="sidebar-empty">当前快照没有数据流转记录。</p></InspectorDetails>
-      <InspectorDetails v-if="productions.length" title="整次运行的生成记录" :count="productions.length"><div class="production-list" aria-label="数据生产记录">
-        <div class="subsection-label">生产记录 · {{ productions.length }}</div>
+      </div></InspectorDetails>
+      <InspectorDetails v-if="productions.length" class="production-details" text-toggle title="整次运行的生成记录" :count="productions.length"><div class="production-list" aria-label="数据生产记录">
         <article v-for="item in productions" :key="item.eventId" class="production-list__item">
           <strong>{{ stepLabel(item.producerStepId) }}</strong>
           <span>{{ item.fieldNames?.join(', ') || '字段未观测' }}</span>
           <small>event {{ item.eventId }}</small>
         </article>
       </div></InspectorDetails>
+      <p v-if="!consumptions.length && !productions.length" class="sidebar-empty">{{ runtimeObservation ? '当前快照没有数据流转记录。' : '尚未获取数据流转记录。' }}</p>
     </InspectorSection>
 
-    <InspectorSection title="运行交互" :badge="`${interactions.length} records`">
-      <p class="sidebar-empty">查看步骤之间传递的数据字段与 Token 用量。</p>
-      <InspectorDetails title="整次运行的交互记录" :count="interactions.length"><div v-if="interactions.length" class="record-list" aria-label="运行交互记录">
+    <InspectorSection title="运行交互" :badge="runtimeObservation ? `${interactions.length} 条` : '未观测'">
+      <InspectorDetails v-if="interactions.length" text-toggle title="整次运行的交互记录"><div class="record-list" aria-label="运行交互记录">
         <article v-for="item in interactions" :key="item.interactionId || item.eventId" class="record-list__item">
           <div class="flow">
             <span class="node-tag producer">{{ participantLabel(item.producerAgentNames, item.producerStepIds) }}</span>
@@ -72,8 +73,8 @@
           </div>
           <small>interaction {{ item.interactionId }} · event {{ item.eventId }}</small>
         </article>
-      </div>
-      <p v-else class="sidebar-empty">当前快照没有交互记录。</p></InspectorDetails>
+      </div></InspectorDetails>
+      <p v-else class="sidebar-empty">{{ runtimeObservation ? '当前快照没有交互记录。' : '尚未获取交互记录。' }}</p>
     </InspectorSection>
   </div>
 </template>
@@ -148,12 +149,12 @@ const formatNumber = (value: number | undefined) => {
 <style scoped>
 .sidebar-view-stack { display: contents; }
 .sidebar-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
-.sidebar-metrics > div { display: grid; gap: 2px; min-width: 0; }
+.sidebar-metrics > div, .communication-list__item { display: grid; gap: 4px; min-width: 0; padding: 8px 10px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-md); background: var(--wb-surface-inset); }
 .sidebar-metrics strong { color: var(--wb-text); font: 16px var(--font-mono, monospace); }
 .sidebar-metrics span { color: var(--wb-text-muted); font-size: 12px; }
 .communication-list { display: grid; gap: 10px; }
-.communication-list__item { display: grid; gap: 3px; padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--wb-border-soft) 70%, transparent); }
-.communication-list__item:first-child { padding-top: 0; border-top: 0; }
+.communication-list__item :deep(.inspector-details) { margin-top: 4px; }
+.inspector-details + .production-details { margin-top: 6px; }
 .communication-list__item strong { overflow: hidden; color: var(--wb-text); font: 500 12px/1.65 var(--font-sans, sans-serif); overflow-wrap: anywhere; white-space: normal; }
 .communication-list__item span, .communication-list__item small { overflow: hidden; color: var(--wb-text-muted); font-size: 12px; overflow-wrap: anywhere; white-space: normal; }
 .sidebar-empty { margin: 10px 0 0; color: var(--wb-text-muted); font-size: 11px; line-height: 1.5; }
@@ -169,7 +170,6 @@ const formatNumber = (value: number | undefined) => {
 .record-list__item small, .production-list__item small { color: var(--wb-text-muted); font: 11px var(--font-mono, monospace); }
 .interaction-meta { display: flex; gap: 8px; flex-wrap: wrap; color: var(--wb-text-muted); font-size: 12px; }
 .interaction-meta span:first-child { color: var(--wb-text-secondary); font-family: var(--font-mono, monospace); }
-.subsection-label { margin-top: 12px; margin-bottom: 7px; color: var(--wb-text-muted); font-size: 12px; }
 .production-list { display: grid; gap: 7px; }
 .production-list__item { display: grid; gap: 3px; padding: 7px 9px; border-top: 1px solid var(--wb-border-soft); }
 .production-list__item strong { color: var(--wb-text); font-size: 12px; }

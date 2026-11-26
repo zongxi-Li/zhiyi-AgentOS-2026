@@ -20,7 +20,7 @@
       ...(lifecycle.successorRunId ? [{ label: '后续运行', value: lifecycle.successorRunId, code: true }] : [])
     ]" />
     <p v-if="!lifecycle.capabilities" class="lifecycle-note">操作状态暂时无法确认，请等待运行记录刷新。</p>
-    <InspectorDetails title="诊断详情">
+    <InspectorDetails class="lifecycle-diagnostics" text-toggle title="诊断详情">
       <RuntimeObservationNotice :observation="observation" :run-id="lifecycle.runId" />
       <InspectorPropertyList :rows="[
         { label: '运行编号', value: lifecycle.runId, code: true },
@@ -31,7 +31,7 @@
         { label: '产物编号', value: lifecycle.deliverable?.artifactId, code: true },
         { label: '正文引用', value: lifecycle.deliverable?.contentRef, code: true }
       ]" />
-      <InspectorDetails v-if="lifecycle.capabilities?.unavailableReasons.length" title="操作限制">
+      <InspectorDetails v-if="lifecycle.capabilities?.unavailableReasons.length" text-toggle title="操作限制">
         <dl class="lifecycle-reasons">
           <div v-for="reason in lifecycle.capabilities.unavailableReasons" :key="reason.action">
             <dt>{{ capabilityLabels[reason.action] || '其他操作' }}</dt>
@@ -40,7 +40,7 @@
         </dl>
       </InspectorDetails>
       <ul class="lifecycle-raw"><li v-for="reason in lifecycle.capabilities?.unavailableReasons || []" :key="reason.action"><code>{{ reason.action }}: {{ reason.code }}</code></li></ul>
-      <InspectorDetails title="状态证据" :count="lifecycle.evidenceReferences.length">
+      <InspectorDetails text-toggle title="状态证据" :count="lifecycle.evidenceReferences.length">
         <ul class="lifecycle-raw"><li v-for="source in lifecycle.evidenceReferences" :key="source"><code>{{ source }}</code></li></ul>
         <p v-if="lifecycle.notObserved.length" class="lifecycle-note">尚未获取：{{ lifecycle.notObserved.join('、') }}</p>
       </InspectorDetails>
@@ -73,6 +73,7 @@ const description = computed(() => lifecycleDescriptions[props.lifecycle.phase])
 <style scoped>
 .lifecycle-summary { margin: 0 0 12px; color: var(--wb-text); }
 .lifecycle-note { color: var(--wb-text-muted); font-size: 12px; }
+.lifecycle-diagnostics { margin-top: 22px; }
 .lifecycle-delivery { display: grid; gap: 7px; margin: 14px 0; padding: 14px; border-radius: var(--wb-radius-md, 8px); background: var(--wb-surface-inset); }
 .lifecycle-delivery > strong { font-size: 13px; color: var(--wb-text); }
 .lifecycle-delivery > span { color: var(--wb-text-secondary); font-size: 12px; line-height: 1.7; }

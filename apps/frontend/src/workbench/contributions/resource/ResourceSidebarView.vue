@@ -6,7 +6,7 @@
         { label: '模型', value: selectedBinding.modelId === 'runtime-default' ? '运行时默认模型' : selectedBinding.modelId },
         { label: '健康状态', value: healthLabel(selectedHealth) }
       ]" />
-      <InspectorDetails title="资源绑定技术详情">
+      <InspectorDetails text-toggle title="资源绑定技术详情">
         <InspectorPropertyList :rows="[{ label: 'resourceId', value: selectedBinding.resourceId, code: true }, { label: 'agentId', value: selectedBinding.agentId, code: true }, { label: '执行编号', value: selectedBinding.attemptId, code: true }]" />
       </InspectorDetails>
     </InspectorSection>
@@ -23,11 +23,11 @@
           <span>{{ inspectorValue(healthLabel(resource.health)) }}</span>
         </div>
       </div>
-      <InspectorDetails v-if="resourceObservation" title="资源绑定详情" :count="resourceObservation.bindings.length">
+      <InspectorDetails v-if="resourceObservation?.bindings.length" text-toggle title="资源绑定详情" :count="resourceObservation.bindings.length">
         <InspectorPropertyList :rows="[{ label: 'bound attempts', value: resourceObservation.bindings.length }, { label: 'source', value: resourceObservation.source }]" />
         <InspectorPropertyList v-for="resource in boundResources" :key="resource.resourceId" :rows="[{ label: 'resourceId', value: resource.resourceId, code: true }, { label: 'agentId', value: resource.agentId, code: true }, { label: 'modelId', value: resource.modelId, code: true }]" />
       </InspectorDetails>
-      <InspectorDetails v-if="resourceObservation?.failoverEvents?.length" title="资源切换记录" :count="resourceObservation.failoverEvents.length">
+      <InspectorDetails v-if="resourceObservation?.failoverEvents?.length" text-toggle title="资源切换记录" :count="resourceObservation.failoverEvents.length">
         <p v-for="event in resourceObservation.failoverEvents" :key="event.eventId">{{ event.failedResources.map(item => item.resourceId).join('、') }} → {{ event.retryStepIds.join('、') || '原步骤' }}</p>
       </InspectorDetails>
       <p v-if="!boundResources.length" class="sidebar-empty">{{ resourceObservation ? '当前快照没有记录资源绑定。' : '资源数据尚未获取。' }}</p>
@@ -93,11 +93,13 @@ const modelCount = computed(() => new Set((props.resourceObservation?.bindings |
 <style scoped>
 .sidebar-view-stack { display: contents; }
 .sidebar-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
-.sidebar-metrics > div { display: grid; gap: 2px; min-width: 0; }
+.sidebar-metrics > div, .resource-list__row { min-width: 0; padding: 8px 10px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-md); background: var(--wb-surface-inset); }
+.sidebar-metrics > div { display: grid; gap: 4px; }
 .sidebar-metrics strong { color: var(--wb-text); font: 16px var(--font-mono, monospace); }
 .sidebar-metrics span { color: var(--wb-text-muted); font-size: 12px; }
 .resource-list { display: grid; gap: 8px; margin-top: 10px; }
-.resource-list__row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--wb-border-soft) 70%, transparent); }
+.resource-list__row { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 6px 10px; }
+.sidebar-view-stack :deep(.inspector-details--text) { margin-top: 8px; }
 .resource-list__row > div { display: grid; gap: 3px; min-width: 0; }
 .resource-list__row strong { overflow: hidden; color: var(--wb-text); font: 600 13px var(--font-sans, sans-serif); text-overflow: ellipsis; white-space: nowrap; }
 .resource-list__row div span, .resource-list__row > span { color: var(--wb-text-muted); font-size: 12px; }
