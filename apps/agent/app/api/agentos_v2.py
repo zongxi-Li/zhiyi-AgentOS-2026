@@ -3339,7 +3339,7 @@ def create_router(
             raise HTTPException(409, str(exc)) from exc
 
     @router.get("/runs/{run_id}/plan")
-    async def get_plan(run_id: str, plan_version: int | None = Query(default=None, alias="planVersion", ge=1)):
+    def get_plan(run_id: str, plan_version: int | None = Query(default=None, alias="planVersion", ge=1)):
         run = load_content_run(run_id)
         if identity_repositories is not None and identity_repositories.runs.get(run_id) is not None:
             require_run_access(run_id)
@@ -3375,7 +3375,7 @@ def create_router(
             raise HTTPException(status_code=409, detail="planning snapshot is temporarily inconsistent") from exc
 
     @router.get("/runs/{run_id}/graph/versions")
-    async def get_graph_versions(run_id: str):
+    def get_graph_versions(run_id: str):
         runtime_run = load_run(run_id, readonly=True)
         if identity_queries is not None:
             require_run_access(run_id)
@@ -3385,7 +3385,7 @@ def create_router(
             raise HTTPException(status_code=409, detail="graph history is temporarily inconsistent") from exc
 
     @router.get("/runs/{run_id}/graph")
-    async def get_graph(run_id: str, blueprint_id: str | None = Query(default=None, alias="blueprintId", min_length=1, max_length=256)):
+    def get_graph(run_id: str, blueprint_id: str | None = Query(default=None, alias="blueprintId", min_length=1, max_length=256)):
         runtime_run = load_run(run_id, readonly=blueprint_id is not None)
         if blueprint_id is not None:
             if identity_queries is not None:
@@ -3429,7 +3429,7 @@ def create_router(
         }
 
     @router.get("/runs/{run_id}/outputs/{output_ref}")
-    async def get_output(run_id: str, output_ref: str):
+    def get_output(run_id: str, output_ref: str):
         # An output may contain the same artifact body. Recheck the Workflow
         # record through the read-only cache: a lagging Identity projection must
         # not hide deletion or downgrade a frozen Mission's read authority.

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from threading import Lock
 
 
@@ -27,7 +28,11 @@ class RunLock:
         self._lock.release()
 
     async def __aenter__(self):
-        self._lock.acquire()
+        # A synchronous worker can hold this same lock. Yield while it owns
+        # the lock, and only acquire on the caller so cancellation cannot
+        # leave a background acquisition without an owner.
+        while not self._lock.acquire(blocking=False):
+            await asyncio.sleep(0.01)
         return self
 
     async def __aexit__(self, exc_type, exc, traceback) -> None:

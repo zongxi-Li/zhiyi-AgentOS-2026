@@ -1,6 +1,8 @@
 """Graph version reads follow confirmed Run lineage and retain reference-only evidence."""
 
 from copy import deepcopy
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -124,6 +126,36 @@ def test_version_chain_uses_runtime_versions_and_only_handoff_inherited_evidence
     assert history.runtime.workflow_store.get_run(history.run.run_id).model_dump(mode="json") == before
     current = history.client.get(f"/agentos/v2/runs/{history.run.run_id}/graph")
     assert current.status_code == 200 and current.json()["graphVersion"] == 3
+
+
+def test_slow_graph_history_does_not_block_other_reads(history, monkeypatch):
+    import app.api.agentos_v2 as routes
+
+    entered, release = Event(), Event()
+    original = routes.graph_history
+
+    def slow_history(*args, **kwargs):
+        entered.set()
+        if not release.wait(5):
+            raise RuntimeError("graph request was not released")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(routes, "graph_history", slow_history)
+
+    @history.client.app.get("/readiness-probe")
+    async def readiness():
+        return {"ok": True}
+
+    with history.client as client, ThreadPoolExecutor(max_workers=2) as workers:
+        graph_read = workers.submit(client.get, f"/agentos/v2/runs/{history.run.run_id}/graph/versions")
+        try:
+            assert entered.wait(3)
+            probe = workers.submit(client.get, "/readiness-probe")
+            assert probe.result(timeout=2).json() == {"ok": True}
+            assert not graph_read.done()
+        finally:
+            release.set()
+        assert graph_read.result(timeout=3).status_code == 200
 
 
 def test_historical_snapshot_has_no_current_runtime_status_or_resource_overlay(history):
