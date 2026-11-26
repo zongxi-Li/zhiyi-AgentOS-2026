@@ -37,7 +37,7 @@
         <div class="low-entropy-hero__saved"><span>累计节省</span><strong>{{ tokenLabel(lowEntropy?.tokensSaved) }}</strong><small v-if="lowEntropy?.tokensSaved != null">Token</small></div>
       </div>
       <InspectorPropertyList :rows="[{ label: '实际投递 / 可获取', value: tokenLabel(lowEntropy?.tokensDelivered) + ' / ' + tokenLabel(lowEntropy?.tokensAvailable) }]" />
-      <p class="sidebar-empty">反映步骤之间传递上下文的节省情况，不代表模型调用账单。</p>
+      <!-- <p class="sidebar-empty">反映步骤之间传递上下文的节省情况，不代表模型调用账单。</p> -->
       <div class="sidebar-metrics low-entropy-signals" aria-label="上下文传递统计">
         <div><strong>{{ lowEntropy?.interactionCount ?? '—' }}</strong><span>运行交互</span></div>
         <div><strong :class="{ 'is-retry': (lowEntropy?.recoveryCount ?? 0) > 0 }">{{ lowEntropy?.recoveryCount ?? '—' }}</strong><span>恢复次数</span></div>

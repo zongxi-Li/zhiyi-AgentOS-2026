@@ -28,7 +28,6 @@
         <dl class="token-legend">
           <div v-for="segment in segments" :key="segment.label"><dt><i :class="segment.tone"></i>{{ segment.label }}</dt><dd>{{ number(segment.value) }}</dd></div>
         </dl>
-        <p class="usage-note">缓存读取已包含在输入中；推理 Token 已包含在输出中。</p>
       </div>
 
       <div class="usage-chart">

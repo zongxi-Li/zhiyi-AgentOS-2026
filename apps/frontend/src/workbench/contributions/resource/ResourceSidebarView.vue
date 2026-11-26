@@ -16,7 +16,7 @@
         <div><strong>{{ resourceObservation ? agentCount : '—' }}</strong><span>智能体</span></div>
         <div><strong>{{ resourceObservation ? modelCount : '—' }}</strong><span>模型配置</span></div>
       </div>
-      <p class="sidebar-empty">展示本次运行已登记的执行资源及其健康状态。</p>
+      <!-- <p class="sidebar-empty">展示本次运行已登记的执行资源及其健康状态。</p> -->
       <div v-if="boundResources.length" class="resource-list">
         <div v-for="(resource, index) in boundResources" :key="resource.resourceId" class="resource-list__row">
           <div><strong>{{ resource.resourceId === 'runtime:embedded-agents' ? '内置执行资源' : '执行资源 ' + (index + 1) }}</strong><span>{{ tierLabel(resource.deploymentTier) }} · {{ inspectorValue(resource.modelId) }}</span></div>
