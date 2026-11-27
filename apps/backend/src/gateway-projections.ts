@@ -149,9 +149,23 @@ function workspace(source: Row): Row {
     '', '## Input attachments', ...(attachments.length ? attachments.map(value => `- **${value.originalFilename}** (\`${value.attachmentId}\`) - ${value.status}, ${value.sizeBytes} bytes, \`${value.sha256}\``) : ['No input attachments.'])];
   const tasks = entries.filter(value => value.kind === 'task');
   if (tasks.length) lines.push('', '## Planned steps', ...tasks.map(value => `- **${value.name}** (\`${value.semanticTaskKey}\`)${value.objective ? `: ${value.objective}` : ''}`));
-  for (const entry of entries) if (entry.entryId === 'overview:mission.md' && entry.kind === 'virtual_document') entry.content = lines.join('\n') + '\n';
+  for (const entry of entries) if (entry.entryId === 'overview:mission.md' && entry.kind === 'virtual_document') {
+    // Keep the authorized document and its semantic/plan context. Runtime metadata
+    // is internal; it must not be published through the generated Markdown either.
+    entry.content = typeof entry.content === 'string' && entry.content.trim()
+      ? entry.content.replace(/^## Mission metadata\r?\n[\s\S]*?(?=^## |$(?![\s\S]))/m, '')
+      : lines.join('\n') + '\n';
+  }
   const diagnosticKeys: Record<string, string> = { RUN_DELIVERABLE_MISSING: 'runId', GRAPH_TASK_NOT_FOUND: 'acgNodeId taskId', TASK_PLAN_TASK_NOT_FOUND: 'runId semanticTaskKey', LEGACY_ARTIFACT_IDENTITY: 'count', PLAN_SNAPSHOT_UNRESOLVED: 'runId taskPlanVersion', PLANNING_PROJECTION_PENDING: 'runtimeStatus lifecyclePhase errorCode' };
-  return { mission, activeRun, ...pick(source, 'projectionRevision projectionSchemaVersion'),
+  const constraints = (value: unknown) => rows(value, item => ({ ...pick(item, 'constraintId text'), sourceRefs: strings(item.sourceRefs) }));
+  return { mission, activeRun, ...pick(source, 'projectionRevision projectionSchemaVersion selectedRunBasisStatus'),
+    missionSemanticView: source.missionSemanticView == null ? null : {
+      ...pick(source.missionSemanticView, 'missionId semanticStatus missionRevision commitId objective sourceStatus'),
+      constraints: constraints(row(source.missionSemanticView).constraints), sourceReferences: strings(row(source.missionSemanticView).sourceReferences) },
+    missionDisplay: source.missionDisplay == null ? null : pick(source.missionDisplay, 'objective sourceType'),
+    selectedRunBasis: source.selectedRunBasis == null ? null : {
+      ...pick(source.selectedRunBasis, 'basisSchemaVersion fingerprintVersion missionId sourceType sourceRevision commitId objective sourceStatus fingerprint'),
+      constraints: constraints(row(source.selectedRunBasis).constraints), sourceReferences: strings(row(source.selectedRunBasis).sourceReferences) },
     activeGraph: source.activeGraph == null ? null : { ...graph(source.activeGraph), taskPlanVersion: row(source.activeGraph).taskPlanVersion ?? null },
     runs: rows(source.runs, summary), entries,
     graphNodes: rows(source.graphNodes, source => pick(source, 'acgNodeId nodeType name semanticTaskKey taskId identityQuality displayOrder status attemptId artifactCount artifactIds')),

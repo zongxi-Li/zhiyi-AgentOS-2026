@@ -1,9 +1,12 @@
-import { nextTick } from 'vue'
-import { flushPromises, mount } from '@vue/test-utils'
+import { nextTick, ref } from 'vue'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { EditorView } from '@codemirror/view'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import MissionEditor from './MissionEditor.vue'
+import { graphVersionsKey, type GraphVersionsController } from './graphVersions'
 import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry } from '@/services/api/agentos'
+
+enableAutoUnmount(afterEach)
 
 vi.mock('@/services/api/agentos', async importOriginal => {
   const actual = await importOriginal<typeof import('@/services/api/agentos')>()
@@ -52,7 +55,7 @@ const entry = (content: string): WorkspaceEntry => ({
   group: 'overview', displayOrder: 1, content
 })
 
-/** 视图页签：0=编辑 1=预览。 */
+/** 视图页签：0=源码 1=预览。 */
 const modeButtons = (wrapper: ReturnType<typeof mount>) =>
   wrapper.findAll('.mission-editor__mode button')
 
@@ -107,27 +110,44 @@ describe('MissionEditor', () => {
     expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('')
   })
 
-  it('opens mission.md in an editable editor by default and keeps the draft local', async () => {
-    const wrapper = mount(MissionEditor, {
-      props: { projection: projection(), entry: entry('# 设备人员规划\n\n## Semantic tasks\n\n内容') }
-    })
-    // 默认编辑态：CodeMirror 渲染源文（带行号 gutter）
-    expect(wrapper.find('.mission-markdown-editor').exists()).toBe(true)
-    expect(wrapper.find('.mission-markdown-editor .cm-gutters').exists()).toBe(true)
-    expect(wrapper.find('.mission-markdown-editor').text()).toContain('设备人员规划')
-    expect(wrapper.find('.editor-document__body').exists()).toBe(false)
-
-    // 编辑落本地草稿：出现未保存提示与还原按钮，投影不回写 entry.content
+  it('opens readonly source and follows committed document and version updates', async () => {
+    const value = projection()
+    value.activeGraph = { graphId: 'g', nodes: [], edges: [], graphVersion: 1, taskPlanVersion: 1 }
+    value.entries = [entry('# 初始计划')]
+    const wrapper = mount(MissionEditor, { props: { projection: value, entry: value.entries[0] } })
     const editor = EditorView.findFromDOM(wrapper.get('.mission-markdown-editor').element as HTMLElement)!
-    editor.dispatch({ changes: { from: 0, to: 2, insert: '##' } })
-    await nextTick()
-    expect(wrapper.find('.mission-editor__draft-hint').text()).toContain('本地草稿')
-    expect(wrapper.find('.mission-editor__reset').exists()).toBe(true)
-    expect(wrapper.props('entry').content).toBe('# 设备人员规划\n\n## Semantic tasks\n\n内容')
+    expect(editor.contentDOM.getAttribute('contenteditable')).toBe('false')
+    expect(wrapper.find('.cm-gutters').exists()).toBe(true)
+    expect(wrapper.text()).toContain('只读')
+    expect(wrapper.text()).toContain('ACG v1')
+    await wrapper.setProps({ projection: { ...value,
+      activeGraph: { ...value.activeGraph!, graphVersion: 3, taskPlanVersion: 2 },
+      entries: [entry('# 新计划正文')]
+    } })
+    expect(editor.state.doc.toString()).toBe('# 新计划正文')
+    expect(wrapper.text()).toContain('ACG v2')
+    expect(wrapper.text()).toContain('RGraph v3')
+    await modeButtons(wrapper).at(1)!.trigger('click')
+    expect(wrapper.get('.editor-document__body h1').text()).toBe('新计划正文')
+    wrapper.unmount()
+  })
 
-    await wrapper.find('.mission-editor__reset').trigger('click')
+  it('labels historical graph browsing without replacing the effective document', async () => {
+    const historical = ref(true)
+    const selected = ref({ taskPlanVersion: 1, graphVersion: 2 })
+    const value = projection()
+    value.activeGraph = { graphId: 'g', nodes: [], edges: [], graphVersion: 5, taskPlanVersion: 4 }
+    const wrapper = mount(MissionEditor, { props: { projection: value, entry: entry('# 生效计划') },
+      global: { provide: { [graphVersionsKey as symbol]: { historical, selected } as unknown as GraphVersionsController } } })
+    expect(wrapper.text()).toContain('正在查看 ACG v1 · RGraph v2 历史图')
+    expect(wrapper.text()).toContain('生效计划 ACG v4')
+    historical.value = false
     await nextTick()
-    expect(wrapper.find('.mission-editor__reset').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('正在查看')
+    await wrapper.setProps({ projection: { ...value, activeGraph: null,
+      diagnostics: [{ code: 'PLAN_SNAPSHOT_UNRESOLVED', message: 'missing', severity: 'warning' }] } })
+    expect(wrapper.text()).toContain('版本未登记')
+    expect(wrapper.text()).toContain('计划快照不可用')
     wrapper.unmount()
   })
 

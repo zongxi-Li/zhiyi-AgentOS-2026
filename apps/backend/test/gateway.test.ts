@@ -290,6 +290,23 @@ describe('Python gateway transport contracts', () => {
     expect(text).toContain('"total_tokens":7'); client.close();
   });
 
+  it('preserves mission semantics and effective plan content without publishing runtime metadata', () => {
+    const result = projectAgentOsResponse('/ai/agentos/v2/missions/mission/workspace', {
+      mission: { missionId: 'mission' }, runs: [], graphNodes: [], diagnostics: [],
+      missionSemanticView: { missionId: 'mission', semanticStatus: 'INITIALIZED', missionRevision: 2,
+        objective: '正式目标', constraints: [{ constraintId: 'c', text: '约束', sourceRefs: ['ref'], private: 'PRIVATE' }],
+        sourceReferences: [], private: 'PRIVATE' },
+      selectedRunBasisStatus: 'BOUND', selectedRunBasis: { sourceRevision: 1, objective: '历史目标', constraints: [], private: 'PRIVATE' },
+      entries: [{ entryId: 'overview:mission.md', kind: 'virtual_document',
+        content: '# 正式目标\n\n## 所选 Run 的历史语义依据\n历史目标\n\n## Mission metadata\n```json\n{"private":"PRIVATE"}\n```\n\n## Planned steps\n- 完整计划与约束\n' }]
+    }) as any;
+    expect(result.entries[0].content).toContain('历史目标');
+    expect(result.entries[0].content).toContain('完整计划与约束');
+    expect(result.missionSemanticView.missionRevision).toBe(2);
+    expect(result.selectedRunBasis.sourceRevision).toBe(1);
+    expect(JSON.stringify(result)).not.toContain('PRIVATE');
+  });
+
   it('preserves workspace projection watermarks through the public read projection', () => {
     expect(projectAgentOsResponse('/ai/agentos/v2/missions/mission/workspace', {
       mission: { missionId: 'mission' }, projectionRevision: 42, projectionSchemaVersion: 1,

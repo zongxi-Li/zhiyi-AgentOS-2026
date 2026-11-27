@@ -21,16 +21,25 @@
           </div>
         </div>
         <div class="task-document__actions task-editor__actions">
+          <div class="task-document__modes" role="group" aria-label="任务结果视图">
+            <button type="button" :aria-pressed="viewMode === 'source'" @click="viewMode = 'source'">源码</button>
+            <button type="button" :aria-pressed="viewMode === 'preview'" @click="viewMode = 'preview'">预览</button>
+          </div>
+          <span class="task-document__readonly">只读</span>
           <button type="button" :disabled="!graphNode" @click="emit('locateGraph')">在图中定位</button>
         </div>
       </div>
     </header>
 
     <div class="task-document__body">
-      <article class="task-document__canvas">
+      <article class="task-document__canvas" :class="{ 'is-source': viewMode === 'source' }">
         <slot name="progress" />
         <ArtifactVerification v-if="streamingPreview == null && stageOutputContent && (document.artifactKind === 'final_report' || (document.artifactKind !== 'unknown' && document.verification))" :verification="document.verification" />
-        <section v-if="streamingPreview != null" class="task-document__blocks">
+        <section v-if="viewMode === 'source' && (streamingPreview != null || stageOutputContent)" data-testid="task-stage-output">
+          <p v-if="streamingPreview != null" role="status">正在生成结果…</p>
+          <MissionMarkdownEditor :model-value="markdownSource" read-only aria-label="任务结果 Markdown 源码" />
+        </section>
+        <section v-else-if="streamingPreview != null" class="task-document__blocks">
           <p role="status">正在生成结果…</p>
           <div class="task-document__markdown task-document__markdown--streaming markdown-body" data-testid="task-stage-output" v-html="renderMarkdown(streamingPreview)" />
         </section>
@@ -83,6 +92,7 @@ import type { MissionWorkspaceProjection, WorkspaceEntry, WorkspaceGraphNode } f
 import type { StageOutputSelection } from './StageOutputRenderer.vue'
 import StageOutputRenderer from './StageOutputRenderer.vue'
 import ArtifactVerification from './ArtifactVerification.vue'
+import MissionMarkdownEditor from './MissionMarkdownEditor.vue'
 import { renderArtifactDocument, type ArtifactDocumentBlock, type ArtifactDocumentModel } from '@/workbench/runtime/artifactProjection'
 import { renderMarkdown } from '@/utils/markdown'
 import { withoutRepeatedTitle } from '@/workbench/runtime/documentContent'
@@ -110,6 +120,11 @@ const emit = defineEmits<{
   openEntry: [entry: WorkspaceEntry]
   selectResult: [selection: StageOutputSelection]
 }>()
+
+const viewMode = ref<'source' | 'preview'>('source')
+// Display projection only: the saved task output remains the source of truth.
+const markdownSource = computed(() => props.streamingPreview
+  ?? renderArtifactDocument(props.document))
 
 const isTerminal = computed(() => ['completed', 'succeeded', 'failed', 'cancelled', 'skipped'].includes(props.entry.status || ''))
 const stageOutputPlaceholder = computed(() => {
@@ -197,7 +212,13 @@ const openMission = () => emit('openEntry', {
 .task-document__status-mark.is-completed, .task-document__status.is-completed { color: var(--wb-success); }
 .task-document__status-mark.is-failed, .task-document__status.is-failed, .task-document__status.is-cancelled { color: var(--wb-danger); }
 .task-document__status-mark.is-running, .task-document__status.is-running { color: var(--wb-accent); }
-.task-document__actions { display: flex; flex: 0 0 auto; align-items: center; }
+.task-document__actions { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; flex-wrap: wrap; }
+.task-document__modes { display: flex; gap: 3px; padding: 3px; border: 1px solid var(--wb-border); border-radius: 9px; }
+.task-document__modes button { border: 0 !important; border-radius: 6px; }
+.task-document__modes button[aria-pressed='true'] { color: var(--wb-accent); background: var(--wb-surface-2); }
+.task-document__readonly { color: var(--wb-text-muted); font-size: 11px; }
+.task-document__canvas.is-source { width: 100%; padding-top: 0; }
+.task-document__canvas.is-source > :not(section[data-testid='task-stage-output']) { margin-inline: 24px; }
 .task-document__actions button { min-height: 28px; padding: 0 9px; border: 1px solid var(--wb-border); border-radius: var(--wb-radius-sm); color: var(--wb-text-secondary); background: transparent; cursor: pointer; font-size: 11px; }
 .task-document__actions button:hover:not(:disabled) { color: var(--wb-accent); border-color: color-mix(in srgb, var(--wb-accent) 42%, var(--wb-border)); background: var(--wb-accent-soft); }
 .task-document__actions button:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: 1px; }

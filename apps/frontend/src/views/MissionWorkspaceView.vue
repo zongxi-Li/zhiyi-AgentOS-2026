@@ -1,19 +1,9 @@
 <template>
   <div class="mission-workspace-view">
-    <!-- 320px is the visual default; a deliberate drag may widen the Inspector
-         until the shared workbench main-column constraint is reached. -->
-    <WorkbenchLayout
+    <DockingWorkbenchLayout
       ref="workbenchLayout"
-      shared-dock-geometry
       :show-right="true"
       :show-bottom-panel="Boolean(projection) || loading"
-      bottom-panel-storage-key="zhiyi.mission.workspace.bottom-panel.v1"
-      :bottom-panel-default-collapsed="false"
-      :bottom-panel-collapsed-height="0"
-      :right-pane-min-width="280"
-      :right-pane-default-width="320"
-      :right-pane-max-width="960"
-      storage-key="zhiyi.mission.workspace.layout.v3"
     >
       <template #left>
         <div class="workspace-primary-sidebar">
@@ -200,7 +190,7 @@
           @toggle="setCollapsed(!collapsed)"
         />
       </template>
-    </WorkbenchLayout>
+    </DockingWorkbenchLayout>
 
     <div
       v-if="loadError && projection"
@@ -247,7 +237,7 @@ import { computed, inject, nextTick, onActivated, onBeforeUnmount, onDeactivated
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry, type WorkspaceFileOpenRequest, type WorkspaceGraphNode } from '@/services/api/agentos'
-import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
+import DockingWorkbenchLayout from '@/components/workbench/DockingWorkbenchLayout.vue'
 import WorkspaceModeSwitch from '@/components/workspace/WorkspaceModeSwitch.vue'
 import { workspaceShellKey, workbenchSidebarViews, type WorkspaceSurface } from '@/features/workspace/shell'
 import EditorGroup, { type OpenWorkspaceEntry } from '@/components/workspace/EditorGroup.vue'
@@ -279,7 +269,7 @@ import { createGraphVersions, graphVersionsKey } from '@/components/workspace/gr
 const route = useRoute()
 const router = useRouter()
 const workspaceShell = inject(workspaceShellKey, null)
-const workbenchLayout = ref<InstanceType<typeof WorkbenchLayout> | null>(null)
+const workbenchLayout = ref<InstanceType<typeof DockingWorkbenchLayout> | null>(null)
 const activeSidebar = computed(() => workspaceShell?.activeSidebar.value || 'thought')
 const workspaceSwitchPending = computed(() => workspaceShell?.switching.value || false)
 const switchWorkspaceSurface = async (surface: WorkspaceSurface) => {

@@ -4,6 +4,13 @@ import { agentosApi, agentosRequest, type MissionWorkspaceProjection, type Works
 import { RunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
 import TaskEditor from './TaskEditor.vue'
 
+vi.mock('./MissionMarkdownEditor.vue', () => ({
+  default: {
+    props: { modelValue: String, readOnly: Boolean },
+    template: '<pre data-testid="markdown-source" :data-readonly="readOnly">{{ modelValue }}</pre>'
+  }
+}))
+
 const task: WorkspaceEntry = {
   entryId: 'task:design', kind: 'task', name: '系统架构设计', group: 'steps', displayOrder: 0,
   semanticTaskKey: 'design', taskId: 'task_1', acgNodeId: 'node_1', runId: 'run_1',
@@ -22,12 +29,29 @@ const projection: MissionWorkspaceProjection = {
   graphNodes: [{ acgNodeId: 'node_1', nodeType: 'step', name: '系统架构设计', semanticTaskKey: 'design', displayOrder: 0 }],
 }
 
-const mountEditor = (runtimeStore: RunRuntimeStore | null = null) => mount(TaskEditor, {
+const mountEditor = (runtimeStore: RunRuntimeStore | null = null, preview = true) => {
+  const wrapper = mount(TaskEditor, {
   props: { entry: task, projection, graphNodes: projection.graphNodes, runtimeObservation: null, runtimeStore },
-})
+  })
+  if (preview) void wrapper.get('.task-document__modes button:nth-child(2)').trigger('click')
+  return wrapper
+}
 
 describe('TaskEditor stage output', () => {
   afterEach(() => vi.restoreAllMocks())
+  it('defaults to readonly Markdown source and switches to preview', async () => {
+    vi.spyOn(agentosApi, 'getRunOutput').mockResolvedValue({ runId: 'run_1', outputRef: 'output:node_1', content: { findings: ['保留完整结果'] } })
+    const wrapper = mountEditor(null, false)
+    await flushPromises()
+    expect(wrapper.get('[data-testid="markdown-source"]').attributes('data-readonly')).toBe('true')
+    expect(wrapper.get('[data-testid="markdown-source"]').text()).toContain('保留完整结果')
+    await wrapper.get('.task-document__modes button:nth-child(2)').trigger('click')
+    expect(wrapper.find('[data-testid="markdown-source"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="task-stage-output"]').text()).toContain('保留完整结果')
+    await wrapper.get('.task-document__modes button:first-child').trigger('click')
+    expect(wrapper.get('[data-testid="markdown-source"]').text()).toContain('保留完整结果')
+    wrapper.unmount()
+  })
   it('displays the task approach before model output and refuses progress from another run', async () => {
     vi.spyOn(agentosApi, 'getRunOutput').mockResolvedValue({ runId: 'run_1', outputRef: 'output:node_1', content: {} })
     const store = new RunRuntimeStore('run_1')

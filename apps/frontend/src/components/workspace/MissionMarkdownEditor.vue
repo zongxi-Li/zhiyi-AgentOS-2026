@@ -92,7 +92,7 @@ onMounted(() => {
     parent: host.value
   })
   // 只有可见的编辑器才抢焦点（mission.md 与其他文档可能同屏保活）。
-  if (host.value.offsetParent !== null) view.focus()
+  if (!props.readOnly && host.value.offsetParent !== null) view.focus()
   void applyLanguage()
 })
 

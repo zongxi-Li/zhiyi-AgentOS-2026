@@ -92,7 +92,7 @@
           </div>
           </div>
 
-          <Transition name="chat-panel">
+          <Transition name="chat-panel" :css="!isDockedWorkspaceRoute">
             <section
               v-if="chatNavOpen"
               id="chat-side-panel"
@@ -445,9 +445,14 @@ const loadRecentConversations = (): Promise<void> => {
 let navigationGeneration = 0
 const handleChatNavToggle = async () => {
   if (acgNavOpen.value) closeAcgPanel()
-  chatNavOpen.value = route.path.startsWith('/chat') ? !chatNavOpen.value : true
-  localStorage.setItem(CHAT_NAV_OPEN_KEY, chatNavOpen.value ? '1' : '0')
-  if (chatNavOpen.value) void loadRecentConversations()
+  if (route.path.startsWith('/chat')) {
+    chatNavOpen.value = !chatNavOpen.value
+    localStorage.setItem(CHAT_NAV_OPEN_KEY, chatNavOpen.value ? '1' : '0')
+    if (chatNavOpen.value) void loadRecentConversations()
+  } else {
+    // Open with the destination route, after asynchronous target validation.
+    localStorage.setItem(CHAT_NAV_OPEN_KEY, '1')
+  }
   if (!route.path.startsWith('/chat')) {
     const generation = ++navigationGeneration
     const source = route.fullPath
@@ -686,11 +691,17 @@ const handleConversationWorkspaceChange = () => {
 
 watch(
   () => route.fullPath,
-  fullPath => {
+  (fullPath, previousPath) => {
     closeSidebarActionMenu()
     if (isMissionWorkspacePath(route.path)) lastMissionWorkspacePath.value = fullPath
     // 子栏只在 /chat 存在：离开对话页（含进入 ACG hub）一律收起，不得在别页弹出。
-    if (route.path.startsWith('/chat')) lastChatRoute.value = fullPath
+    if (route.path.startsWith('/chat')) {
+      lastChatRoute.value = fullPath
+      if (!previousPath?.split('?')[0].startsWith('/chat')) {
+        chatNavOpen.value = localStorage.getItem(CHAT_NAV_OPEN_KEY) !== '0'
+        if (chatNavOpen.value) void loadRecentConversations()
+      }
+    }
     else if (chatNavOpen.value) closeChatPanel()
     if (isAcgPath(route.path)) {
       if (localStorage.getItem(ACG_NAV_OPEN_KEY) !== '0') acgNavOpen.value = true
