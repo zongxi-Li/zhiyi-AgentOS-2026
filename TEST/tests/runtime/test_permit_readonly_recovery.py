@@ -94,7 +94,8 @@ def test_readonly_proof_does_not_decode_unrelated_historical_bodies(store, monke
     loads = json.loads
 
     def decode_current_session(payload, *args, **kwargs):
-        assert marker not in payload
+        # The storage layer hands json.loads the checksummed body as bytes, not text.
+        assert marker not in (payload.decode("utf-8") if isinstance(payload, bytes) else payload)
         return loads(payload, *args, **kwargs)
 
     monkeypatch.setattr(json, "loads", decode_current_session)
@@ -130,10 +131,16 @@ def test_existing_receipt_still_requires_authentic_correlation(store, defect):
 
 
 def _replace_payload(store, run_id, key, payload):
+    # The storage layer checksums every body, so rewritten content must bring its
+    # metadata along; the body returns inline because no fixture needs an external one.
     reference = "tool:" + hashlib.sha256((run_id + ":" + key).encode()).hexdigest()
+    encoded = json.dumps(payload)
+    data = encoded.encode("utf-8")
     with store._connection:
         store._connection.execute("UPDATE execution_values SET payload_json=? WHERE reference=?",
-                                  (json.dumps(payload), reference))
+                                  (encoded, reference))
+        store._connection.execute("UPDATE execution_value_storage SET byte_length=?,checksum=?,content_ref=NULL WHERE reference=?",
+                                  (len(data), hashlib.sha256(data).hexdigest(), reference))
 
 
 def test_readonly_proof_rejects_a_hidden_write_request_or_unknown_activity(store):
@@ -436,8 +443,12 @@ def _session_non_invocation(**kwargs):
 
 def _empty_native_attempt(store, **kwargs):
     seeded = _native_attempt(store, **kwargs)
+    run_id = seeded[1].run_id
     with store._connection:
-        store._connection.execute("DELETE FROM execution_values WHERE run_id=?", (seeded[1].run_id,))
+        # A raw delete bypasses the store's own cleanup, so the checksum metadata goes with its rows.
+        store._connection.execute("DELETE FROM execution_value_files WHERE reference IN (SELECT reference FROM execution_value_storage WHERE run_id=?)", (run_id,))
+        store._connection.execute("DELETE FROM execution_value_storage WHERE run_id=?", (run_id,))
+        store._connection.execute("DELETE FROM execution_values WHERE run_id=?", (run_id,))
     seeded[0].tool_non_invocation_prover = _session_non_invocation
     return seeded
 

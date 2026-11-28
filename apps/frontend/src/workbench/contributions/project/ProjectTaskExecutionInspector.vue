@@ -26,7 +26,12 @@
       ]" />
     </div>
     <details v-for="item in attempts" :key="item.attempt.attemptId" class="execution-details">
-      <summary>第 {{ item.attempt.attemptNumber }} 次执行 · {{ inspectorValue(item.attempt.status) }}</summary>
+      <summary>
+        <span class="execution-details__caret" aria-hidden="true">
+          <svg width="10" height="10" viewBox="0 0 10 10"><path d="M3.5 2 L7 5 L3.5 8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        第 {{ item.attempt.attemptNumber }} 次执行 · {{ inspectorValue(item.attempt.status) }}
+      </summary>
       <InspectorPropertyList :rows="[
         { label: '执行编号', value: item.attempt.attemptId, code: true },
         { label: 'Run', value: item.attempt.runId, code: true },
@@ -101,5 +106,11 @@ const runtimeStatus = computed(() => String(props.entry.metadata?.runtimeStatus 
 .inspector-disclosure:hover { color: var(--wb-text); }
 .inspector-disclosure code { max-width: 62%; overflow: hidden; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); text-overflow: ellipsis; white-space: nowrap; }
 .execution-details { padding-top: 1px; margin-top: 10px; }
-.execution-details > summary { padding: 7px 0; color: var(--wb-text-secondary); cursor: pointer; font: 500 12px/1.6 var(--font-sans, sans-serif); }
+.execution-details > summary { display: flex; align-items: center; gap: 8px; padding: 7px 0; color: var(--wb-text-secondary); cursor: pointer; list-style: none; font: 500 12px/1.6 var(--font-sans, sans-serif); }
+.execution-details > summary::-webkit-details-marker { display: none; }
+/* 与 InspectorDetails 同款折叠键帽 */
+.execution-details__caret { display: grid; place-items: center; width: 20px; height: 20px; flex: none; border-radius: 50%; color: var(--wb-text-muted); background: var(--wb-surface-inset); box-shadow: 2px 2px 4px color-mix(in srgb, #000 32%, transparent), -2px -2px 4px color-mix(in srgb, #fff 4.5%, transparent); transition: color 160ms ease; }
+.execution-details__caret svg { transition: transform 180ms ease; }
+.execution-details[open] > summary .execution-details__caret { color: var(--wb-accent); }
+.execution-details[open] > summary .execution-details__caret svg { transform: rotate(90deg); }
 </style>

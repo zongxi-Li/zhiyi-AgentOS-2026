@@ -25,6 +25,7 @@
         <div v-if="inspectorSummary" class="runtime-inspector__summary">
           <div class="runtime-inspector__summary-line">
             <span v-if="inspectorSummary.role" class="runtime-inspector__role">{{ inspectorSummary.role }}</span>
+            <span class="runtime-inspector__summary-gap" aria-hidden="true"></span>
             <span v-if="inspectorSummary.status" class="runtime-inspector__status" :class="`is-${inspectorSummary.statusTone}`">
               <i aria-hidden="true"></i>{{ inspectorSummary.status }}
             </span>
@@ -388,23 +389,25 @@ const sectionProps = (section: { getProps?: (context: WorkbenchInspectorContext)
 <style scoped>
 .runtime-inspector { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; background: var(--wb-surface-pane); color: var(--wb-text); }
 .runtime-inspector__empty { padding: 22px 15px; color: var(--wb-text-muted); font-size: 12px; line-height: 1.6; }
-.runtime-inspector__summary { display: grid; gap: 4px; min-width: 0; padding-top: 1px; }
-.runtime-inspector__summary-line { display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: 5px; min-width: 0; }
-.runtime-inspector__role, .runtime-inspector__status, .runtime-inspector__artifact { display: inline-flex; align-items: center; min-height: 19px; padding: 2px 6px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); font-size: 11px; line-height: 1.4; white-space: nowrap; }
-.runtime-inspector__role { color: var(--wb-text-secondary); background: var(--wb-surface-inset); }
-.runtime-inspector__status { gap: 5px; color: var(--wb-text-secondary); }
-.runtime-inspector__status i { width: 6px; height: 6px; border-radius: 50%; background: var(--wb-text-muted); }
-.runtime-inspector__status.is-success { color: var(--wb-success); border-color: color-mix(in srgb, var(--wb-success) 24%, var(--wb-border-soft)); background: color-mix(in srgb, var(--wb-success) 7%, transparent); }
-.runtime-inspector__status.is-success i { background: var(--wb-success); }
-.runtime-inspector__status.is-danger { color: var(--wb-danger); border-color: color-mix(in srgb, var(--wb-danger) 24%, var(--wb-border-soft)); background: color-mix(in srgb, var(--wb-danger) 7%, transparent); }
-.runtime-inspector__status.is-danger i { background: var(--wb-danger); }
-.runtime-inspector__status.is-active { color: var(--wb-accent); border-color: color-mix(in srgb, var(--wb-accent) 24%, var(--wb-border-soft)); background: color-mix(in srgb, var(--wb-accent) 7%, transparent); }
-.runtime-inspector__status.is-active i { background: var(--wb-accent); }
-.runtime-inspector__status.is-waiting { color: var(--wb-warning); border-color: color-mix(in srgb, var(--wb-warning) 24%, var(--wb-border-soft)); background: color-mix(in srgb, var(--wb-warning) 7%, transparent); }
-.runtime-inspector__status.is-waiting i { background: var(--wb-warning); }
-.runtime-inspector__status.is-retry { color: var(--wb-retry); border-color: color-mix(in srgb, var(--wb-retry) 24%, var(--wb-border-soft)); background: color-mix(in srgb, var(--wb-retry) 7%, transparent); }
-.runtime-inspector__status.is-retry i { background: var(--wb-retry); }
-.runtime-inspector__artifact { color: var(--wb-text-muted); }
+.runtime-inspector__summary { display: grid; flex: 1 1 auto; gap: 4px; min-width: 0; padding-top: 1px; }
+.runtime-inspector__summary-line { display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.runtime-inspector__summary-gap { flex: 1 1 auto; }
+/* 标签三态微拟物：role=凸起 ID 牌，status=内凹状态井（点带辉光），artifact=幽灵暗井 */
+.runtime-inspector__role, .runtime-inspector__status, .runtime-inspector__artifact { display: inline-flex; align-items: center; min-height: 22px; padding: 3px 11px; border: 0; border-radius: 99px; font-size: 11px; line-height: 1.4; white-space: nowrap; }
+.runtime-inspector__role { color: var(--wb-text-secondary); background: var(--wb-surface-inset); font: 10.5px var(--font-mono, monospace); box-shadow: 2px 2px 4px color-mix(in srgb, #000 32%, transparent), -2px -2px 4px color-mix(in srgb, #fff 4.5%, transparent); }
+.runtime-inspector__status { gap: 6px; color: var(--wb-text-secondary); background: var(--wb-surface-inset); box-shadow: inset 2px 2px 4px color-mix(in srgb, #000 38%, transparent), inset -2px -2px 4px color-mix(in srgb, #fff 5%, transparent); }
+.runtime-inspector__status i { width: 7px; height: 7px; border-radius: 50%; background: var(--wb-text-muted); }
+.runtime-inspector__status.is-success { color: var(--wb-success); background: color-mix(in srgb, var(--wb-success) 8%, var(--wb-surface-inset)); }
+.runtime-inspector__status.is-success i { background: var(--wb-success); box-shadow: 0 0 7px color-mix(in srgb, var(--wb-success) 60%, transparent); }
+.runtime-inspector__status.is-danger { color: var(--wb-danger); background: color-mix(in srgb, var(--wb-danger) 8%, var(--wb-surface-inset)); }
+.runtime-inspector__status.is-danger i { background: var(--wb-danger); box-shadow: 0 0 7px color-mix(in srgb, var(--wb-danger) 60%, transparent); }
+.runtime-inspector__status.is-active { color: var(--wb-accent); background: color-mix(in srgb, var(--wb-accent) 8%, var(--wb-surface-inset)); }
+.runtime-inspector__status.is-active i { background: var(--wb-accent); box-shadow: 0 0 7px color-mix(in srgb, var(--wb-accent) 60%, transparent); }
+.runtime-inspector__status.is-waiting { color: var(--wb-warning); background: color-mix(in srgb, var(--wb-warning) 8%, var(--wb-surface-inset)); }
+.runtime-inspector__status.is-waiting i { background: var(--wb-warning); box-shadow: 0 0 7px color-mix(in srgb, var(--wb-warning) 60%, transparent); }
+.runtime-inspector__status.is-retry { color: var(--wb-retry); background: color-mix(in srgb, var(--wb-retry) 8%, var(--wb-surface-inset)); }
+.runtime-inspector__status.is-retry i { background: var(--wb-retry); box-shadow: 0 0 7px color-mix(in srgb, var(--wb-retry) 60%, transparent); }
+.runtime-inspector__artifact { color: var(--wb-text-muted); background: transparent; box-shadow: inset 1px 1px 3px color-mix(in srgb, #000 26%, transparent), inset -1px -1px 3px color-mix(in srgb, #fff 3%, transparent); }
 .runtime-inspector__key { max-width: 100%; min-width: 0; overflow: hidden; color: var(--wb-text-muted); font: 9px/1.3 var(--font-mono, monospace); text-align: right; text-overflow: ellipsis; white-space: nowrap; }
 .runtime-inspector__tabs { display: flex; gap: 2px; min-height: 38px; margin: 4px 0 2px; padding: 2px; border: 0; border-radius: 9px; background: var(--wb-surface-inset); overflow-x: auto; scrollbar-width: none; }
 .runtime-inspector__tabs::-webkit-scrollbar { display: none; }
@@ -414,7 +417,8 @@ const sectionProps = (section: { getProps?: (context: WorkbenchInspectorContext)
 .runtime-inspector__tabs button:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -1px; }
 .runtime-inspector__tab-panel { min-width: 0; }
 .runtime-inspector__raw-ref { overflow-wrap: anywhere; font: 11px/1.65 var(--font-mono, monospace); color: var(--wb-text-secondary); }
-.runtime-inspector__objective { margin: 0; color: var(--wb-text-secondary); font-size: 13px; line-height: 1.75; }
+/* 步骤目标：内凹阅读井，与标签/复制井同一光影语言 */
+.runtime-inspector__objective { margin: 0; padding: 11px 14px; border-radius: 10px; color: var(--wb-text-secondary); background: var(--wb-surface-inset); font-size: 12px; line-height: 1.8; text-wrap: pretty; box-shadow: inset 1px 1px 3px color-mix(in srgb, #000 26%, transparent), inset -1px -1px 3px color-mix(in srgb, #fff 3.5%, transparent); }
 .runtime-inspector__task-run { display: grid; gap: 7px; }
 .runtime-inspector__task-run > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr); gap: 10px; align-items: baseline; }
 .runtime-inspector__task-run span { color: var(--wb-text-muted); font-size: 11px; }

@@ -188,7 +188,7 @@ def _review_run(status="waiting_review", *, graph_version=1, blocked=False):
 
 
 def _review_coordinator(monkeypatch, tmp_path, run, command, resume):
-    monkeypatch.setattr("components.scheduler.run_execution_fence.acquire_run_fence", lambda *_: nullcontext())
+    monkeypatch.setattr("support.run_execution_fence.acquire_run_fence", lambda *_: nullcontext())
     state = {"run": run, "command": command}
     calls = []
 
@@ -356,7 +356,7 @@ async def test_dispatch_transient_failures_use_existing_wakeup_without_terminali
         def fence(*_):
             fail_once()
             return nullcontext()
-        monkeypatch.setattr("components.scheduler.run_execution_fence.acquire_run_fence", fence)
+        monkeypatch.setattr("support.run_execution_fence.acquire_run_fence", fence)
 
     def validate(current, accepted):
         if boundary == "permit":

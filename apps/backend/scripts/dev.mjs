@@ -47,6 +47,11 @@ function shutdown() {
   if (stopping) return;
   stopping = true;
   clearTimeout(debounce);
+  // TypeScript's close() keeps a recompilation that is already scheduled. Once it fires it would
+  // re-register every file watcher and keep this stopped process alive, so hand it inert ones.
+  const inert = { close() {} };
+  host.watchFile = () => inert;
+  host.watchDirectory = () => inert;
   watcher?.close();
   if (child?.connected) child.send('shutdown');
   else if (!child) finish();
