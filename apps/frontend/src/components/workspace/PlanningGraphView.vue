@@ -84,6 +84,8 @@ const runtimeNodes = computed(() => {
 .planning-graph__canvas { flex: 1 0 240px; min-height: 240px; }
 .planning-graph__canvas :deep(.acg-topology) { height: 100%; }
 .planning-graph__canvas :deep(.panel-head), .planning-graph__canvas :deep(.graph-toolbar) { display: none; }
+.planning-graph__summary { padding-top: 6px; padding-bottom: 6px; }
+.planning-graph__summary p { margin: 4px 0 0; line-height: 1.45; }
 .planning-graph__changes { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 8px 14px; background: var(--wb-surface-inset); color: var(--wb-text-secondary); font-size: 11px; }
 .planning-graph__changes p { width: 100%; margin: 0; }
 .planning-graph__task { border-top: 1px solid var(--wb-border-soft); }

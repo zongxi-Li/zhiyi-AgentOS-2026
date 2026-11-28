@@ -93,12 +93,8 @@ export interface RunLineage {
   supersedesRunId?: string | null
   supersededByRunId?: string | null
 }
-export interface RunOperationalState {
-  package?: CompiledPackageIdentity | null
-  lineage: RunLineage
-  nodeExecutions: NodeExecutionRecord[]
+export interface RunOperationalSummary {
   controlFrames: Array<Record<string, unknown>>
-  contextRefs?: Record<string, string>
   communicationRefs: string[]
   memoryRefs: string[]
   evidenceRefs: string[]
@@ -106,6 +102,12 @@ export interface RunOperationalState {
   loopIterations: Record<string, number>
   consensusResults: Record<string, Record<string, unknown>>
   debateSessions: Record<string, Record<string, unknown>>
+}
+export interface RunOperationalState extends RunOperationalSummary {
+  package?: CompiledPackageIdentity | null
+  lineage: RunLineage
+  nodeExecutions: NodeExecutionRecord[]
+  contextRefs?: Record<string, string>
   recoveryOutcome?: Record<string, unknown> | null
 }
 export interface RunContextPackSummary {
@@ -159,6 +161,7 @@ export interface RunExecutionTree {
   nodes: RunExecutionNode[]
   lineage: RunLineage
   lifecycles: NodeLifecycleQuery[]
+  operational?: RunOperationalSummary | null
 }
 export interface IdentityProjectionHealth {
   status: 'healthy' | 'degraded'

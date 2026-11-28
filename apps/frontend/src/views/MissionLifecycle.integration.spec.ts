@@ -50,7 +50,7 @@ const open = async (url = '/agentos/missions/m/workspace?runId=a') => {
   await router.push(url); await router.isReady()
   wrapper = mount({ components: { WorkspaceViewHost }, template: '<router-view v-slot="{ Component, route }"><WorkspaceViewHost :view="Component" :view-route="route" /></router-view>' }, {
     global: { plugins: [createPinia(), router], stubs: {
-      WorkbenchLayout: { template: '<div><slot name="left"/><slot name="main" :rightPaneVisible="true" :rightAutoHidden="false" :leftAutoHidden="false" :toggleRightPane="() => {}"/><slot name="right"/><slot name="bottom" :collapsed="false" :setCollapsed="() => {}"/><slot name="status-bar" :collapsed="false" :setCollapsed="() => {}"/></div>' },
+      DockingWorkbenchLayout: { template: '<div><slot name="left"/><slot name="main" :rightPaneVisible="true" :rightAutoHidden="false" :leftAutoHidden="false" :toggleRightPane="() => {}"/><slot name="right"/><slot name="bottom" :collapsed="false" :setCollapsed="() => {}"/><slot name="status-bar" :collapsed="false" :setCollapsed="() => {}"/></div>' },
       AcgTopologyGraph: true, 'el-icon': true
     } }
   })
@@ -72,6 +72,7 @@ beforeEach(() => {
   vi.spyOn(agentosApi, 'getWorkflowRun').mockImplementation(async id => detail(id))
   vi.spyOn(agentosApi, 'getGraphVersions').mockImplementation(async runId => ({ runId, graphId: 'graph',
     currentBlueprintId: null, currentGraphVersion: 1, items: [], proposals: [] }))
+  vi.spyOn(agentosApi, 'getPlanSnapshot').mockImplementation(async runId => ({ runId, plan: null }))
   vi.spyOn(agentosApi, 'getWorkflowTrace').mockImplementation(async id => ({ runId: id, events: [] } as any))
   vi.spyOn(agentosApi, 'getRunProvenance').mockImplementation(async id => ({ runId: id, productions: [], consumptions: [], interactions: [] } as any))
   vi.spyOn(agentosApi, 'getExecutionTree').mockImplementation(async id => ({ runId: id, nodes: [], lineage: detail(id).lineage } as any))

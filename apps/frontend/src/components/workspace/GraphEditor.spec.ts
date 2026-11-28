@@ -87,7 +87,7 @@ describe('GraphEditor', () => {
     const wrapper = mount(GraphEditor, {
       props: { graph, graphNodes, selectedSemanticTaskKey: null, focusNodeId: null },
       global: { provide: { [graphVersionsKey as symbol]: versions },
-        stubs: { AcgTopologyGraph: topologyStub, GraphVersionToolbar: true } }
+        stubs: { AcgTopologyGraph: topologyStub, GraphVersionToolbar: { template: '<div><slot name="modes" /><slot name="heading" /></div>' } } }
     })
     await showRuntime(wrapper)
     expect(wrapper.findComponent(topologyStub).exists()).toBe(false)

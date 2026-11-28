@@ -290,6 +290,23 @@ describe('Python gateway transport contracts', () => {
     expect(text).toContain('"total_tokens":7'); client.close();
   });
 
+  it('preserves mission semantics and effective plan content without publishing runtime metadata', () => {
+    const result = projectAgentOsResponse('/ai/agentos/v2/missions/mission/workspace', {
+      mission: { missionId: 'mission' }, runs: [], graphNodes: [], diagnostics: [],
+      missionSemanticView: { missionId: 'mission', semanticStatus: 'INITIALIZED', missionRevision: 2,
+        objective: '正式目标', constraints: [{ constraintId: 'c', text: '约束', sourceRefs: ['ref'], private: 'PRIVATE' }],
+        sourceReferences: [], private: 'PRIVATE' },
+      selectedRunBasisStatus: 'BOUND', selectedRunBasis: { sourceRevision: 1, objective: '历史目标', constraints: [], private: 'PRIVATE' },
+      entries: [{ entryId: 'overview:mission.md', kind: 'virtual_document',
+        content: '# 正式目标\n\n## 所选 Run 的历史语义依据\n历史目标\n\n## Mission metadata\n```json\n{"private":"PRIVATE"}\n```\n\n## Planned steps\n- 完整计划与约束\n' }]
+    }) as any;
+    expect(result.entries[0].content).toContain('历史目标');
+    expect(result.entries[0].content).toContain('完整计划与约束');
+    expect(result.missionSemanticView.missionRevision).toBe(2);
+    expect(result.selectedRunBasis.sourceRevision).toBe(1);
+    expect(JSON.stringify(result)).not.toContain('PRIVATE');
+  });
+
   it('preserves workspace projection watermarks through the public read projection', () => {
     expect(projectAgentOsResponse('/ai/agentos/v2/missions/mission/workspace', {
       mission: { missionId: 'mission' }, projectionRevision: 42, projectionSchemaVersion: 1,
@@ -467,6 +484,33 @@ describe('workbench response compatibility', () => {
         inherited: { completedStepIds: ['read:1'], skippedStepIds: [], attemptIds: ['attempt:1'], outputRefs: { 'read:1': 'output:1' } } }],
       proposals: [] });
     expect(JSON.stringify(result)).not.toContain('PRIVATE');
+  });
+  it('returns formal Run references and allowlisted coordination facts', () => {
+    const projectTree = (operational: unknown) => projectAgentOsResponse('/ai/agentos/v2/runs/run/execution-tree', {
+      run: { runId: 'run' }, blueprint: {}, nodes: [], operational,
+    });
+    const projected = projectTree({
+      communicationRefs: ['communication:one', { payload: 'PRIVATE' }],
+      memoryRefs: ['memory:one'],
+      evidenceRefs: ['evidence:one'],
+      leaseStatuses: { lease: 'released', unexpected: { payload: 'PRIVATE' } },
+      controlFrames: [{ controlId: 'loop', controlType: 'loop', iteration: 2, region: ['step'], observedStates: ['PRIVATE'] }],
+      loopIterations: { loop: 2 },
+      consensusResults: { gate: { accepted: true, quorum: 2, rawVotes: 'PRIVATE' } },
+      debateSessions: { step: { round: 2, phase: 'complete', resultArtifactRef: 'artifact:one', participants: ['step'], transcript: 'PRIVATE' } },
+      recoveryOutcome: { payload: 'PRIVATE' },
+    });
+
+    expect(projected).toHaveProperty('operational', {
+      communicationRefs: ['communication:one'], memoryRefs: ['memory:one'], evidenceRefs: ['evidence:one'],
+      leaseStatuses: { lease: 'released' },
+      controlFrames: [{ controlId: 'loop', controlType: 'loop', iteration: 2, region: ['step'] }],
+      loopIterations: { loop: 2 },
+      consensusResults: { gate: { accepted: true, quorum: 2 } },
+      debateSessions: { step: { round: 2, phase: 'complete', resultArtifactRef: 'artifact:one', participants: ['step'] } },
+    });
+    expect(JSON.stringify(projected)).not.toContain('PRIVATE');
+    expect(projectTree(null)).toHaveProperty('operational', null);
   });
   it('preserves historical graph identity and edge conditions without runtime overlays', () => {
     const result = projectAgentOsResponse('/ai/agentos/v2/runs/run/graph', {

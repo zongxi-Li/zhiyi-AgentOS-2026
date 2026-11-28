@@ -161,7 +161,7 @@ const mountWorkspace = async (
       plugins: [router],
       provide: shell ? { [workspaceShellKey as symbol]: shell } : {},
       stubs: {
-        WorkbenchLayout: workspaceLayoutStub,
+        DockingWorkbenchLayout: workspaceLayoutStub,
         WorkspaceFileExplorer: { data: () => ({ filter: '' }), template: '<div class="files-view-stub"><input v-model="filter" /></div>' },
         WorkspaceSearchView: { template: '<div class="search-view-stub" />' },
         WorkspaceGitView: { template: '<div class="git-view-stub" />' },
@@ -547,7 +547,7 @@ describe('MissionWorkspaceView', () => {
   it('locates a task in graph and passes its node id after graph mount', async () => {
     const { wrapper } = await mountWorkspace()
     await wrapper.findAll('.workspace-tree__entry').find(item => item.text().includes('Capacity'))?.trigger('click')
-    await wrapper.find('.task-editor__actions button').trigger('click')
+    await wrapper.findAll('.task-editor__actions button').find(button => button.text() === '在图中定位')!.trigger('click')
     await flushPromises()
     expect(wrapper.find('.graph-editor-stub').attributes('data-focus-node-id')).toBe('node_capacity')
   })

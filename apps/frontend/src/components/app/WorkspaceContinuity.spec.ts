@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AppShell from './AppShell.vue'
 import ChatView from '@/views/ChatView.vue'
 import MissionWorkspaceView from '@/views/MissionWorkspaceView.vue'
-import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
+import DockingWorkbenchLayout from '@/components/workbench/DockingWorkbenchLayout.vue'
+import { DockviewVue, type DockviewReadyEvent } from 'dockview-vue'
 import { useChatStore } from '@/stores/chat'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
 import { agentosApi } from '@/services/api/agentos'
@@ -299,11 +300,13 @@ describe('PR-UI-02B actual Shell / Chat / Workbench continuity', () => {
     localStorage.setItem('layout.workspace_mode', 'chat'); localStorage.setItem('layout.chat_nav_open.v2', '1')
     localStorage.setItem('chat.workflow_draft_conversation_id', 'draft:original')
     activeStreams = 0; maximumStreams = 0; newestRun = 'run'; chatTransport = undefined; chatEventTransport = undefined
-    vi.stubGlobal('ResizeObserver', class { observe() {}; disconnect() {} })
+    vi.stubGlobal('ResizeObserver', class { observe() {}; unobserve() {}; disconnect() {} })
     Object.defineProperty(window, 'matchMedia', { configurable: true, value: vi.fn(() => ({ matches: false, addEventListener() {}, removeEventListener() {} })) })
     HTMLElement.prototype.scrollTo = vi.fn()
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 1600, height: 900, left: 0, top: 0, bottom: 900, right: 1600, x: 0, y: 0, toJSON() {} })
     vi.spyOn(agentosApi, 'getMissionWorkspace').mockImplementation(async (missionId, options) => projection(missionId, options?.runId || newestRun, newestRun))
+    vi.spyOn(agentosApi, 'getGraphVersions').mockImplementation(async runId => ({ runId, graphId: 'graph',
+      currentBlueprintId: null, currentGraphVersion: 1, items: [], proposals: [] }))
     vi.spyOn(agentosApi, 'getWorkflowRun').mockImplementation(async runId => ({ runId, missionId: 'mission', workflowId: 'workflow', status: 'completed', steps: [], input: {}, output: {}, trace: [], checkpoints: [] } as any))
     vi.spyOn(agentosApi, 'getAcgView').mockImplementation(async runId => ({ runId, status: 'running', engine: 'acg', completedStepIds: [], activeStepIds: [], stepStates: [], provenance: {}, interactions: [], contractViolations: [], recoveryTrace: [], scheduleTrace: [], deliverables: [], lowEntropyMetrics: {} } as any))
     vi.spyOn(workflowApi, 'getWorkflowProgress').mockImplementation(async runId => ({ missionId: 'mission', runId, taskId: runId, status: 'completed', phase: 'completed', completedSteps: 0 } as any))
@@ -352,7 +355,11 @@ describe('PR-UI-02B actual Shell / Chat / Workbench continuity', () => {
     const doc = new TextDocument('file:continuity', 'saved', 'v1')
     vi.spyOn(workspaceDocuments, 'open').mockResolvedValue(doc)
     await mountShell('/agentos/missions/mission/workspace?runId=run')
-    const workbench = state(), layout = wrapper!.findComponent(WorkbenchLayout).vm as any
+    const workbench = state(), layout = wrapper!.findComponent(DockingWorkbenchLayout).vm as any
+    const dockApi = (wrapper!.findComponent(DockviewVue).emitted('ready')![0][0] as DockviewReadyEvent).api
+    const canvas = wrapper!.get('.docking-workbench__canvas').element
+    Object.defineProperties(canvas, { clientWidth: { value: 1400 }, clientHeight: { value: 900 } })
+    dockApi.layout(1400, 900)
     workbench.openEntry(graphEntry); workbench.openEntry(taskEntry); workbench.openEntry(artifactEntry)
     requestOpenFile({ missionId: 'mission', workspaceRoot: '/workspace', relativePath: 'test.txt', name: 'test.txt' })
     await settle(); await wrapper!.get('.file-buffer').setValue('dirty buffer\nsecond line')
@@ -362,28 +369,28 @@ describe('PR-UI-02B actual Shell / Chat / Workbench continuity', () => {
     await wrapper!.get('.zoom').trigger('click'); await wrapper!.get('.pick-task').trigger('click')
     await wrapper!.get('[aria-label="文件"]').trigger('click')
     if (workbench.panelTabs.length > 1) workbench.panelActiveTab = workbench.panelTabs[1].id
-    layout.handleResizeKeydown('left', new KeyboardEvent('keydown', { key: 'ArrowRight' }))
-    layout.handleResizeKeydown('right', new KeyboardEvent('keydown', { key: 'ArrowLeft' }))
+    dockApi.getPanel('explorer')!.api.setSize({ width: 340 })
+    dockApi.getPanel('inspector')!.api.setSize({ width: 300 })
     layout.toggleRightPane()
-    layout.toggleBottomPanelCollapsed()
+    layout.setBottomPanelCollapsed(true)
     await settle()
     const editors = [...workbench.openEditors], active = workbench.activeEditorId
     const panel = workbench.panelActiveTab
     const auxiliaryId = workbench.activeAuxiliaryId
-    const collapsed = layout.bottomPanelCollapsed
-    const classes = wrapper!.get('.workbench-layout').classes()
-    const layoutStyle = wrapper!.get('.workbench-layout').attributes('style')
+    const collapsed = !dockApi.getPanel('bottom')!.api.isVisible
+    const classes = wrapper!.get('.docking-workbench').classes()
+    const layoutState = dockApi.toJSON()
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     await toChat(); expect(confirm).not.toHaveBeenCalled()
     await toWorkbench()
-    expect(state().$.uid).toBe(workbench.$.uid); expect(wrapper!.findComponent(WorkbenchLayout).vm.$.uid).toBe(layout.$.uid)
+    expect(state().$.uid).toBe(workbench.$.uid); expect(wrapper!.findComponent(DockingWorkbenchLayout).vm.$.uid).toBe(layout.$.uid)
     expect(state().openEditors).toEqual(editors); expect(state().activeEditorId).toBe(active)
     expect(state().selectedSemanticTaskKey).toBe('task'); expect(state().selectedGraphNodeId).toBe('node')
     expect(wrapper!.get('.zoom').text()).toBe('2')
-    expect(state().panelActiveTab).toBe(panel); expect(wrapper!.get('.workbench-layout').attributes('style')).toBe(layoutStyle)
+    expect(state().panelActiveTab).toBe(panel); expect(dockApi.toJSON()).toEqual(layoutState)
     expect(state().activeAuxiliaryId).toBe(auxiliaryId)
-    expect(wrapper!.get('.workbench-layout').classes()).toEqual(classes)
-    expect(layout.bottomPanelCollapsed).toBe(collapsed)
+    expect(wrapper!.get('.docking-workbench').classes()).toEqual(classes)
+    expect(!dockApi.getPanel('bottom')!.api.isVisible).toBe(collapsed)
     expect(doc.getText()).toBe('dirty buffer\nsecond line'); expect(doc.dirty).toBe(true)
     state().activeEditorId = editors.find(id => id.startsWith('local-file:')); await settle()
     expect((wrapper!.get('.file-buffer').element as HTMLTextAreaElement).value).toBe(doc.getText())

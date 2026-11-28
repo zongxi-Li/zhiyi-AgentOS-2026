@@ -1,5 +1,5 @@
 import { mount, flushPromises } from '@vue/test-utils'
-import { createWebHistory, createRouter, type Router } from 'vue-router'
+import { createWebHistory, createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AppTopBar from './AppTopBar.vue'
 import { installCommandKeybindings } from '@/workbench/core/commands'
@@ -30,7 +30,8 @@ vi.mock('@/services/api/agentos', () => ({
 const routes = [
   { path: '/', component: { template: '<div />' } },
   { path: '/agentos/acg', component: { template: '<div />' } },
-  { path: '/history', component: { template: '<div />' } }
+  { path: '/history', component: { template: '<div />' } },
+  { path: '/agentos/missions/:missionId/workspace', component: { template: '<div />' } }
 ]
 
 const mountTopBar = async (props: Record<string, unknown> = {}): Promise<{ wrapper: ReturnType<typeof mount>; router: Router }> => {
@@ -59,6 +60,21 @@ const mountTopBar = async (props: Record<string, unknown> = {}): Promise<{ wrapp
 }
 
 describe('AppTopBar', () => {
+  it('offers a layout menu host only inside Mission Workspace after the existing navigation', async () => {
+    const router = createRouter({ history: createMemoryHistory(), routes })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(AppTopBar, { global: { plugins: [router], stubs: { 'el-icon': true } } })
+    expect(wrapper.find('#mission-workspace-layout-menu').exists()).toBe(false)
+    await router.push('/agentos/missions/m/workspace')
+    await flushPromises()
+    const host = wrapper.get('#mission-workspace-layout-menu')
+    expect(host.element.previousElementSibling?.textContent).toBe('运行记忆')
+    await router.push('/history')
+    await flushPromises()
+    expect(wrapper.find('#mission-workspace-layout-menu').exists()).toBe(false)
+    wrapper.unmount()
+  })
   let disposeKeybindings: (() => void) | null = null
   beforeEach(() => {
     // Ctrl/Cmd+K 由命令表派发，组件只负责注册命令。

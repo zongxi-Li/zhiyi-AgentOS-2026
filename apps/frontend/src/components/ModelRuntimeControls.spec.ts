@@ -41,13 +41,15 @@ describe('reasoning control uses the saved request value', () => {
     expect(toModelRequestSettings(loadModelSettings())).toMatchObject({ thinkingMode: 'standard', reasoningEffort: 'low' })
   })
 
-  it('sends exactly the selected radio value and restores it after remount', async () => {
+  it('sends exactly the knob-selected value and restores it after remount', async () => {
     const wrapper = render()
     await flushPromises()
-    for (const [index, effort] of ['low', 'high', 'max'].entries()) {
-      await wrapper.findAll('[role="radio"]')[index].trigger('click')
-      expect(toModelRequestSettings(loadModelSettings()).reasoningEffort).toBe(effort)
-    }
+    expect(toModelRequestSettings(loadModelSettings()).reasoningEffort).toBe('low')
+    const knob = () => wrapper.find('[role="slider"]')
+    await knob().trigger('keydown', { key: 'ArrowUp' })
+    expect(toModelRequestSettings(loadModelSettings()).reasoningEffort).toBe('high')
+    await knob().trigger('keydown', { key: 'ArrowUp' })
+    expect(toModelRequestSettings(loadModelSettings()).reasoningEffort).toBe('max')
     wrapper.unmount()
     const restored = render()
     await flushPromises()
@@ -68,8 +70,9 @@ describe('reasoning control uses the saved request value', () => {
     expect(loadModelSettings()).toMatchObject({ selectedModel: 'deepseek-flash', thinkingMode: 'disabled', reasoningEffort: undefined })
     expect(wrapper.find('.composer-model-trigger').text()).toContain('关')
     // Selecting an effort and then off must be one atomic state update.
-    await wrapper.findAll('[role="radio"]')[3].trigger('click')
-    await wrapper.findAll('[role="radio"]')[0].trigger('click')
+    const knob = wrapper.find('[role="slider"]')
+    await knob.trigger('keydown', { key: 'End' })
+    await knob.trigger('keydown', { key: 'Home' })
     expect(toModelRequestSettings(loadModelSettings())).toMatchObject({ thinkingMode: 'disabled' })
     expect(toModelRequestSettings(loadModelSettings()).reasoningEffort).toBeUndefined()
   })

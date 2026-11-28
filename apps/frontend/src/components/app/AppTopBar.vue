@@ -95,6 +95,7 @@
           :class="{ 'is-overflowed': index >= plainMenuItems.length - overflowCount }"
           @click="emit('navigate', item.path)"
         >{{ item.label }}</button>
+        <div v-if="missionWorkspaceOpen" id="mission-workspace-layout-menu" class="app-topbar__layout-host" />
         <div v-if="overflowCount > 0" ref="moreMenuItem" class="app-topbar__menu-item" v-bind="dragRegionProps">
           <button
             type="button"
@@ -316,7 +317,7 @@ const measureMenuOverflow = () => {
   const trigger = nav.querySelector<HTMLElement>('[data-menu-trigger]')
   const els = Array.from(nav.querySelectorAll<HTMLElement>('[data-menu-item]'))
   if (!els.length) return
-  let used = trigger?.offsetWidth ?? 0
+  let used = (trigger?.offsetWidth ?? 0) + (nav.querySelector<HTMLElement>('.app-topbar__layout-host')?.offsetWidth ?? 0)
   let fit = 0
   for (let i = 0; i < els.length; i++) {
     const next = used + MENU_GAP_PX + els[i].offsetWidth
@@ -527,6 +528,7 @@ watch(query, () => {
 // 历史导航：vue-router 不暴露 canGoBack/canGoForward，用写入 history.state 的
 // position 对账——current 为当前栈位，furthest 记录本次会话到过的最深处。
 const router = useRouter()
+const missionWorkspaceOpen = computed(() => /^\/agentos\/missions\/[^/]+\/workspace$/.test(router.currentRoute.value.path))
 
 const currentPosition = ref(0)
 const furthestPosition = ref(0)
@@ -704,6 +706,8 @@ onBeforeUnmount(() => {
   gap: 1px;
   min-width: 0;
 }
+.app-topbar__layout-host { flex: 0 0 auto; }
+.app-topbar__menu-links > button { flex-shrink: 0; white-space: nowrap; }
 
 /* 溢出收纳的菜单项：移出排版流但保留可测宽度（visibility 不参与布局） */
 .app-topbar__menu-links button.is-overflowed {

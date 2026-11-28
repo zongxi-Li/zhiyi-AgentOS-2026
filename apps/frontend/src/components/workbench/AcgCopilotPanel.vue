@@ -138,8 +138,7 @@
             <div class="menu-heading">对话模型 <small>{{ availableModels.length }} 个可用</small></div>
             <button type="button" role="menuitemradio" :aria-checked="!selectedModel" @click="selectedModel = ''; openMenu = null"><span><strong>跟随任务模型</strong><small>{{ defaultModelLabel }}</small></span><el-icon v-if="!selectedModel" class="selected-check"><Check /></el-icon></button>
             <button v-for="model in availableModels" :key="model.id" type="button" role="menuitemradio" :aria-checked="selectedModel === model.id" @click="selectedModel = model.id; openMenu = null"><span><strong>{{ model.model }}</strong><small>{{ model.provider }}</small></span><el-icon v-if="selectedModel === model.id" class="selected-check"><Check /></el-icon></button>
-            <div class="reasoning-controls"><div class="menu-heading">思考程度</div><div v-if="reasoningOptions.length" class="effort-options" role="group" aria-label="思考程度"><button v-for="effort in ['', ...reasoningOptions]" :key="effort" type="button" :aria-pressed="reasoningEffort === effort" @click="reasoningEffort = effort">{{ effortLabel(effort) }}</button></div><small v-else>此模型未声明可选的思考档位</small></div>
-            <p>仅用于本次对话，不修改任务执行模型。</p>
+            <div class="reasoning-controls"><div class="menu-heading">思考程度</div><NeuGearKnob v-if="reasoningOptions.length" class="effort-knob" :options="effortGearOptions" :model-value="reasoningEffort" aria-label="思考程度旋钮" @update:model-value="reasoningEffort = String($event)" /><small v-else>此模型未声明可选的思考档位</small></div>
           </div>
         </div>
         </template>
@@ -163,6 +162,7 @@ import { validationFailureDetails, type RuntimeObservation, type RuntimeTraceObs
 import { runningRecoveryMessage } from '@/features/workspace/runLifecycle'
 import { renderMarkdown } from '@/utils/markdown'
 import { renderCopilotMarkdown } from './copilotMarkdown'
+import NeuGearKnob from '@/components/common/NeuGearKnob.vue'
 import { clearCopilotSession, getCopilotSession, saveCopilotSession } from './copilotSessionCache'
 import FormalExecutionControls from '@/components/workspace/FormalExecutionControls.vue'
 import FormalToolApprovals from '@/components/workspace/FormalToolApprovals.vue'
@@ -258,6 +258,9 @@ let streamBatcher: ReturnType<typeof createStreamBatcher> | undefined
 const availableModels = computed(() => state.value?.models || [])
 const reasoningOptions = computed(() => availableModels.value.find(m => m.id === (selectedModel.value || state.value?.defaultModelId))?.reasoningEfforts || [])
 const effortLabel = (value: string) => ({ low: '低', medium: '中', high: '高', max: '最高' } as Record<string, string>)[value] || '关闭'
+// 旋钮挡位颜色沿用语义色板（与 ModelRuntimeControls 同口径）
+const EFFORT_GEAR_COLORS: Record<string, string> = { '': 'var(--text-secondary)', low: 'var(--sem-flow)', medium: 'var(--sem-running)', high: 'var(--sem-waiting)', max: 'var(--sem-artifact)' }
+const effortGearOptions = computed(() => ['', ...reasoningOptions.value].map(value => ({ value, label: effortLabel(value), color: EFFORT_GEAR_COLORS[value] || 'var(--text-secondary)' })))
 const defaultModelLabel = computed(() => availableModels.value.find(m => m.id === state.value?.defaultModelId)?.model || state.value?.defaultModelId?.split('/').slice(1).join('/') || (state.value?.modelAvailable ? '当前任务模型' : '尚未配置模型'))
 const modelLabel = computed(() => answering.value && state.value?.question ? defaultModelLabel.value : selectedModel.value ? availableModels.value.find(m => m.id === selectedModel.value)?.model || '模型已不可用' : defaultModelLabel.value)
 const permissionOptions = [
@@ -818,6 +821,8 @@ button:focus-visible, input:focus-visible { outline:2px solid var(--wb-accent); 
 .permission-picker .picker-trigger > .el-icon:first-child { color:var(--wb-warning); }
 .permission-picker.is-auto-approval .picker-trigger > .el-icon:first-child { color:var(--wb-accent); }
 .picker-menu { position:absolute; z-index:20; bottom:52px; right:8px; left:8px; padding:6px; max-height:320px; overflow:auto; border:1px solid var(--wb-border); border-radius:12px; background:var(--wb-surface-section); box-shadow:0 8px 28px #00000040; }
+/* 模型菜单含 124px 旋钮，限高放宽避免底部被裁切 */
+.picker-menu.model-menu { max-height: 420px; }
 .menu-heading { display:flex; justify-content:space-between; padding:8px 8px 7px; color:var(--wb-text-muted); font-size:10px; }
 .menu-heading small { font-size:10px; }
 .picker-menu button { display:flex; align-items:center; gap:9px; width:100%; padding:10px 8px; border:0; border-radius:7px; text-align:left; background:transparent; color:var(--wb-text-secondary); }
@@ -831,9 +836,7 @@ button:focus-visible, input:focus-visible { outline:2px solid var(--wb-accent); 
 .picker-menu p { margin:7px 8px 4px; padding-top:8px; border-top:1px solid var(--cp-border); color:var(--wb-text-muted); font-size:10px; line-height:1.5; }
 .reasoning-controls { border-top:1px solid var(--cp-border); padding:4px 4px 8px; }
 .reasoning-controls > small { display:block; padding:4px 8px; }
-.effort-options { display:flex; gap:4px; }
-.effort-options button { justify-content:center; padding:7px 3px; font-size:11px; }
-.effort-options button[aria-pressed=true] { background:var(--wb-accent-soft); color:var(--wb-accent); }
+.effort-knob { display:block; margin:8px auto 4px; }
 .send-button { display:grid; place-items:center; width:30px; height:30px; flex-shrink:0; border:0; border-radius:50%; background:var(--wb-text); color:var(--wb-surface-1); font-size:17px; }
 .send-button:disabled { background:var(--wb-hover); color:var(--wb-text-muted); opacity:.7; }
 .send-button.is-stop:disabled { opacity:.55; }

@@ -70,6 +70,34 @@ function run(source: Row): Row {
 const missionRun = (source: Row) => pick(source, 'runId missionId status graphVersion startedAt finishedAt createdAt updatedAt');
 const task = (source: Row) => ({ ...pick(source, 'taskId missionId semanticTaskKey parentTaskId title objective status'), constraintCount: list(source.constraints).length });
 
+function operationalSummary(source: Row): Row {
+  const scalarFields = (value: unknown, fields: string) => Object.fromEntries(
+    Object.entries(pick(value, fields)).filter(([, item]) => scalar(item) !== null)
+  );
+  return {
+    controlFrames: rows(source.controlFrames, frame => ({
+      ...scalarFields(frame, 'controlId controlType iteration'),
+      region: strings(frame.region),
+    })),
+    loopIterations: Object.fromEntries(Object.entries(row(source.loopIterations))
+      .filter(([, value]) => numberOrNull(value) !== null)),
+    consensusResults: Object.fromEntries(Object.entries(row(source.consensusResults)).map(([id, result]) =>
+      [id, scalarFields(result, 'votes approvals committedParticipants quorum accepted strategy resolvedByReview')])),
+    debateSessions: Object.fromEntries(Object.entries(row(source.debateSessions)).map(([id, value]) => {
+      const session = row(value);
+      return [id, {
+        ...scalarFields(session, 'round phase maxRounds quorum resultArtifactRef'),
+        participants: strings(session.participants),
+      }];
+    })),
+    communicationRefs: strings(source.communicationRefs),
+    memoryRefs: strings(source.memoryRefs),
+    evidenceRefs: strings(source.evidenceRefs),
+    leaseStatuses: Object.fromEntries(Object.entries(row(source.leaseStatuses))
+      .filter(([, value]) => typeof value === 'string')),
+  };
+}
+
 function executionTree(source: Row): Row {
   const blueprint = row(source.blueprint);
   const operational = row(source.operational);
@@ -96,7 +124,8 @@ function executionTree(source: Row): Row {
     return String(left.executionInstanceId ?? '').localeCompare(String(right.executionInstanceId ?? ''));
   }).map((value, displayOrder) => ({ ...pick(value, 'stepId attemptId phase failureCode'), displayOrder }));
   return { run: missionRun(row(source.run)), graph: { ...graph(blueprint.graph), ...pick(blueprint, 'graphId missionId'), graphVersion: blueprint.version ?? null },
-    nodes, lineage: lineage(operational.lineage), lifecycles };
+    nodes, lineage: lineage(operational.lineage), lifecycles,
+    operational: source.operational == null ? null : operationalSummary(operational) };
 }
 
 function workspace(source: Row): Row {
@@ -120,9 +149,23 @@ function workspace(source: Row): Row {
     '', '## Input attachments', ...(attachments.length ? attachments.map(value => `- **${value.originalFilename}** (\`${value.attachmentId}\`) - ${value.status}, ${value.sizeBytes} bytes, \`${value.sha256}\``) : ['No input attachments.'])];
   const tasks = entries.filter(value => value.kind === 'task');
   if (tasks.length) lines.push('', '## Planned steps', ...tasks.map(value => `- **${value.name}** (\`${value.semanticTaskKey}\`)${value.objective ? `: ${value.objective}` : ''}`));
-  for (const entry of entries) if (entry.entryId === 'overview:mission.md' && entry.kind === 'virtual_document') entry.content = lines.join('\n') + '\n';
+  for (const entry of entries) if (entry.entryId === 'overview:mission.md' && entry.kind === 'virtual_document') {
+    // Keep the authorized document and its semantic/plan context. Runtime metadata
+    // is internal; it must not be published through the generated Markdown either.
+    entry.content = typeof entry.content === 'string' && entry.content.trim()
+      ? entry.content.replace(/^## Mission metadata\r?\n[\s\S]*?(?=^## |$(?![\s\S]))/m, '')
+      : lines.join('\n') + '\n';
+  }
   const diagnosticKeys: Record<string, string> = { RUN_DELIVERABLE_MISSING: 'runId', GRAPH_TASK_NOT_FOUND: 'acgNodeId taskId', TASK_PLAN_TASK_NOT_FOUND: 'runId semanticTaskKey', LEGACY_ARTIFACT_IDENTITY: 'count', PLAN_SNAPSHOT_UNRESOLVED: 'runId taskPlanVersion', PLANNING_PROJECTION_PENDING: 'runtimeStatus lifecyclePhase errorCode' };
-  return { mission, activeRun, ...pick(source, 'projectionRevision projectionSchemaVersion'),
+  const constraints = (value: unknown) => rows(value, item => ({ ...pick(item, 'constraintId text'), sourceRefs: strings(item.sourceRefs) }));
+  return { mission, activeRun, ...pick(source, 'projectionRevision projectionSchemaVersion selectedRunBasisStatus'),
+    missionSemanticView: source.missionSemanticView == null ? null : {
+      ...pick(source.missionSemanticView, 'missionId semanticStatus missionRevision commitId objective sourceStatus'),
+      constraints: constraints(row(source.missionSemanticView).constraints), sourceReferences: strings(row(source.missionSemanticView).sourceReferences) },
+    missionDisplay: source.missionDisplay == null ? null : pick(source.missionDisplay, 'objective sourceType'),
+    selectedRunBasis: source.selectedRunBasis == null ? null : {
+      ...pick(source.selectedRunBasis, 'basisSchemaVersion fingerprintVersion missionId sourceType sourceRevision commitId objective sourceStatus fingerprint'),
+      constraints: constraints(row(source.selectedRunBasis).constraints), sourceReferences: strings(row(source.selectedRunBasis).sourceReferences) },
     activeGraph: source.activeGraph == null ? null : { ...graph(source.activeGraph), taskPlanVersion: row(source.activeGraph).taskPlanVersion ?? null },
     runs: rows(source.runs, summary), entries,
     graphNodes: rows(source.graphNodes, source => pick(source, 'acgNodeId nodeType name semanticTaskKey taskId identityQuality displayOrder status attemptId artifactCount artifactIds')),

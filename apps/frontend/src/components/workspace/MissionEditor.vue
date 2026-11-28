@@ -17,18 +17,19 @@
             @click="mode = item.id"
           >{{ item.label }}</button>
         </div>
-        <span v-if="mode === 'edit' && !readonly" class="mission-editor__draft-hint">
-          {{ draftDirty ? '本地草稿 · 保存链路暂未接入后端' : '编辑后暂存本地，保存链路暂未接入后端' }}
-        </span>
-        <button
-          v-if="mode === 'edit' && !readonly && draftDirty"
-          type="button"
-          class="mission-editor__reset"
-          @click="resetDraft"
-        >还原</button>
+        <span class="mission-editor__readonly">只读</span>
       </div>
       <button v-if="projection.missionSemanticView && !editing" type="button" aria-label="编辑正式目标与约束" @click="beginEdit">{{ projection.missionSemanticView.semanticStatus === 'INITIALIZED' ? '编辑目标与约束' : '初始化正式语义' }}</button>
     </header>
+
+    <section class="mission-editor__versions" aria-label="文档版本归属">
+      <span>所选 Run：<code>{{ projection.activeRun?.runId || '尚未创建' }}</code></span>
+      <span>生效计划：{{ planLabel }}</span>
+      <span>执行图：{{ graphLabel }}</span>
+      <span v-if="projection.missionSemanticView">目标 revision {{ projection.missionSemanticView.missionRevision }}</span>
+      <p v-if="planUnavailable" role="status">计划快照不可用，正文中的步骤不能视为已核验的生效计划。</p>
+      <p v-if="historicalNotice" role="status">{{ historicalNotice }}</p>
+    </section>
 
     <MissionRevisionNotice v-if="projection.missionSemanticView && projection.activeRun"
       :mission-id="projection.mission.missionId" :run-id="projection.activeRun.runId"
@@ -54,10 +55,10 @@
 
 
     <MissionMarkdownEditor
-      v-if="mode === 'edit'"
-      v-model="draft"
+      v-if="mode === 'source'"
+      :model-value="sourceContent"
       class="mission-editor__codemirror"
-      :read-only="Boolean(readonly)"
+      read-only
       aria-label="任务说明 Markdown"
     />
     <div v-else class="editor-document__body markdown-body" v-html="previewContent" />
@@ -77,7 +78,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, inject, ref } from 'vue'
+import { graphVersionsKey, graphVersionPair } from './graphVersions'
 import MissionRevisionNotice from './MissionRevisionNotice.vue'
 import MissionMarkdownEditor from './MissionMarkdownEditor.vue'
 import { agentosApi, type MissionSemanticEditRequest } from '@/services/api/agentos'
@@ -135,30 +137,26 @@ const saveSemantics = async () => {
   }
 }
 
-// 任务说明的编辑器态：内容只落在本地草稿（保存链路接入后端前不写回）。
+// Generated document follows the workspace projection; formal edits use the semantic form.
 const modeTabs = [
-  { id: 'edit' as const, label: '编辑' },
+  { id: 'source' as const, label: '源码' },
   { id: 'preview' as const, label: '预览' }
 ]
-const mode = ref<'edit' | 'preview'>('edit')
-const sourceContent = computed(() => props.projection.missionSemanticView
+const mode = ref<'source' | 'preview'>('source')
+const sourceContent = computed(() => props.projection.entries.some(entry => entry.entryId === 'overview:mission.md')
+  || props.projection.missionSemanticView
   ? missionDocumentContent(props.projection)
   : props.entry.content || missionDocumentContent(props.projection))
-const baseline = ref('')
-const draft = ref('')
-const draftDirty = computed(() => draft.value !== baseline.value)
-watch(sourceContent, value => {
-  // 草稿未动时跟随外部内容；已编辑则保留本地草稿不被投影刷新覆盖。
-  if (draft.value === baseline.value) {
-    baseline.value = value
-    draft.value = value
-  }
-}, { immediate: true })
-const resetDraft = () => {
-  baseline.value = sourceContent.value
-  draft.value = sourceContent.value
-}
-const previewContent = computed(() => renderMarkdown(draft.value))
+const previewContent = computed(() => renderMarkdown(sourceContent.value))
+const graphVersions = inject(graphVersionsKey, null)
+const planUnavailable = computed(() => props.projection.diagnostics.some(item => item.code === 'PLAN_SNAPSHOT_UNRESOLVED'))
+const planLabel = computed(() => planUnavailable.value || props.projection.activeGraph?.taskPlanVersion == null
+  ? '版本未登记' : `ACG v${props.projection.activeGraph.taskPlanVersion}`)
+const graphLabel = computed(() => props.projection.activeGraph?.graphVersion == null
+  ? '版本未登记' : `RGraph v${props.projection.activeGraph.graphVersion}`)
+const historicalNotice = computed(() => graphVersions?.historical.value && graphVersions.selected.value
+  ? `正在查看 ${graphVersionPair(graphVersions.selected.value)} 历史图；mission.md 仍展示所选 Run 的生效计划 ${planLabel.value}。`
+  : '')
 
 const formatBytes = (bytes: number) => bytes < 1024
   ? `${bytes} B`
@@ -201,7 +199,7 @@ const formatBytes = (bytes: number) => bytes < 1024
 
 .editor-document__body { width: min(calc(100% - 32px), 820px); margin: 0 16px; padding: 24px 0 40px; font-size: 14px; line-height: 1.7; }
 
-/* 编辑器态：工具条 + 全宽 CodeMirror，随面板铺满，无呼吸边距。 */
+/* 只读源码和预览共用文档工具条。 */
 .mission-editor__toolbar {
   display: flex;
   align-items: center;
@@ -246,35 +244,6 @@ const formatBytes = (bytes: number) => bytes < 1024
 
 .mission-editor__mode button:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -1px; }
 
-.mission-editor__draft-hint {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--wb-text-muted);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mission-editor__reset {
-  min-height: 26px;
-  padding: 0 11px;
-  margin: 0 0 0 auto;
-  border: 1px solid var(--wb-border-soft);
-  border-radius: 7px;
-  color: var(--wb-text-secondary);
-  background: var(--wb-surface-inset);
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 650;
-  transition: color 140ms var(--ease-out), border-color 140ms var(--ease-out), background-color 140ms var(--ease-out);
-}
-
-.mission-editor__reset:hover {
-  color: var(--wb-accent);
-  border-color: color-mix(in srgb, var(--wb-accent) 36%, var(--wb-border-soft));
-  background: var(--wb-hover);
-}
-
 .mission-editor__codemirror { width: 100%; font-size: 13px; }
 .markdown-body :deep(h1),
 .markdown-body :deep(h2),
@@ -302,4 +271,12 @@ const formatBytes = (bytes: number) => bytes < 1024
 .property-row { display: flex; justify-content: space-between; gap: 24px; min-height: 30px; padding: 7px 0; color: var(--wb-text-secondary); font-size: 12px; }
 .property-row + .property-row { border-top: 1px solid color-mix(in srgb, var(--wb-border-soft) 70%, transparent); }
 .property-row code { color: var(--wb-text); font: 11px var(--font-mono, monospace); }
+</style>
+
+<style scoped>
+.mission-editor__readonly { color: var(--wb-text-muted); font-size: 11px; }
+.mission-editor__versions { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 12px 16px; border-bottom: 1px solid var(--wb-border-soft); color: var(--wb-text-secondary); font-size: 12px; }
+.mission-editor__versions code { overflow-wrap: anywhere; }
+.mission-editor__versions p { flex-basis: 100%; margin: 0; color: var(--wb-text-muted); line-height: 1.6; }
+.editor-document__header { flex-wrap: wrap; }
 </style>

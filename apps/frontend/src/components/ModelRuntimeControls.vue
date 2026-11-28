@@ -3,12 +3,11 @@
     v-if="composer"
     placement="top-end"
     trigger="click"
-    :width="336"
+    :width="232"
     :offset="10"
     :show-arrow="false"
     popper-class="composer-model-popover"
     @show="handleComposerOpen"
-    @hide="providerMenuOpen = false"
   >
     <template #reference>
       <button
@@ -28,36 +27,6 @@
     <div class="model-menu" role="dialog" aria-label="模型与思考强度" :style="{ '--effort-color': activeReasoningColor }">
       <div class="model-menu__head">
         <span class="model-menu__label">模型</span>
-        <div class="model-menu__provider">
-          <button
-            class="model-menu__provider-trigger"
-            type="button"
-            :title="providerTitle"
-            aria-haspopup="listbox"
-            :aria-expanded="providerMenuOpen"
-            @click="providerMenuOpen = !providerMenuOpen"
-          >
-            {{ compactProviderLabel(settings.provider) }}
-            <el-icon><ArrowDown /></el-icon>
-          </button>
-          <Transition name="model-menu-pop">
-            <div v-if="providerMenuOpen" class="model-menu__provider-list" role="listbox" aria-label="模型服务商">
-              <button
-                v-for="provider in modelProviderPresets"
-                :key="provider.id"
-                class="model-menu__provider-option"
-                :class="{ 'is-selected': provider.id === settings.provider }"
-                type="button"
-                role="option"
-                :aria-selected="provider.id === settings.provider"
-                @click="chooseProvider(provider.id)"
-              >
-                <span>{{ provider.name }}</span>
-                <el-icon v-if="provider.id === settings.provider"><Check /></el-icon>
-              </button>
-            </div>
-          </Transition>
-        </div>
       </div>
 
       <div class="model-menu__list" role="listbox" aria-label="选择模型">
@@ -82,39 +51,14 @@
 
       <div class="model-menu__effort">
         <span class="model-menu__label">思考强度</span>
-        <div
-          class="model-menu__segments"
-          role="radiogroup"
-          aria-label="思考强度"
-          :style="{
-            '--segment-index': String(reasoningIndex),
-            '--segment-count': String(Math.max(reasoningOptions.length, 1))
-          }"
-        >
-          <span class="model-menu__segment-thumb" aria-hidden="true"></span>
-          <button
-            v-for="option in reasoningOptions"
-            :key="option.value"
-            class="model-menu__segment"
-            :class="{ 'is-selected': isSelectedReasoningOption(option) }"
-            :style="{ '--segment-color': reasoningColor(option.value) }"
-            type="button"
-            role="radio"
+        <div class="model-menu__gear">
+          <NeuGearKnob
+            :options="gearOptions"
+            :model-value="selectedReasoningOption?.value ?? ''"
             :disabled="!activeCapability"
-            :aria-checked="isSelectedReasoningOption(option)"
-            @click="selectReasoningOption(option.value)"
-          >
-            <span class="model-menu__segment-dot" aria-hidden="true"></span>
-            {{ reasoningShortLabel(option) }}
-          </button>
-        </div>
-        <div class="model-menu__hint-slot">
-          <Transition name="model-menu-hint" mode="out-in">
-            <p class="model-menu__hint" :key="String(selectedReasoningOption?.value)">
-              <span class="model-menu__hint-dot" aria-hidden="true"></span>
-              {{ reasoningHint }}
-            </p>
-          </Transition>
+            aria-label="思考强度旋钮"
+            @update:model-value="selectReasoningOption"
+          />
         </div>
       </div>
     </div>
@@ -175,6 +119,7 @@
 import { localFetch } from '@/platform/api'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ArrowDown, Check, Connection, Cpu, Opportunity } from '@element-plus/icons-vue'
+import NeuGearKnob from '@/components/common/NeuGearKnob.vue'
 import { apiUrl } from '@/platform'
 import {
   MODEL_SETTINGS_EVENT,
@@ -197,7 +142,6 @@ withDefaults(defineProps<{ compact?: boolean; composer?: boolean }>(), { compact
 
 const settings = ref(loadModelSettings())
 const modelsLoading = ref(false)
-const providerMenuOpen = ref(false)
 let systemModelsRequest = 0
 const availableModels = computed(() => settings.value.models)
 const modelCapability = ref<ModelCapability | null>(null)
@@ -232,11 +176,6 @@ const selectedReasoningOption = computed(() => {
   return selected || { value: reasoningSelection.value, label: String(reasoningSelection.value),
     shortLabel: String(reasoningSelection.value) }
 })
-const reasoningHint = computed(() => {
-  if (!activeCapability.value) return '尚未确认模型能力'
-  const option = selectedReasoningOption.value
-  return option ? reasoningDescription(option.value) : '按模型能力调整推理深度'
-})
 const reasoningIndex = computed(() => {
   const option = selectedReasoningOption.value
   if (!option) return 0
@@ -262,16 +201,6 @@ const REASONING_SHORT_LABELS: Record<string, string> = {
   deep: '深度',
   xhigh: '极高',
   max: '极致'
-}
-const REASONING_DESCRIPTIONS: Record<string, string> = {
-  disabled: '快速响应，不额外推理',
-  low: '轻量推理，响应更快',
-  standard: '平衡速度与分析深度',
-  medium: '平衡速度与分析深度',
-  high: '更充分地分析复杂任务',
-  deep: '深入拆解问题与步骤',
-  xhigh: '为复杂任务保留更多推理',
-  max: '适合最复杂的任务'
 }
 // 档位颜色沿用语义色板：越往上越“重”，关档保持中性。
 const REASONING_COLORS: Record<string, string> = {
@@ -319,34 +248,26 @@ function reasoningShortLabel(option: { value: ThinkingMode | ReasoningEffort; sh
   return REASONING_SHORT_LABELS[String(option.value)] || option.shortLabel
 }
 
-function reasoningDescription(value: ThinkingMode | ReasoningEffort): string {
-  return REASONING_DESCRIPTIONS[String(value)] || '按模型能力调整推理深度'
-}
-
 function reasoningColor(value: ThinkingMode | ReasoningEffort): string {
   return REASONING_COLORS[String(value)] || 'var(--text-secondary)'
 }
 
 function selectReasoningOption(value: ThinkingMode | ReasoningEffort): void {
-  providerMenuOpen.value = false
   reasoningSelection.value = value
   persistSettings()
 }
 
-function isSelectedReasoningOption(option: { value: ThinkingMode | ReasoningEffort }): boolean {
-  return String(option.value) === String(selectedReasoningOption.value?.value)
-}
+// 旋钮挡位选项（交互细节由 NeuGearKnob 承担）
+const gearOptions = computed(() => reasoningOptions.value.map(option => ({
+  value: option.value,
+  label: reasoningShortLabel(option),
+  color: reasoningColor(option.value)
+})))
 
 function selectModel(model: string): void {
-  providerMenuOpen.value = false
   if (model === settings.value.selectedModel) return
   settings.value.selectedModel = model
   persistSettings()
-}
-
-function chooseProvider(provider: ModelProviderId): void {
-  providerMenuOpen.value = false
-  if (provider !== settings.value.provider) selectProvider(provider)
 }
 
 function compactProviderLabel(provider: ModelProviderId): string {
@@ -456,7 +377,6 @@ onUnmounted(() => {
 })
 
 function handleComposerOpen(): void {
-  providerMenuOpen.value = false
   if (settings.value.provider === 'system' && !availableModels.value.length) void loadSystemModels()
 }
 </script>
@@ -485,64 +405,12 @@ function handleComposerOpen(): void {
 .composer-model-effort { flex: 0 0 auto; color: color-mix(in srgb, var(--effort-color) 66%, var(--text-secondary)); font-size: 11px; transition: color 200ms ease; }
 .composer-model-trigger:hover .composer-model-effort { color: color-mix(in srgb, var(--effort-color) 72%, var(--text-primary)); }
 .composer-model-trigger .el-icon { flex: 0 0 auto; font-size: 10px; color: var(--text-muted); }
-.model-menu { display: grid; gap: 2px; }
+/* 新拟物令牌：表面=弹层实际底色（同色铁律），浅色方案白体系（暗角灰/亮角白），暗色方案覆盖派生比例 */
+.model-menu { --neu-surface: var(--bg-card); --neu-dark: color-mix(in srgb, #000 16%, var(--neu-surface)); --neu-light: #ffffff; display: grid; gap: 2px; }
+html[data-color-scheme='codex-dark'] .model-menu,
+html[data-color-scheme='one-dark-modern'] .model-menu { --neu-dark: color-mix(in srgb, #000 26%, var(--neu-surface)); --neu-light: color-mix(in srgb, #fff 15%, var(--neu-surface)); }
 .model-menu__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 8px 2px; }
 .model-menu__label { color: var(--text-muted); font-size: 11px; font-weight: 600; letter-spacing: .02em; line-height: 16px; }
-.model-menu__provider { position: relative; }
-.model-menu__provider-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  height: 24px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-  transition: background-color 140ms ease, color 140ms ease;
-}
-.model-menu__provider-trigger:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); color: var(--text-primary); }
-.model-menu__provider-trigger:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 1px; }
-.model-menu__provider-trigger .el-icon { font-size: 9px; transition: transform 140ms ease; }
-.model-menu__provider-trigger[aria-expanded="true"] .el-icon { transform: rotate(180deg); }
-.model-menu__provider-list {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 3;
-  display: grid;
-  gap: 1px;
-  width: 172px;
-  padding: 4px;
-  border: 1px solid color-mix(in srgb, var(--border-light) 80%, transparent);
-  border-radius: 10px;
-  background: var(--bg-panel);
-  box-shadow: var(--shadow-md);
-}
-.model-menu__provider-option {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  height: 30px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-  transition: background-color 140ms ease, color 140ms ease;
-}
-.model-menu__provider-option:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); color: var(--text-primary); }
-.model-menu__provider-option.is-selected { color: var(--text-primary); }
-.model-menu__provider-option .el-icon { flex: 0 0 auto; font-size: 12px; color: var(--text-secondary); }
 .model-menu__list {
   display: grid;
   gap: 1px;
@@ -578,132 +446,13 @@ function handleComposerOpen(): void {
 .model-menu__empty { margin: 0; padding: 10px 8px; color: var(--text-muted); font-size: 11px; text-align: center; }
 .model-menu__divider { height: 1px; margin: 6px 5px; background: color-mix(in srgb, var(--border-light) 62%, transparent); }
 .model-menu__effort { display: grid; gap: 6px; padding: 2px 8px 6px; }
-.model-menu__segments {
-  position: relative;
-  display: flex;
-  gap: 2px;
-  padding: 3px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
-  isolation: isolate;
-}
-.model-menu__segment-thumb {
-  position: absolute;
-  z-index: 0;
-  top: 3px;
-  bottom: 3px;
-  left: 3px;
-  width: calc((100% - 6px - (var(--segment-count) - 1) * 2px) / var(--segment-count));
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--effort-color) 18%, transparent);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--effort-color) 34%, transparent),
-    0 2px 12px color-mix(in srgb, var(--effort-color) 16%, transparent);
-  transform: translateX(calc(var(--segment-index) * (100% + 2px)));
-  transition:
-    transform 300ms cubic-bezier(.22, 1, .36, 1),
-    background-color 240ms ease,
-    box-shadow 240ms ease;
-  pointer-events: none;
-}
-.model-menu__segment {
-  position: relative;
-  z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  flex: 1 1 0;
-  min-width: 0;
-  height: 28px;
-  padding: 0 4px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 11px;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: color 200ms ease, background-color 160ms ease, transform 160ms ease;
-}
-.model-menu__segment:hover {
-  background: color-mix(in srgb, var(--segment-color) 9%, transparent);
-  color: color-mix(in srgb, var(--segment-color) 70%, var(--text-primary));
-}
-.model-menu__segment:active { transform: scale(.97); }
-.model-menu__segment.is-selected {
-  color: var(--segment-color);
-  font-weight: 600;
-}
-.model-menu__segment:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 0; }
-.model-menu__segment-dot {
-  position: relative;
-  width: 5px;
-  height: 5px;
-  flex: 0 0 5px;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--segment-color) 52%, transparent);
-  transition: background-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
-}
-.model-menu__segment.is-selected .model-menu__segment-dot {
-  background: var(--segment-color);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--segment-color) 22%, transparent);
-  transform: scale(1.12);
-}
-.model-menu__segment-dot::after {
-  content: '';
-  position: absolute;
-  inset: -4px;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--segment-color) 42%, transparent);
-  opacity: 0;
-  pointer-events: none;
-}
-.model-menu__segment.is-selected .model-menu__segment-dot::after {
-  animation: model-menu-dot-ring 460ms cubic-bezier(.2, .8, .2, 1) both;
-}
-@keyframes model-menu-dot-ring {
-  0% { opacity: .5; transform: scale(.45); }
-  70% { opacity: .16; }
-  100% { opacity: 0; transform: scale(1.75); }
-}
-.model-menu__hint-slot { display: flex; align-items: center; min-height: 16px; }
-.model-menu__hint {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
-  overflow: hidden;
-  color: color-mix(in srgb, var(--effort-color) 38%, var(--text-secondary));
-  font-size: 11px;
-  line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.model-menu__hint-dot {
-  width: 4px;
-  height: 4px;
-  flex: 0 0 4px;
-  border-radius: 50%;
-  background: var(--effort-color);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--effort-color) 12%, transparent);
-  transition: background-color 240ms ease, box-shadow 240ms ease;
-  animation: model-menu-hint-dot-in 260ms cubic-bezier(.2, .8, .2, 1) both;
-}
-@keyframes model-menu-hint-dot-in {
-  from { opacity: 0; transform: scale(.4); }
-  to { opacity: 1; transform: scale(1); }
-}
+/* 思考强度 = 拟物挡位旋钮（NeuGearKnob），样式与交互都在组件内 */
+.model-menu__gear { display: flex; justify-content: center; padding: 4px 0 8px; }
 .model-menu__check { animation: model-menu-check-in 200ms cubic-bezier(.2, .9, .3, 1.35) both; }
 @keyframes model-menu-check-in {
   from { opacity: 0; transform: scale(.55); }
   to { opacity: 1; transform: scale(1); }
 }
-.model-menu-hint-enter-active { transition: opacity 140ms ease, transform 140ms ease; }
-.model-menu-hint-leave-active { transition: opacity 90ms ease, transform 90ms ease; }
-.model-menu-hint-enter-from { opacity: 0; transform: translateY(3px); }
-.model-menu-hint-leave-to { opacity: 0; transform: translateY(-3px); }
 .model-menu-pop-enter-active,
 .model-menu-pop-leave-active { transition: opacity 120ms ease, transform 120ms ease; }
 .model-menu-pop-enter-from,
@@ -713,16 +462,7 @@ function handleComposerOpen(): void {
   .composer-model-trigger { max-width: 168px; padding-inline: 5px; font-size: 11px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .model-menu__segment-thumb,
-  .model-menu__segment,
-  .model-menu__segment-dot,
-  .model-menu__hint-dot,
   .model-menu__check { animation: none; transition: none; }
-  .model-menu__segment.is-selected .model-menu__segment-dot::after { animation: none; opacity: 0; }
-  .model-menu-hint-enter-active,
-  .model-menu-hint-leave-active,
-  .model-menu-pop-enter-active,
-  .model-menu-pop-leave-active { transition: none; }
 }
 
 .model-runtime-controls {
@@ -806,12 +546,12 @@ function handleComposerOpen(): void {
 
 <style>
 .composer-model-popover.el-popover.el-popper {
-  width: min(336px, calc(100vw - 24px)) !important;
+  width: min(232px, calc(100vw - 24px)) !important;
   max-width: calc(100vw - 24px);
   padding: 6px;
   border: 1px solid color-mix(in srgb, var(--border-light) 74%, transparent);
   border-radius: 16px;
-  background: color-mix(in srgb, var(--bg-card) 94%, var(--bg-panel));
+  background: var(--bg-card);
   box-shadow: var(--shadow-lg), 0 0 0 1px color-mix(in srgb, var(--text-primary) 3%, transparent) inset;
   animation: composer-model-popover-in 140ms cubic-bezier(.2, .8, .2, 1);
 }
